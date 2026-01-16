@@ -219,46 +219,61 @@ class GameEngine:
         """Initialize Pygame with centered window and gradient background."""
         import os
         
-        # Center the window on screen
-        os.environ['SDL_VIDEO_WINDOW_POS'] = 'center'
-        
-        pygame.init()
-        
-        from .config import (
-            ACTUAL_WIDTH, ACTUAL_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT,
-            GRADIENT_TOP, GRADIENT_BOTTOM
-        )
-        
-        pygame.display.set_caption(f"TikTokGameWindow")
-        
-        # Use fixed size (no scaling needed since ACTUAL = SCREEN now)
-        self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT))
-        self.render_surface = self.screen
-        self.display_scale = 1.0
-        self.clock = pygame.time.Clock()
-        
         try:
-            self.font = pygame.font.SysFont("Arial", FONT_SIZE, bold=True)
-            self.font_small = pygame.font.SysFont("Arial", FONT_SIZE_SMALL)
-        except Exception:
-            self.font = pygame.font.Font(None, FONT_SIZE)
-            self.font_small = pygame.font.Font(None, FONT_SIZE_SMALL)
-        
-        # Create static gradient background (optimización - se crea una sola vez)
-        self.gradient_background = self._create_gradient_background()
-        
-        # NOW render flag emojis (pygame is initialized)
-        self._render_flag_emojis()
-        
-        logger.info(
-            f"🎮 Pygame initialized: {ACTUAL_WIDTH}x{ACTUAL_HEIGHT} | "
-            f"Gradient: {GRADIENT_TOP} → {GRADIENT_BOTTOM}"
-        )
-        logger.info(f"📦 Loaded {self.asset_manager.loaded_count} gift sprites")
-        
-        # Start background music (after pygame is fully initialized)
-        self.audio_manager.play_bgm()
-        logger.info(f"🎵 Audio Manager: BGM started, {self.audio_manager.loaded_sounds_count} sounds loaded")
+            logger.info("🔧 Starting pygame init...")
+            
+            # Center the window on screen
+            os.environ['SDL_VIDEO_WINDOW_POS'] = 'center'
+            logger.info("🔧 SDL_VIDEO_WINDOW_POS set")
+            
+            pygame.init()
+            logger.info("🔧 pygame.init() complete")
+            
+            from .config import (
+                ACTUAL_WIDTH, ACTUAL_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT,
+                GRADIENT_TOP, GRADIENT_BOTTOM
+            )
+            logger.info(f"🔧 Config loaded: {ACTUAL_WIDTH}x{ACTUAL_HEIGHT}")
+            
+            pygame.display.set_caption("TikTokGameWindow")
+            logger.info("🔧 Caption set")
+            
+            # Use fixed size
+            self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT))
+            logger.info("🔧 Display mode set")
+            
+            self.render_surface = self.screen
+            self.display_scale = 1.0
+            self.clock = pygame.time.Clock()
+            logger.info("🔧 Clock created")
+            
+            try:
+                self.font = pygame.font.SysFont("Arial", FONT_SIZE, bold=True)
+                self.font_small = pygame.font.SysFont("Arial", FONT_SIZE_SMALL)
+                logger.info("🔧 System fonts loaded")
+            except Exception as e:
+                logger.warning(f"🔧 System fonts failed, using default: {e}")
+                self.font = pygame.font.Font(None, FONT_SIZE)
+                self.font_small = pygame.font.Font(None, FONT_SIZE_SMALL)
+            
+            # Create static gradient background
+            logger.info("🔧 Creating gradient...")
+            self.gradient_background = self._create_gradient_background()
+            logger.info("🔧 Gradient created")
+            
+            # Render flag emojis
+            logger.info("🔧 Rendering emojis...")
+            self._render_flag_emojis()
+            logger.info("🔧 Emojis rendered")
+            
+            logger.info("🔧 Starting BGM...")
+            self.audio_manager.play_bgm()
+            
+            logger.info("✅ Pygame fully initialized")
+            
+        except Exception as e:
+            logger.error(f"❌ pygame init failed at step: {e}")
+            raise
     
     def _create_gradient_background(self) -> pygame.Surface:
         """
