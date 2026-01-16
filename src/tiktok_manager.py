@@ -9,6 +9,7 @@ from TikTokLive.events import (
     ConnectEvent, 
     DisconnectEvent, 
     GiftEvent,
+    CommentEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -37,26 +38,42 @@ class TikTokManager:
     def _extract_username(self, event) -> str:
         """Extract username from event using multiple fallback methods."""
         try:
-            if hasattr(event, '_proto') and event._proto:
-                proto = event._proto
-                if hasattr(proto, 'user') and proto.user:
-                    user = proto.user
-                    for attr in ['nickname', 'nickName', 'nick_name', 'uniqueId', 'unique_id']:
-                        if hasattr(user, attr):
-                            val = getattr(user, attr)
-                            if val:
-                                return str(val)
-            
-            if hasattr(event, 'user'):
+            # Método 1: Atributos directos del event
+            if hasattr(event, 'user') and event.user:
                 user = event.user
+                
+                # Prioridad: unique_id > nickname
                 if hasattr(user, 'unique_id') and user.unique_id:
                     return str(user.unique_id)
                 if hasattr(user, 'nickname') and user.nickname:
                     return str(user.nickname)
-        except Exception as e:
-            logger.debug(f"Error extracting username: {e}")
+                if hasattr(user, 'display_name') and user.display_name:
+                    return str(user.display_name)
+            
+            # Método 2: Proto buffer
+            if hasattr(event, '_proto') and event._proto:
+                proto = event._proto
+                if hasattr(proto, 'user') and proto.user:
+                    user = proto.user
+                    
+                    # Probar múltiples nombres de atributos
+                    for attr in ['uniqueId', 'unique_id', 'nickname', 'nickName', 'nick_name', 'displayName', 'display_name']:
+                        if hasattr(user, attr):
+                            val = getattr(user, attr)
+                            if val and str(val).strip():
+                                return str(val)
         
-        return "Usuario"
+            # Método 3: Fallback con ID único temporal
+            import time
+            fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
+            logger.warning(f"Could not extract username, using fallback: {fallback_name}")
+            return fallback_name
+            
+        except Exception as e:
+            import time
+            fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
+            logger.error(f"Error extracting username: {e}, using fallback: {fallback_name}")
+            return fallback_name
     
     def _extract_diamond_count(self, event, gift_name: str) -> int:
         """Extract diamond count from event or use default mapping."""
@@ -178,6 +195,51 @@ class TikTokManager:
                     
             except Exception as e:
                 logger.error(f"Error processing gift: {e}")
+        
+        @client.on(CommentEvent)
+        async def on_comment(event: CommentEvent) -> None:
+            """Handle chat comments for keyword binding."""
+            try:
+                username = self._extract_username(event)
+                
+                # Get message content
+                message = ""
+                if hasattr(event, 'comment') and event.comment:
+                    message = str(event.comment)
+                elif hasattr(event, '_proto') and event._proto:
+                    proto_comment = getattr(event._proto, 'content', None)
+                    if proto_comment:
+                        message = str(proto_comment)
+                
+                if not message:
+                    return
+                
+                # Clean message for keyword matching
+                clean_message = message.lower().strip()
+                
+                # Check for country keywords
+                from .config import COUNTRY_KEYWORDS
+                for keyword, country in COUNTRY_KEYWORDS.items():
+                    if keyword in clean_message:
+                        # Send JOIN event
+                        await self.queue.put(GameEvent(
+                            type=EventType.JOIN,
+                            username=username,
+                            content=country,
+                            extra={"keyword": keyword, "original_message": message}
+                        ))
+                        logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
+                        break  # Solo el primer match
+                        
+                # Also send regular COMMENT event for chat display
+                await self.queue.put(GameEvent(
+                    type=EventType.COMMENT,
+                    username=username,
+                    content=message
+                ))
+                
+            except Exception as e:
+                logger.error(f"Error processing comment: {e}")
     
     async def _push_status(self, state: ConnectionState, message: str) -> None:
         self._connection_state = state

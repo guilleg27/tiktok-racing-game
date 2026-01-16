@@ -232,3 +232,41 @@ FLOATING_TEXT_FONT_SIZE = 16           # Tamaño de fuente para efectos
 # Game area margins (para no tapar banderas con UI)
 GAME_AREA_TOP = 35       # Debajo del header
 GAME_AREA_BOTTOM = 65    # Encima de la leyenda de combate
+
+# Keyword Binding para equipos
+COUNTRY_KEYWORDS = {
+    # Argentina
+    'arg': 'Argentina', 'argentina': 'Argentina', 'arge': 'Argentina',
+    'messi': 'Argentina', '🇦🇷': 'Argentina',
+    
+    # Brasil
+    'bra': 'Brasil', 'brasil': 'Brasil', 'brazil': 'Brasil',
+    'br': 'Brasil', 'neymar': 'Brasil', '🇧🇷': 'Brasil',
+    
+    # México
+    'mex': 'Mexico', 'mexico': 'Mexico', 'mx': 'Mexico',
+    'méx': 'Mexico', 'méxico': 'Mexico', '🇲🇽': 'Mexico',
+    
+    # España
+    'esp': 'España', 'españa': 'España', 'spain': 'España',
+    'es': 'España', '🇪🇸': 'España',
+    
+    # Colombia
+    'col': 'Colombia', 'colombia': 'Colombia', 'co': 'Colombia',
+    '🇨🇴': 'Colombia',
+    
+    # Chile
+    'chi': 'Chile', 'chile': 'Chile', 'cl': 'Chile',
+    '🇨🇱': 'Chile',
+    
+    # Perú
+    'per': 'Peru', 'peru': 'Peru', 'perú': 'Peru',
+    'pe': 'Peru', '🇵🇪': 'Peru',
+    
+    # Venezuela
+    'ven': 'Venezuela', 'venezuela': 'Venezuela', 've': 'Venezuela',
+    'vzla': 'Venezuela', '🇻🇪': 'Venezuela',
+}
+
+# Anti-spam para joins
+JOIN_NOTIFICATION_COOLDOWN = 5.0  # segundos entre notificaciones del mismo user

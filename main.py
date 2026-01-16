@@ -170,6 +170,7 @@ def main() -> None:
     print("\nControles:")
     print("  L   - Conectar a TikTok (ingresa username)")
     print("  T   - Spawn regalo de prueba")
+    print("  J   - Test usuario uniéndose a equipo")  # ← NUEVO
     print("  C   - Limpiar/Reset")
     print("  ESC - Salir")
     print()

@@ -11,6 +11,7 @@ class EventType(Enum):
     COMMENT = auto()
     GIFT = auto()
     CONNECTION_STATUS = auto()
+    JOIN = auto()          # ← NUEVO: Usuario se une a equipo
     QUIT = auto()
 
 

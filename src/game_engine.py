@@ -215,6 +215,11 @@ class GameEngine:
         self.last_leader_name = None  # Líder del frame anterior
         self.leader_pop_timer = 0  # Temporizador para efecto "pop" (frames)
     
+        # Keyword Binding system
+        self.user_assignments: dict[str, str] = {}  # username -> country
+        self.users_notified: set[str] = set()       # Anti-spam para joins
+        self.last_join_time: dict[str, float] = {}  # username -> timestamp
+    
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
         import os
@@ -548,7 +553,9 @@ class GameEngine:
             username = self.sanitize_username(event.username)
             
             # SMART COUNTRY ASSIGNMENT
-            country, assignment_type = self.assign_country_to_user(username)
+            country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
+            
+            logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | regalo: {gift_name}")
             
             # Apply impulse to country's flag
             success = self.physics_world.apply_gift_impulse(
@@ -613,6 +620,56 @@ class GameEngine:
             self.messages.append((message, event.type))
             if len(self.messages) > MAX_MESSAGES:
                 self.messages = self.messages[-MAX_MESSAGES:]
+    
+        elif event.type == EventType.JOIN:
+            await self._handle_join_event(event)
+    
+    async def _handle_join_event(self, event: GameEvent) -> None:
+        """Handle user joining a team via keyword."""
+        username = event.username
+        requested_country = event.content
+        keyword = event.extra.get("keyword", "") if event.extra else ""
+        
+        # Check if user is already assigned
+        if username in self.user_assignments:
+            current_country = self.user_assignments[username]
+            if current_country == requested_country:
+                logger.debug(f"🏁 {username} already in {current_country}")
+                return
+            else:
+                # User wants to switch teams
+                logger.info(f"🔄 {username} switching from {current_country} to {requested_country}")
+        
+        # Anti-spam check
+        import time
+        current_time = time.time()
+        last_time = self.last_join_time.get(username, 0)
+        
+        from .config import JOIN_NOTIFICATION_COOLDOWN
+        if current_time - last_time < JOIN_NOTIFICATION_COOLDOWN:
+            return  # Too soon, ignore
+        
+        # Check if country exists in race
+        if requested_country not in self.physics_world.racers:
+            logger.warning(f"❌ Country {requested_country} not found in race")
+            return
+        
+        # Assign user to team
+        self.user_assignments[username] = requested_country
+        self.last_join_time[username] = current_time
+        
+        # Visual feedback: floating text on the country's lane
+        racer = self.physics_world.racers[requested_country]
+        lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
+        
+        self.spawn_floating_text(
+            f"¡@{username} unido!",
+            100,  # x position (start of lane)
+            lane_y,
+            (220, 220, 220)
+        )
+        
+        logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
     
     def handle_pygame_events(self) -> None:
         """Process Pygame input events."""
@@ -727,6 +784,46 @@ class GameEngine:
                                 racer.body.position.y,
                                 COLOR_TEXT_FREEZE
                             )
+    
+                elif event.key == pygame.K_j:  # J = Test JoinEvent
+                    # Generate random test join
+                    import time
+                    
+                    # Random username with timestamp to make it unique
+                    test_usernames = [
+                        "TestUser", "Viewer", "Fan", "Supporter", "Player", 
+                        "Streamer", "Watcher", "Usuario", "Espectador"
+                    ]
+                    base_username = random.choice(test_usernames)
+                    unique_username = f"{base_username}{int(time.time() * 1000) % 1000}"
+                    
+                    # Random country
+                    countries = list(self.physics_world.racers.keys())
+                    random_country = random.choice(countries)
+                    
+                    # Random keyword that would trigger this country
+                    from .config import COUNTRY_KEYWORDS
+                    # Find a keyword for this country
+                    matching_keywords = [k for k, v in COUNTRY_KEYWORDS.items() if v == random_country]
+                    keyword_used = random.choice(matching_keywords) if matching_keywords else random_country.lower()
+                    
+                    # Create fake JoinEvent and put it in queue
+                    join_event = GameEvent(
+                        type=EventType.JOIN,
+                        username=unique_username,
+                        content=random_country,
+                        extra={
+                            "keyword": keyword_used,
+                            "original_message": f"¡Vamos {keyword_used}!"
+                        }
+                    )
+                    
+                    # Add to queue for processing
+                    try:
+                        self.queue.put_nowait(join_event)
+                        logger.info(f"TEST JOIN: {unique_username} → {random_country} (keyword: {keyword_used})")
+                    except Exception as e:
+                        logger.error(f"Error adding test join to queue: {e}")
     
     def update(self, dt: float) -> None:
         """Update physics and particles."""
@@ -1704,8 +1801,54 @@ class GameEngine:
         self.user_country_cache.clear()
         self.country_player_count.clear()
         
+        # Clear keyword binding assignments
+        self.user_assignments.clear()
+        self.users_notified.clear()
+        self.last_join_time.clear()
+        
         # Change to IDLE state
         self.game_state = 'IDLE'
-        self.idle_animation_time = 0.0
-        
+        self.idle_animation_time = 0.0        
         logger.info("🎮 Game state: IDLE (race reset complete)")
+    
+    def _get_user_country_with_autojoin(self, username: str, gift_name: str) -> tuple[str, str]:
+        """
+        Get user's country with auto-join logic for gifts.
+        
+        Priority:
+        1. Check if user is explicitly assigned via keyword binding
+        2. Auto-assign based on gift type if user not assigned
+        3. Fall back to original assignment logic
+        """
+        # Check explicit assignment first
+        if username in self.user_assignments:
+            return self.user_assignments[username], "keyword_assigned"
+        
+        # Auto-join logic based on gift type
+        gift_country_hints = {
+            # Mapear ciertos regalos a países si quieres
+            # "Tango": "Argentina",
+            # "Samba": "Brasil",
+            # etc...
+        }
+        
+        if gift_name in gift_country_hints:
+            country = gift_country_hints[gift_name]
+            self.user_assignments[username] = country
+            logger.info(f"🎁 {username} auto-joined {country} via gift {gift_name}")
+            
+            # Visual feedback
+            racer = self.physics_world.racers[country]
+            lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
+            
+            self.spawn_floating_text(
+                f"¡@{username} unido!",
+                100,
+                lane_y,
+                (255, 215, 0)
+            )
+            
+            return country, "auto_joined_gift"
+        
+        # Fall back to original logic
+        return self.assign_country_to_user(username)
