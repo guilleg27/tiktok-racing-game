@@ -287,12 +287,22 @@ class GameEngine:
     
     def _render_flag_emojis(self) -> None:
         """Render flag emojis as sprites for countries without PNG sprites."""
+        import platform
+        
         emoji_map = {
             "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Mexico": "🇲🇽",
             "España": "🇪🇸", "Colombia": "🇨🇴", "Chile": "🇨🇱",
             "Peru": "🇵🇪", "Venezuela": "🇻🇪", "Uruguay": "🇺🇾",
             "Ecuador": "🇪🇨"
         }
+        
+        # Fuente de emojis según el sistema operativo
+        if platform.system() == "Darwin":  # macOS
+            emoji_font_name = "Apple Color Emoji"
+        elif platform.system() == "Windows":
+            emoji_font_name = "Segoe UI Emoji"
+        else:  # Linux
+            emoji_font_name = "Noto Color Emoji"
         
         for country, racer in self.physics_world.racers.items():
             # Skip if already has sprite
@@ -302,7 +312,7 @@ class GameEngine:
             # Try to render emoji
             if country in emoji_map:
                 try:
-                    font = pygame.font.SysFont("Apple Color Emoji", 40)  # ← ERA 60, AHORA 40
+                    font = pygame.font.SysFont(emoji_font_name, 40)
                     surf = font.render(emoji_map[country], True, (255, 255, 255))
                     racer.sprite = surf
                     logger.info(f"🚩 Rendered emoji for {country}")
