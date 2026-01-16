@@ -649,7 +649,7 @@ class GameEngine:
                     
                     # Spawn floating text
                     if result['effect'] == 'advance':
-                        racer = self.physics_world.racers(country)
+                        racer = self.physics_world.racers[country]
                         self.spawn_floating_text(
                             "+5m", 
                             racer.body.position.x, 

@@ -12,6 +12,7 @@ import logging
 import signal
 import sys
 import os
+import ssl
 from typing import Optional
 
 from src.config import FPS
@@ -19,6 +20,8 @@ from src.events import EventType, GameEvent, ConnectionState
 from src.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
+
+ssl._create_default_https_context = ssl._create_unverified_context
 
 logging.basicConfig(
     level=logging.INFO,
