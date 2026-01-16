@@ -219,6 +219,11 @@ class GameEngine:
         self.user_assignments: dict[str, str] = {}  # username -> country
         self.users_notified: set[str] = set()       # Anti-spam para joins
         self.last_join_time: dict[str, float] = {}  # username -> timestamp
+
+        # Captain/MVP System
+        self.session_points: dict[str, dict[str, int]] = {}  # {country: {username: points}}
+        self.current_captains: dict[str, str] = {}           # {country: username}
+        self.captain_change_timer: dict[str, int] = {}       # {country: frames_remaining}
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -555,6 +560,9 @@ class GameEngine:
             # SMART COUNTRY ASSIGNMENT
             country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
             
+            # 🏆 CAPTAIN SYSTEM: Track points
+            self._update_captain_points(username, country, diamond_count)
+
             logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | regalo: {gift_name}")
             
             # Apply impulse to country's flag
@@ -824,9 +832,111 @@ class GameEngine:
                         logger.info(f"TEST JOIN: {unique_username} → {random_country} (keyword: {keyword_used})")
                     except Exception as e:
                         logger.error(f"Error adding test join to queue: {e}")
-    
+
+                elif event.key == pygame.K_k:  # K = Test Captain Points
+                    # Add random points to random user in random country
+                    import time
+                    
+                    countries = list(self.physics_world.racers.keys())
+                    test_country = random.choice(countries)
+                    
+                    test_user = f"User{int(time.time() * 1000) % 100}"
+                    test_points = random.randint(50, 500)
+                    
+                    self._update_captain_points(test_user, test_country, test_points)
+                    logger.info(f"TEST CAPTAIN: {test_user} → {test_country} (+{test_points}💎)")
+
+    def _update_captain_points(self, username: str, country: str, points: int) -> None:
+        """
+        Update session points and check for new captain.
+        
+        Args:
+            username: User who sent the gift
+            country: Country team the user belongs to
+            points: Diamond count from the gift
+        """
+        # Initialize country tracking if needed
+        if country not in self.session_points:
+            self.session_points[country] = {}
+        
+        # Add points to user's total
+        if username not in self.session_points[country]:
+            self.session_points[country][username] = 0
+        
+        self.session_points[country][username] += points
+        
+        # Check for new captain
+        old_captain = self.current_captains.get(country, "")
+        new_captain = self.get_mvp_for_country(country)
+        
+        if new_captain and new_captain != old_captain:
+            self.current_captains[country] = new_captain
+            self._announce_new_captain(country, new_captain, old_captain)
+            logger.info(f"👑 NEW CAPTAIN: {new_captain} leads {country} with {self.session_points[country][new_captain]}💎")
+
+    def get_mvp_for_country(self, country: str) -> str:
+        """
+        Get the MVP (most points) for a specific country.
+        In case of tie, returns the first user to reach that score.
+        
+        Args:
+            country: Country to check
+            
+        Returns:
+            Username of MVP, or empty string if no contributions
+        """
+        if country not in self.session_points:
+            return ""
+        
+        country_points = self.session_points[country]
+        if not country_points:
+            return ""
+        
+        # Find max points
+        max_points = max(country_points.values())
+        
+        # Find first user to reach max points (maintains insertion order)
+        for username, points in country_points.items():
+            if points == max_points:
+                return username
+        
+        return ""
+
+    def _announce_new_captain(self, country: str, new_captain: str, old_captain: str) -> None:
+        """
+        Trigger visual effect when captain changes.
+        
+        Args:
+            country: Country that got a new captain
+            new_captain: Username of new captain
+            old_captain: Username of previous captain (can be empty)
+        """
+        # Find racer position for floating text
+        if country not in self.physics_world.racers:
+            return
+        
+        racer = self.physics_world.racers[country]
+        lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
+        
+        # Golden floating text for new captain
+        self.spawn_floating_text(
+            f"¡NUEVO CAPITÁN: @{new_captain}!",
+            200,  # Mid-lane position
+            lane_y,
+            (255, 215, 0)  # Gold color
+        )
+        
+        # Set timer for captain highlight effect
+        self.captain_change_timer[country] = 90  # 1.5 seconds at 60fps
+
     def update(self, dt: float) -> None:
         """Update physics and particles."""
+        # Update captain change timers
+        for country in list(self.captain_change_timer.keys()):
+            self.captain_change_timer[country] -= 1
+            if self.captain_change_timer[country] <= 0:
+                del self.captain_change_timer[country]
+
         self.physics_world.update(dt)
         self.update_particles(dt)
         self.update_floating_texts()
@@ -984,6 +1094,72 @@ class GameEngine:
         )
         text_rect = text_enhanced.get_rect(center=(ix, iy))
         self.render_surface.blit(text_enhanced, text_rect)
+
+        # 👑 CAPTAIN LABEL
+        self._render_captain_label(racer, ix, iy)
+
+    def _render_captain_label(self, racer, flag_x: int, flag_y: int) -> None:
+        """
+        Render captain name below country flag.
+        
+        Args:
+            racer: Racer object with country info
+            flag_x: X position of flag center
+            flag_y: Y position of flag center
+        """
+        country = racer.country
+        captain = self.current_captains.get(country, "")
+        
+        # Position below the flag
+        label_y = flag_y + 35  # Below flag and country name
+        
+        if captain:
+            # Get points for display
+            points = self.session_points.get(country, {}).get(captain, 0)
+            captain_text = f"@{captain} - ({points})"
+            
+            # Special highlight if just became captain
+            if country in self.captain_change_timer:
+                color = (255, 255, 0)  # Bright yellow for new captain
+                font_size = 15
+            else:
+                color = (255, 215, 0)  # Gold for established captain
+                font_size = 12
+            
+            # Render with enhanced text (outline)
+            try:
+                captain_font = pygame.font.SysFont("Arial", font_size, bold=True)
+                captain_surface = self._render_text_enhanced(
+                    captain_text,
+                    captain_font,
+                    color,
+                    outline_color=(0, 0, 0),
+                    outline_width=2
+                )
+                
+                captain_rect = captain_surface.get_rect(center=(flag_x, label_y))
+                self.render_surface.blit(captain_surface, captain_rect)
+                
+            except Exception as e:
+                logger.debug(f"Error rendering captain label: {e}")
+        else:
+            # No captain yet - optional "Sin Capitán" text
+            if self.game_state == 'RACING':  # Only show during active race
+                try:
+                    no_captain_font = pygame.font.SysFont("Arial", 10)
+                    no_captain_surface = self._render_text_enhanced(
+                        "Sin Capitán",
+                        no_captain_font,
+                        (128, 128, 128),  # Gray
+                        outline_color=(0, 0, 0),
+                        outline_width=1
+                    )
+                    
+                    no_captain_rect = no_captain_surface.get_rect(center=(flag_x, label_y))
+                    self.render_surface.blit(no_captain_surface, no_captain_rect)
+                    
+                except Exception:
+                    pass  # Skip if font fails
 
     def _render_sprite(
         self, 
@@ -1809,6 +1985,13 @@ class GameEngine:
         # Change to IDLE state
         self.game_state = 'IDLE'
         self.idle_animation_time = 0.0        
+        logger.info("🎮 Game state: IDLE (race reset complete)")
+
+        # 👑 Clear captain system
+        self.session_points.clear()
+        self.current_captains.clear()
+        self.captain_change_timer.clear()
+        
         logger.info("🎮 Game state: IDLE (race reset complete)")
     
     def _get_user_country_with_autojoin(self, username: str, gift_name: str) -> tuple[str, str]:
