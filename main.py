@@ -13,6 +13,8 @@ import signal
 import sys
 import os
 import ssl
+import certifi
+
 from typing import Optional
 
 from src.config import FPS
@@ -21,6 +23,9 @@ from src.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
 
+# Configurar certificados SSL para el ejecutable
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 ssl._create_default_https_context = ssl._create_unverified_context
 
 logging.basicConfig(

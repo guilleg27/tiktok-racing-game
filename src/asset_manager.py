@@ -279,7 +279,7 @@ class AudioManager:
         loaded_count = 0
         for sound_name, sound_path in sound_files.items():
             try:
-                full_path = Path(sound_path)
+                full_path = Path(resource_path(sound_path))
                 
                 if not full_path.exists():
                     logger.warning(f"Audio file not found: {sound_path}")
