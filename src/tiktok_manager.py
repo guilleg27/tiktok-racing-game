@@ -37,43 +37,50 @@ class TikTokManager:
     
     def _extract_username(self, event) -> str:
         """Extract username from event using multiple fallback methods."""
+        import time
+        
+        # Método 1: Atributos directos del event.user (más seguro)
         try:
-            # Método 1: Atributos directos del event
             if hasattr(event, 'user') and event.user:
                 user = event.user
                 
-                # Prioridad: unique_id > nickname
-                if hasattr(user, 'unique_id') and user.unique_id:
-                    return str(user.unique_id)
-                if hasattr(user, 'nickname') and user.nickname:
-                    return str(user.nickname)
-                if hasattr(user, 'display_name') and user.display_name:
-                    return str(user.display_name)
-            
-            # Método 2: Proto buffer
+                # Intentar acceder a cada atributo de forma segura
+                safe_attrs = ['unique_id', 'uniqueId', 'nickname', 'display_name', 'displayName']
+                for attr in safe_attrs:
+                    try:
+                        if hasattr(user, attr):
+                            val = getattr(user, attr, None)
+                            if val and str(val).strip():
+                                return str(val).strip()
+                    except Exception:
+                        continue  # Continuar con el siguiente atributo si este falla
+        except Exception:
+            pass  # Continuar con otros métodos
+        
+        # Método 2: Proto buffer (acceso más seguro)
+        try:
             if hasattr(event, '_proto') and event._proto:
                 proto = event._proto
                 if hasattr(proto, 'user') and proto.user:
                     user = proto.user
                     
-                    # Probar múltiples nombres de atributos
-                    for attr in ['uniqueId', 'unique_id', 'nickname', 'nickName', 'nick_name', 'displayName', 'display_name']:
-                        if hasattr(user, attr):
-                            val = getattr(user, attr)
-                            if val and str(val).strip():
-                                return str(val)
+                    # Probar múltiples nombres de atributos de forma segura
+                    safe_attrs = ['uniqueId', 'unique_id', 'nickname', 'nick_name', 'displayName', 'display_name']
+                    for attr in safe_attrs:
+                        try:
+                            if hasattr(user, attr):
+                                val = getattr(user, attr, None)
+                                if val and str(val).strip():
+                                    return str(val).strip()
+                        except Exception:
+                            continue  # Continuar con el siguiente atributo si este falla
+        except Exception:
+            pass  # Continuar con fallback
         
-            # Método 3: Fallback con ID único temporal
-            import time
-            fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
-            logger.warning(f"Could not extract username, using fallback: {fallback_name}")
-            return fallback_name
-            
-        except Exception as e:
-            import time
-            fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
-            logger.error(f"Error extracting username: {e}, using fallback: {fallback_name}")
-            return fallback_name
+        # Método 3: Fallback con ID único temporal
+        fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
+        logger.debug(f"Could not extract username, using fallback: {fallback_name}")
+        return fallback_name
     
     def _extract_diamond_count(self, event, gift_name: str) -> int:
         """Extract diamond count from event or use default mapping."""

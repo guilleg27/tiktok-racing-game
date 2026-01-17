@@ -608,6 +608,37 @@ class GameEngine:
                     )
                 )
             
+            # Apply combat effects (Rosa, Pesa, Helado)
+            combat_result = self.physics_world.apply_gift_effect(
+                gift_name=gift_name,
+                sender_country=country
+            )
+            
+            # Handle freeze effect
+            if combat_result['effect'] == 'freeze':
+                target = combat_result['target']
+                if target in self.physics_world.racers:
+                    # Play freeze sound effect
+                    self.audio_manager.play_freeze_sfx()
+                    
+                    # Spawn floating text on the frozen target
+                    target_racer = self.physics_world.racers[target]
+                    self.spawn_floating_text(
+                        "FREEZE!", 
+                        target_racer.body.position.x, 
+                        target_racer.body.position.y,
+                        COLOR_TEXT_FREEZE
+                    )
+                    
+                    # Emit freeze particles (blue ice effect)
+                    self.emit_explosion(
+                        pos=(target_racer.body.position.x, target_racer.body.position.y),
+                        color=(100, 200, 255),  # Azul hielo
+                        count=30,
+                        power=1.0,
+                        diamond_count=0
+                    )
+            
             if self.database:
                 await self.database.save_event_to_db(
                     user=username,

@@ -214,6 +214,7 @@ SOUND_BGM = os.path.join("assets", "audio", "bgm.wav")
 SOUND_SMALL_GIFT = os.path.join("assets", "audio", "small_gift.wav")
 SOUND_BIG_GIFT = os.path.join("assets", "audio", "big_gift.wav")
 SOUND_VICTORY = os.path.join("assets", "audio", "victory.wav")
+SOUND_FREEZE = os.path.join("assets", "audio", "freeze_sfx.wav")
 
 # Audio volume levels
 VOL_BGM = 0.3      

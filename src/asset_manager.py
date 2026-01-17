@@ -175,7 +175,7 @@ import threading
 import time
 
 from .config import (
-    SOUND_BGM, SOUND_SMALL_GIFT, SOUND_BIG_GIFT, SOUND_VICTORY,
+    SOUND_BGM, SOUND_SMALL_GIFT, SOUND_BIG_GIFT, SOUND_VICTORY, SOUND_FREEZE,
     VOL_BGM, VOL_SFX, GIFT_DIAMOND_VALUES
 )
 
@@ -273,7 +273,8 @@ class AudioManager:
             'bgm': SOUND_BGM,
             'small_gift': SOUND_SMALL_GIFT,
             'big_gift': SOUND_BIG_GIFT,
-            'victory': SOUND_VICTORY
+            'victory': SOUND_VICTORY,
+            'freeze': SOUND_FREEZE
         }
         
         loaded_count = 0
@@ -368,6 +369,30 @@ class AudioManager:
             
         except Exception as e:
             logger.error(f"Failed to play SFX {sound_key}: {e}")
+    
+    def play_freeze_sfx(self) -> None:
+        """
+        Reproduce el sonido de efecto freeze cuando se congela un país.
+        """
+        if not self._initialized:
+            logger.debug("Audio not initialized, skipping freeze SFX")
+            return
+        
+        if 'freeze' not in self._sound_cache:
+            if 'freeze' not in self._missing_sounds:
+                logger.debug("Freeze sound (freeze_sfx.wav) not available")
+            return
+        
+        try:
+            # Play freeze sound on any available channel
+            sound = self._sound_cache['freeze']
+            sound.set_volume(VOL_SFX)
+            sound.play()
+            
+            logger.info(f"✅ Played freeze SFX: jump (volume: {VOL_SFX})")
+            
+        except Exception as e:
+            logger.error(f"Failed to play freeze SFX: {e}")
     
     def lower_bgm_volume(self, duration: float = 2.0) -> None:
         """

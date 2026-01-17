@@ -1,0 +1,9 @@
+Regla de Portabilidad y Recursos:
+
+Acceso a Archivos: Queda estrictamente prohibido el uso de rutas directas (strings) para cargar recursos. Se debe utilizar siempre la función resource_path() de src/resources.py.
+
+Normalización: Asegurar que cada ruta pase por os.path.normpath() y os.path.join() para garantizar la compatibilidad entre separadores de Windows (\) y Mac (/).
+
+Gestión de Objetos: Toda nueva funcionalidad de medios debe integrarse dentro de AssetManager o AudioManager. Estos componentes son los únicos responsables de invocar resource_path() antes de crear objetos de tipo Path o cargar texturas/sonidos.
+
+Empaquetado: Mantener siempre la compatibilidad con sys._MEIPASS dentro de resource_path() para no romper el ejecutable generado por build_app.py.
