@@ -228,6 +228,47 @@ class CloudManager:
             logger.error(f"❌ Supabase query error: {e}")
             return []
     
+    async def get_global_ranking(self, limit: int = 3) -> list[Dict[str, Any]]:
+        """
+        Fetch global ranking of countries by total wins.
+        
+        Args:
+            limit: Maximum number of countries to fetch (default: 3 for Top 3)
+            
+        Returns:
+            List of country records sorted by wins DESC
+            Format: [{'country': 'Argentina', 'total_wins': 45, 'total_diamonds': 15000}, ...]
+        """
+        if not self.enabled:
+            return []
+        
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._get_global_ranking_blocking,
+                limit
+            )
+            return result
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch global ranking: {e}")
+            return []
+    
+    def _get_global_ranking_blocking(self, limit: int) -> list[Dict[str, Any]]:
+        """Blocking version of get_global_ranking."""
+        try:
+            response = self.client.table("global_country_stats") \
+                .select("country, total_wins, total_diamonds, last_updated") \
+                .order("total_wins", desc=True) \
+                .order("total_diamonds", desc=True) \
+                .limit(limit) \
+                .execute()
+            
+            return response.data if response.data else []
+        except Exception as e:
+            logger.error(f"❌ Supabase query error: {e}")
+            return []
+    
     async def get_country_stats(self, country: str) -> Optional[Dict[str, Any]]:
         """
         Fetch global stats for a specific country.

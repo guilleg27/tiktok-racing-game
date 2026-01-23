@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 import math
 import random
+import time
 from .cloud_manager import CloudManager
 from dataclasses import dataclass
 
@@ -229,6 +230,11 @@ class GameEngine:
         
         # Cloud sync control
         self.race_synced = False  # Flag to prevent multiple syncs per race
+        
+        # 🏆 Global Ranking Panel
+        self.global_rank_data: list[dict] = []  # Top 3 countries by wins
+        self.global_rank_last_update = 0.0  # Timestamp of last update
+        self.global_rank_loading = False  # Flag to prevent multiple fetches
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -980,6 +986,10 @@ class GameEngine:
         # Update idle animation timer
         if self.game_state == 'IDLE':
             self.idle_animation_time += dt
+            
+            # 🏆 Load global ranking on first IDLE state (non-blocking)
+            if not self.global_rank_data and not self.global_rank_loading and self.global_rank_last_update == 0:
+                self._trigger_ranking_update()
         
         # 🎯 LEADER CHANGE DETECTION (VFX)
         leader_info = self.physics_world.get_leader()
@@ -1011,9 +1021,9 @@ class GameEngine:
                 winner_captain = self.current_captains.get(winner_country, "Unknown")
                 winner_points = self.session_points.get(winner_country, {}).get(winner_captain, 0)
                 
-                # Async sync to cloud (runs in background, won't block rendering)
+                # Async sync to cloud + update ranking (runs in background, won't block rendering)
                 asyncio.create_task(
-                    self.cloud_manager.sync_race_result(
+                    self._sync_and_update_ranking(
                         country=winner_country,
                         winner_name=winner_captain,
                         total_diamonds=winner_points,
@@ -2011,6 +2021,129 @@ class GameEngine:
             distance_surface = winner_font.render(distance_text, True, (200, 200, 200))
             distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, box_y + 165))
             self.render_surface.blit(distance_surface, distance_rect)
+        
+        # 🏆 Render Global Ranking Panel
+        self._render_global_ranking()
+    
+    def _render_global_ranking(self) -> None:
+        """
+        Render global ranking panel (Top 3 countries).
+        Displays in IDLE state as an elegant panel.
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        # Only render if we have data
+        if not self.global_rank_data:
+            return
+        
+        # Panel dimensions and position (top-right corner with margin)
+        panel_width = 280
+        panel_height = 160
+        margin = 20
+        panel_x = SCREEN_WIDTH - panel_width - margin
+        panel_y = margin
+        
+        # Background panel with gradient
+        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        
+        # Gradient background (dark blue to darker)
+        for i in range(panel_height):
+            ratio = i / panel_height
+            r = int(15 + (25 - 15) * ratio)
+            g = int(20 + (35 - 20) * ratio)
+            b = int(40 + (55 - 40) * ratio)
+            pygame.draw.line(panel_surface, (r, g, b, 220), (0, i), (panel_width, i))
+        
+        # Golden border
+        pygame.draw.rect(panel_surface, (255, 215, 0, 200), (0, 0, panel_width, panel_height), 2, border_radius=10)
+        
+        self.render_surface.blit(panel_surface, (panel_x, panel_y))
+        
+        # Title: "*** RÉCORDS MUNDIALES ***"
+        title_font = pygame.font.SysFont("Arial", 16, bold=True)
+        title_text = "*** RECORDS MUNDIALES ***"
+        title_surface = self._render_text_enhanced(
+            title_text,
+            title_font,
+            (255, 223, 128),  # Light gold
+            outline_color=(0, 0, 0),
+            outline_width=2
+        )
+        title_rect = title_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + 20))
+        self.render_surface.blit(title_surface, title_rect)
+        
+        # Render Top 3 countries
+        entry_font = pygame.font.SysFont("Arial", 14, bold=True)
+        medal_font = pygame.font.SysFont("Arial", 16, bold=True)
+        
+        start_y = panel_y + 50
+        line_height = 32
+        
+        # Medal colors (gold, silver, bronze)
+        medal_colors = [
+            (255, 215, 0),   # Gold
+            (192, 192, 192), # Silver
+            (205, 127, 50)   # Bronze
+        ]
+        
+        for i, entry in enumerate(self.global_rank_data[:3]):
+            country = entry.get('country', 'Unknown')
+            wins = entry.get('total_wins', 0)
+            
+            y_pos = start_y + i * line_height
+            
+            # Medal position (1º, 2º, 3º)
+            medals = ['1º', '2º', '3º']
+            medal = medals[i] if i < 3 else f"{i+1}º"
+            medal_color = medal_colors[i] if i < 3 else (200, 200, 200)
+            
+            # Render medal with color
+            medal_surface = medal_font.render(medal, True, medal_color)
+            self.render_surface.blit(medal_surface, (panel_x + 15, y_pos))
+            
+            # Render country name with flag abbreviation
+            country_abbrev = self._get_country_abbrev(country)
+            entry_text = f"[{country_abbrev}] {country[:8]}: {wins}"
+            entry_color = (255, 223, 128) if i == 0 else (220, 220, 220)  # Gold for 1st
+            entry_surface = entry_font.render(entry_text, True, entry_color)
+            self.render_surface.blit(entry_surface, (panel_x + 55, y_pos + 2))
+        
+        # Footer: last update time (optional)
+        if self.global_rank_last_update > 0:
+            footer_font = pygame.font.SysFont("Arial", 9)
+            elapsed = time.time() - self.global_rank_last_update
+            if elapsed < 60:
+                footer_text = "Actualizado hace unos segundos"
+            elif elapsed < 3600:
+                footer_text = f"Actualizado hace {int(elapsed/60)}m"
+            else:
+                footer_text = f"Actualizado hace {int(elapsed/3600)}h"
+            
+            footer_surface = footer_font.render(footer_text, True, (150, 150, 150))
+            footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 10))
+            self.render_surface.blit(footer_surface, footer_rect)
+    
+    def _get_country_abbrev(self, country: str) -> str:
+        """
+        Get country abbreviation for display.
+        
+        Args:
+            country: Country name (e.g., "Argentina", "Brasil")
+            
+        Returns:
+            Country abbreviation (e.g., "ARG", "BRA")
+        """
+        abbrev_map = {
+            'Argentina': 'ARG',
+            'Brasil': 'BRA',
+            'Mexico': 'MEX',
+            'España': 'ESP',
+            'Colombia': 'COL',
+            'Chile': 'CHI',
+            'Peru': 'PER',
+            'Venezuela': 'VEN'
+        }
+        return abbrev_map.get(country, '???')
     
     def _return_to_idle(self) -> None:
         """Return to IDLE state and save winner info."""
@@ -2057,6 +2190,64 @@ class GameEngine:
         self.winner_glow_alpha = 0
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
+    
+    async def _sync_and_update_ranking(
+        self,
+        country: str,
+        winner_name: str,
+        total_diamonds: int,
+        streamer_name: str
+    ) -> None:
+        """
+        Sync race result to cloud and then update global ranking.
+        This ensures ranking is refreshed after each successful sync.
+        """
+        # First, sync the race result
+        result = await self.cloud_manager.sync_race_result(
+            country=country,
+            winner_name=winner_name,
+            total_diamonds=total_diamonds,
+            streamer_name=streamer_name
+        )
+        
+        # If sync was successful, update the ranking
+        if result:
+            logger.info(f"☁️ Sync successful, updating ranking...")
+            await self._fetch_global_ranking()
+    
+    async def _fetch_global_ranking(self) -> None:
+        """
+        Fetch global ranking from Supabase (non-blocking).
+        Updates self.global_rank_data with Top 3 countries.
+        """
+        if self.global_rank_loading:
+            return  # Already fetching
+        
+        self.global_rank_loading = True
+        
+        try:
+            ranking = await self.cloud_manager.get_global_ranking(limit=3)
+            
+            if ranking:
+                self.global_rank_data = ranking
+                self.global_rank_last_update = time.time()
+                logger.info(f"🏆 Global ranking updated: {len(ranking)} countries")
+            else:
+                logger.debug("🏆 No global ranking data available")
+        
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch global ranking: {e}")
+        
+        finally:
+            self.global_rank_loading = False
+    
+    def _trigger_ranking_update(self) -> None:
+        """
+        Trigger an async update of the global ranking.
+        Call this after successful race sync.
+        """
+        if not self.global_rank_loading:
+            asyncio.create_task(self._fetch_global_ranking())
     
     def _get_user_country_with_autojoin(self, username: str, gift_name: str) -> tuple[str, str]:
         """
