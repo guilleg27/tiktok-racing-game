@@ -136,6 +136,9 @@ class GameEngine:
     Enhanced with professional particle system (juice).
     """
     
+    # Maximum number of floating texts rendered at once
+    MAX_FLOATING_TEXTS: int = 10
+    
     def __init__(
         self, 
         queue: asyncio.Queue, 
@@ -235,6 +238,9 @@ class GameEngine:
         self.global_rank_data: list[dict] = []  # Top 3 countries by wins
         self.global_rank_last_update = 0.0  # Timestamp of last update
         self.global_rank_loading = False  # Flag to prevent multiple fetches
+        
+        # 3D Visualization animation state
+        self.ranking_3d_animation_time = 0.0  # For animated effects
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -606,7 +612,7 @@ class GameEngine:
                     diamond_count=diamond_count
                 )
                 
-                # Emit floating text feedback
+                # Emit floating text feedback (respect global limit)
                 self.floating_texts.append(
                     FloatingText(
                         text=f"{gift_name} x{gift_count}",
@@ -618,6 +624,8 @@ class GameEngine:
                         font_size=20
                     )
                 )
+                if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+                    self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
             
             # Apply combat effects (Rosa, Pesa, Helado)
             combat_result = self.physics_world.apply_gift_effect(
@@ -986,6 +994,7 @@ class GameEngine:
         # Update idle animation timer
         if self.game_state == 'IDLE':
             self.idle_animation_time += dt
+            self.ranking_3d_animation_time += dt * 0.5  # Slower animation for 3D effect
             
             # 🏆 Load global ranking on first IDLE state (non-blocking)
             if not self.global_rank_data and not self.global_rank_loading and self.global_rank_last_update == 0:
@@ -1454,6 +1463,16 @@ class GameEngine:
         if not self.physics_world.race_finished:
             return
 
+        # Render 3D ranking visualization behind the final classification
+        # Uses global Supabase ranking to create futuristic tracks
+        if self.global_rank_data:
+            self._render_3d_ranking_visualization()
+
+        # Dim background behind the final classification panel
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        self.render_surface.blit(overlay, (0, 0))
+
         leaderboard = self.physics_world.get_leaderboard()
         table_w, table_h = 420, 420
         table_x = (SCREEN_WIDTH - table_w) // 2
@@ -1775,8 +1794,11 @@ class GameEngine:
     
     def sanitize_username(self, username: str) -> str:
         """Limpia usernames problemáticos que pueden romper el renderizado."""
-        # Eliminar emojis y caracteres especiales
-        sanitized = ''.join(char for char in username if ord(char) < 127)
+        # Eliminar solo caracteres de control; permitir acentos y la mayoría de símbolos
+        sanitized = ''.join(
+            ch for ch in username
+            if ch.isprintable() and ch not in {'\n', '\r', '\t'}
+        )
         
         # Limitar longitud
         if len(sanitized) > 20:
@@ -1862,6 +1884,10 @@ class GameEngine:
             font_size=FLOATING_TEXT_FONT_SIZE
         )
         self.floating_texts.append(floating_text)
+        
+        # Keep floating texts under the configured limit
+        if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+            self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
     def _render_text_enhanced(
         self,
@@ -2022,8 +2048,9 @@ class GameEngine:
             distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, box_y + 165))
             self.render_surface.blit(distance_surface, distance_rect)
         
-        # 🏆 Render Global Ranking Panel
-        self._render_global_ranking()
+        # 🏆 Render Global Ranking Panel (futuristic style) only
+        # 3D tracks visualization is reserved for post-race screens
+        self._render_global_ranking_futuristic()
     
     def _render_global_ranking(self) -> None:
         """
@@ -2122,6 +2149,317 @@ class GameEngine:
             footer_surface = footer_font.render(footer_text, True, (150, 150, 150))
             footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 10))
             self.render_surface.blit(footer_surface, footer_rect)
+    
+    def _render_global_ranking_futuristic(self) -> None:
+        """
+        Render futuristic holographic-style global ranking panel.
+        Features: Glowing cyan borders, particle effects, animated glow.
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        if not self.global_rank_data:
+            return
+        
+        # Panel dimensions (centered at top)
+        panel_width = 450
+        panel_height = 180
+        panel_x = (SCREEN_WIDTH - panel_width) // 2
+        panel_y = 20
+        
+        # Create panel surface with alpha
+        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        
+        # Animated glow intensity
+        glow_intensity = 0.7 + 0.3 * math.sin(self.ranking_3d_animation_time * 2.0)
+        
+        # Futuristic gradient background (dark with cyan tint)
+        for i in range(panel_height):
+            ratio = i / panel_height
+            # Dark blue to darker with cyan hint
+            r = int(10 + (20 - 10) * ratio)
+            g = int(20 + (40 - 20) * ratio)
+            b = int(40 + (60 - 40) * ratio)
+            # Add cyan glow effect
+            cyan_glow = int(30 * glow_intensity * (1 - abs(ratio - 0.5) * 2))
+            g = min(255, g + cyan_glow)
+            b = min(255, b + cyan_glow * 2)
+            pygame.draw.line(panel_surface, (r, g, b, 240), (0, i), (panel_width, i))
+        
+        # Glowing cyan border (multiple layers for glow effect)
+        border_color_base = (100, 200, 255)  # Cyan
+        border_alpha = int(200 * glow_intensity)
+        
+        # Outer glow
+        for i in range(3):
+            alpha = border_alpha // (i + 2)
+            pygame.draw.rect(
+                panel_surface, 
+                (*border_color_base, alpha), 
+                (i, i, panel_width - i*2, panel_height - i*2), 
+                2, 
+                border_radius=12 - i
+            )
+        
+        # Main border
+        pygame.draw.rect(
+            panel_surface, 
+            (*border_color_base, border_alpha), 
+            (0, 0, panel_width, panel_height), 
+            3, 
+            border_radius=12
+        )
+        
+        # Inner highlight
+        pygame.draw.rect(
+            panel_surface, 
+            (150, 220, 255, 100), 
+            (3, 3, panel_width - 6, panel_height - 6), 
+            1, 
+            border_radius=9
+        )
+        
+        self.render_surface.blit(panel_surface, (panel_x, panel_y))
+        
+        # Title with glow effect
+        title_font = pygame.font.SysFont("Arial", 20, bold=True)
+        title_text = "* RECORDS MUNDIALES *"
+        
+        # Title with cyan glow
+        title_color = (150, 220, 255)  # Bright cyan
+        title_surface = self._render_text_enhanced(
+            title_text,
+            title_font,
+            title_color,
+            outline_color=(0, 50, 100),
+            outline_width=3
+        )
+        title_rect = title_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + 25))
+        self.render_surface.blit(title_surface, title_rect)
+        
+        # Render Top 3 with enhanced styling
+        entry_font = pygame.font.SysFont("Arial", 16, bold=True)
+        medal_font = pygame.font.SysFont("Arial", 18, bold=True)
+        
+        start_y = panel_y + 65
+        line_height = 35
+        
+        # Neon colors for medals
+        neon_colors = [
+            (255, 215, 0),      # Gold (bright)
+            (192, 192, 255),    # Silver (with blue tint)
+            (255, 150, 100)     # Bronze (with orange tint)
+        ]
+        
+        for i, entry in enumerate(self.global_rank_data[:3]):
+            country = entry.get('country', 'Unknown')
+            wins = entry.get('total_wins', 0)
+            
+            y_pos = start_y + i * line_height
+            
+            # Medal with glow
+            medals = ['1º', '2º', '3º']
+            medal = medals[i] if i < 3 else f"{i+1}º"
+            medal_color = neon_colors[i] if i < 3 else (200, 200, 200)
+            
+            # Glow effect for medal
+            glow_surf = medal_font.render(medal, True, (*medal_color, 100))
+            for offset in [(1, 1), (-1, -1), (1, -1), (-1, 1)]:
+                self.render_surface.blit(glow_surf, (panel_x + 25 + offset[0], y_pos + offset[1]))
+            
+            medal_surface = medal_font.render(medal, True, medal_color)
+            self.render_surface.blit(medal_surface, (panel_x + 25, y_pos))
+            
+            # Country entry with abbreviation
+            country_abbrev = self._get_country_abbrev(country)
+            entry_text = f"[{country_abbrev}] {country[:12]}: {wins}"
+            entry_color = (255, 255, 255) if i == 0 else (220, 240, 255)  # White for 1st, cyan-tinted for others
+            entry_surface = entry_font.render(entry_text, True, entry_color)
+            self.render_surface.blit(entry_surface, (panel_x + 70, y_pos + 2))
+        
+        # Footer with update time
+        if self.global_rank_last_update > 0:
+            footer_font = pygame.font.SysFont("Arial", 10)
+            elapsed = time.time() - self.global_rank_last_update
+            if elapsed < 60:
+                footer_text = "Actualizado hace unos segundos"
+            elif elapsed < 3600:
+                footer_text = f"Actualizado hace {int(elapsed/60)}m"
+            else:
+                footer_text = f"Actualizado hace {int(elapsed/3600)}h"
+            
+            footer_surface = footer_font.render(footer_text, True, (150, 200, 255))
+            footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 15))
+            self.render_surface.blit(footer_surface, footer_rect)
+    
+    def _render_3d_ranking_visualization(self) -> None:
+        """
+        Render 3D isometric visualization of country rankings.
+        Creates a futuristic "staircase" or "tracks" effect with flags on neon lines.
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        if not self.global_rank_data or len(self.global_rank_data) < 3:
+            return
+        
+        # Center of visualization
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2 + 80
+        
+        # Isometric projection parameters
+        track_count = min(8, len(self.global_rank_data))  # Show up to 8 countries
+        track_spacing = 35  # Vertical spacing between tracks
+        track_length = 400  # Horizontal length of each track
+        track_start_x = center_x - track_length // 2
+        perspective_factor = 0.3  # How much tracks recede into distance
+        
+        # Neon track colors (rainbow spectrum)
+        neon_colors = [
+            (255, 100, 100),   # Red
+            (255, 150, 50),    # Orange
+            (255, 220, 0),     # Yellow
+            (150, 255, 100),   # Green
+            (100, 200, 255),   # Cyan
+            (150, 100, 255),   # Purple
+            (255, 100, 200),   # Pink
+            (200, 200, 255)    # Light blue
+        ]
+        
+        # Draw tracks (isometric perspective)
+        for i, entry in enumerate(self.global_rank_data[:track_count]):
+            country = entry.get('country', 'Unknown')
+            wins = entry.get('total_wins', 0)
+            
+            # Calculate track position (higher rank = higher on screen, closer to viewer)
+            track_y = center_y - (i * track_spacing)
+            track_width = 8 - (i * 0.5)  # Tracks get thinner as they recede
+            track_width = max(3, track_width)
+            
+            # Perspective: tracks further back are shorter and offset
+            perspective_offset = i * perspective_factor * 20
+            track_x_start = track_start_x + perspective_offset
+            track_x_end = track_start_x + track_length - perspective_offset
+            
+            # Track color (cycling through neon colors)
+            track_color = neon_colors[i % len(neon_colors)]
+            
+            # Draw track with glow effect
+            # Outer glow
+            for glow_radius in range(3, 0, -1):
+                alpha = 50 // (glow_radius + 1)
+                glow_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                pygame.draw.line(
+                    glow_surf,
+                    (*track_color, alpha),
+                    (track_x_start, track_y),
+                    (track_x_end, track_y),
+                    int(track_width) + glow_radius * 2
+                )
+                self.render_surface.blit(glow_surf, (0, 0))
+            
+            # Main track line
+            pygame.draw.line(
+                self.render_surface,
+                track_color,
+                (track_x_start, track_y),
+                (track_x_end, track_y),
+                int(track_width)
+            )
+            
+            # Flag position on track (based on wins, animated)
+            max_wins = max((e.get('total_wins', 0) for e in self.global_rank_data[:track_count]), default=1)
+            progress = wins / max_wins
+            progress = min(1.0, max(0.0, progress))
+            
+            # Animated position (subtle movement)
+            anim_offset = math.sin(self.ranking_3d_animation_time * 1.5 + i) * 5
+            flag_x = track_x_start + (track_length - perspective_offset * 2) * progress + anim_offset
+            flag_y = track_y
+            
+            # Draw flag circle/emblem (simplified - using country abbreviation)
+            flag_radius = 20 - (i * 1.5)
+            flag_radius = max(12, flag_radius)
+            
+            # Flag glow
+            for glow in range(3):
+                glow_alpha = 100 // (glow + 1)
+                pygame.draw.circle(
+                    self.render_surface,
+                    (*track_color, glow_alpha),
+                    (int(flag_x), int(flag_y)),
+                    int(flag_radius) + glow * 2
+                )
+            
+            # Flag background circle
+            pygame.draw.circle(
+                self.render_surface,
+                (30, 30, 50),
+                (int(flag_x), int(flag_y)),
+                int(flag_radius)
+            )
+            pygame.draw.circle(
+                self.render_surface,
+                track_color,
+                (int(flag_x), int(flag_y)),
+                int(flag_radius),
+                2
+            )
+            
+            # Country abbreviation on flag
+            abbrev = self._get_country_abbrev(country)
+            flag_font = pygame.font.SysFont("Arial", int(flag_radius * 0.8), bold=True)
+            abbrev_surf = flag_font.render(abbrev, True, (255, 255, 255))
+            abbrev_rect = abbrev_surf.get_rect(center=(int(flag_x), int(flag_y)))
+            self.render_surface.blit(abbrev_surf, abbrev_rect)
+            
+            # Particle effects around flags (sparkles)
+            particle_count = 8
+            for p in range(particle_count):
+                angle = (self.ranking_3d_animation_time * 2.0 + p * (2 * math.pi / particle_count))
+                particle_dist = flag_radius + 15 + math.sin(self.ranking_3d_animation_time * 3 + p) * 5
+                particle_x = flag_x + math.cos(angle) * particle_dist
+                particle_y = flag_y + math.sin(angle) * particle_dist
+                
+                # Twinkling particles
+                twinkle = (math.sin(self.ranking_3d_animation_time * 5 + p) + 1) / 2
+                particle_size = int(2 + twinkle * 3)
+                particle_alpha = int(150 * twinkle)
+                
+                particle_surf = pygame.Surface((particle_size * 2, particle_size * 2), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    particle_surf,
+                    (*track_color, particle_alpha),
+                    (particle_size, particle_size),
+                    particle_size
+                )
+                self.render_surface.blit(
+                    particle_surf,
+                    (int(particle_x - particle_size), int(particle_y - particle_size))
+                )
+        
+        # Central arch (finish line / achievement gateway)
+        arch_center_x = center_x
+        arch_center_y = center_y - (track_count * track_spacing) - 40
+        arch_radius = 120
+        arch_width = 8
+        
+        # Animated arch glow
+        arch_glow = 0.7 + 0.3 * math.sin(self.ranking_3d_animation_time * 1.5)
+        arch_color = (100, 200, 255)  # Cyan
+        
+        # Draw semi-circular arch (top half)
+        for i in range(5):
+            alpha = int(200 * arch_glow / (i + 1))
+            glow_radius = arch_radius + i * 3
+            arch_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            pygame.draw.arc(
+                arch_surf,
+                (*arch_color, alpha),
+                (arch_center_x - glow_radius, arch_center_y - glow_radius, glow_radius * 2, glow_radius * 2),
+                0,
+                math.pi,
+                arch_width + i * 2
+            )
+            self.render_surface.blit(arch_surf, (0, 0))
     
     def _get_country_abbrev(self, country: str) -> str:
         """

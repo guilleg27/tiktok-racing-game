@@ -11,7 +11,7 @@
 
 **Archivo:** `src/game_engine.py` (línea ~1061)
 
----
+
 
 ### 2. ✅ Panel de Ranking Global
 **Objetivo:** Mostrar Top 3 de países con más victorias en la esquina superior derecha durante estado IDLE.

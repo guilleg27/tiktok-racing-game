@@ -45,7 +45,18 @@ class TikTokManager:
                 user = event.user
                 
                 # Intentar acceder a cada atributo de forma segura
-                safe_attrs = ['unique_id', 'uniqueId', 'nickname', 'display_name', 'displayName']
+                safe_attrs = [
+                    'unique_id',
+                    'uniqueId',
+                    'nickname',
+                    'display_name',
+                    'displayName',
+                    'username',
+                    'userName',
+                    'id',
+                    'displayId',
+                    'display_id',
+                ]
                 for attr in safe_attrs:
                     try:
                         if hasattr(user, attr):
@@ -54,6 +65,14 @@ class TikTokManager:
                                 return str(val).strip()
                     except Exception:
                         continue  # Continuar con el siguiente atributo si este falla
+                
+                # Fallback: intentar str(user) si es legible
+                try:
+                    raw = str(user).strip()
+                    if raw and raw != repr(user):
+                        return raw
+                except Exception:
+                    pass
         except Exception:
             pass  # Continuar con otros métodos
         
@@ -65,7 +84,19 @@ class TikTokManager:
                     user = proto.user
                     
                     # Probar múltiples nombres de atributos de forma segura
-                    safe_attrs = ['uniqueId', 'unique_id', 'nickname', 'nick_name', 'displayName', 'display_name']
+                    safe_attrs = [
+                        'uniqueId',
+                        'unique_id',
+                        'nickname',
+                        'nick_name',
+                        'displayName',
+                        'display_name',
+                        'username',
+                        'userName',
+                        'id',
+                        'displayId',
+                        'display_id',
+                    ]
                     for attr in safe_attrs:
                         try:
                             if hasattr(user, attr):
@@ -74,6 +105,14 @@ class TikTokManager:
                                     return str(val).strip()
                         except Exception:
                             continue  # Continuar con el siguiente atributo si este falla
+                    
+                    # Fallback adicional con str(user)
+                    try:
+                        raw = str(user).strip()
+                        if raw and raw != repr(user):
+                            return raw
+                    except Exception:
+                        pass
         except Exception:
             pass  # Continuar con fallback
         
