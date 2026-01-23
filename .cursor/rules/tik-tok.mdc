@@ -1,0 +1,16 @@
+---
+name: tik-tok
+description: This is a new rule
+---
+
+# Overview
+
+Al trabajar con este proyecto, sigue estas reglas:
+
+No bloquees el Main Loop: Cualquier llamada a red (Supabase/API) debe ser asíncrona o ejecutarse en un hilo separado.
+
+Preserva la Física: No alteres el step de Pymunk ni el manejo de colisiones a menos que se solicite explícitamente.
+
+Multiplataforma: Mantén el soporte para Windows y macOS (especialmente en el manejo de rutas de archivos y drivers de audio).
+
+Seguridad: Utiliza variables de entorno (.env) para cualquier API Key o URL sensible.

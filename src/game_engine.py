@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 import math
 import random
+from .cloud_manager import CloudManager
 from dataclasses import dataclass
 
 import pygame
@@ -143,6 +144,7 @@ class GameEngine:
         self.queue = queue
         self.streamer_name = streamer_name
         self.database = database
+        self.cloud_manager = CloudManager()
         self.running = True
         
         self.messages: list[tuple[str, EventType]] = []
@@ -224,6 +226,9 @@ class GameEngine:
         self.session_points: dict[str, dict[str, int]] = {}  # {country: {username: points}}
         self.current_captains: dict[str, str] = {}           # {country: username}
         self.captain_change_timer: dict[str, int] = {}       # {country: frames_remaining}
+        
+        # Cloud sync control
+        self.race_synced = False  # Flag to prevent multiple syncs per race
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -999,6 +1004,24 @@ class GameEngine:
         
         # Update winner celebration animation
         if self.physics_world.race_finished and self.physics_world.winner:
+            # ☁️ CLOUD SYNC: Sync to Supabase on first detection (non-blocking)
+            if not self.race_synced and self.winner_animation_time < dt * 2:
+                self.race_synced = True
+                winner_country = self.physics_world.winner
+                winner_captain = self.current_captains.get(winner_country, "Unknown")
+                winner_points = self.session_points.get(winner_country, {}).get(winner_captain, 0)
+                
+                # Async sync to cloud (runs in background, won't block rendering)
+                asyncio.create_task(
+                    self.cloud_manager.sync_race_result(
+                        country=winner_country,
+                        winner_name=winner_captain,
+                        total_diamonds=winner_points,
+                        streamer_name=self.streamer_name
+                    )
+                )
+                logger.info(f"☁️ Queued cloud sync: {winner_country} - {winner_captain} ({winner_points}💎)")
+            
             self.winner_animation_time += dt
             
             # Pulse effect (breathing animation)
@@ -1034,6 +1057,8 @@ class GameEngine:
             self.winner_animation_time = 0.0
             self.winner_scale_pulse = 1.0
             self.winner_glow_alpha = 0
+            # ☁️ Reset cloud sync flag when race resets
+            self.race_synced = False
     
     def render(self) -> None:
         """Render all visual elements."""
@@ -2022,6 +2047,14 @@ class GameEngine:
         self.session_points.clear()
         self.current_captains.clear()
         self.captain_change_timer.clear()
+        
+        # ☁️ Reset cloud sync flag for next race
+        self.race_synced = False
+        
+        # 🎬 Reset winner animation time for next race
+        self.winner_animation_time = 0.0
+        self.winner_scale_pulse = 1.0
+        self.winner_glow_alpha = 0
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
     

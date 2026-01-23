@@ -7,3 +7,27 @@ Normalización: Asegurar que cada ruta pase por os.path.normpath() y os.path.joi
 Gestión de Objetos: Toda nueva funcionalidad de medios debe integrarse dentro de AssetManager o AudioManager. Estos componentes son los únicos responsables de invocar resource_path() antes de crear objetos de tipo Path o cargar texturas/sonidos.
 
 Empaquetado: Mantener siempre la compatibilidad con sys._MEIPASS dentro de resource_path() para no romper el ejecutable generado por build_app.py.
+
+
+Reglas de Documentación y Calidad de Código:
+
+Docstrings: Cada función o clase nueva DEBE incluir un docstring en formato Google Style. Debe detallar claramente los argumentos (Args), los retornos (Returns) y cualquier excepción que pueda lanzar (Raises).
+
+Idioma de Documentación: Toda la documentación interna y comentarios deben escribirse en inglés, manteniendo los términos técnicos y nombres de variables en inglés.
+
+
+Reglas de Testeo Unitario:
+
+Generación de Tests: Por cada función lógica creada (especialmente en AssetManager o AudioManager), la IA debe sugerir un test unitario correspondiente usando unittest o pytest.
+
+Simulación (Mocking): Los tests deben usar unittest.mock para simular el acceso a archivos, asegurando que los tests pasen tanto en entornos de desarrollo como en sistemas de CI/CD sin necesidad de tener los assets físicos presentes.
+
+Regla de Persistencia en la Nube:
+
+Sincronización Asíncrona: Toda comunicación con Supabase debe ejecutarse mediante CloudManager usando asyncio.run_in_executor() para evitar bloquear el loop de renderizado.
+
+Fail-Safe: Si CloudManager.enabled es False (sin .env o error de conexión), el juego debe continuar normalmente usando solo SQLite local.
+
+Local First: database.py permanece como fuente primaria. CloudManager es secundario y opcional.
+
+No User Interruption: Los errores de red con Supabase NUNCA deben mostrarse en la UI del juego, solo en logs.
