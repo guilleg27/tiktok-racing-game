@@ -8,6 +8,7 @@ with platform compatibility (Windows/macOS/Linux) and efficient caching.
 import logging
 import os
 import platform
+import queue
 import threading
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -163,6 +164,12 @@ class AudioManager:
         
         # TTS callback hook (to be set externally)
         self._tts_callback: Optional[Callable[[str], None]] = None
+        
+        # TTS queue: single worker processes announcements sequentially
+        # (pyttsx3 is not thread-safe; "run loop already started" if overlapping)
+        self._tts_queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=20)
+        self._tts_worker: Optional[threading.Thread] = None
+        self._tts_stop = threading.Event()
         
         # Thread lock for safe concurrent access
         self._lock = threading.Lock()
@@ -615,8 +622,55 @@ class AudioManager:
             
             audio_manager.set_tts_callback(my_tts_callback)
         """
+        # Stop any existing worker before replacing
+        self._tts_stop.set()
+        if self._tts_worker and self._tts_worker.is_alive():
+            try:
+                self._tts_queue.put_nowait(None)  # Sentinel to wake worker
+            except queue.Full:
+                pass
+            self._tts_worker.join(timeout=2.0)
+        
         self._tts_callback = callback
-        logger.info("🎤 TTS callback registered")
+        self._tts_stop.clear()
+        # Drain leftover items from queue
+        while True:
+            try:
+                self._tts_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
+        self._tts_worker.start()
+        logger.info("🎤 TTS callback registered (queue-based, single worker)")
+    
+    def _tts_worker_loop(self) -> None:
+        """
+        Single worker thread that processes TTS announcements sequentially.
+        Prevents 'run loop already started' from pyttsx3 when overlapping calls.
+        """
+        while not self._tts_stop.is_set():
+            try:
+                text = self._tts_queue.get(timeout=0.5)
+                if text is None:
+                    break
+                if self._tts_callback:
+                    try:
+                        self._tts_callback(text)
+                    except Exception as e:
+                        logger.error(f"TTS speak failed: {e}")
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"TTS worker error: {e}")
+    
+    def _enqueue_tts(self, text: str) -> None:
+        """Add a TTS announcement to the queue (non-blocking)."""
+        if not self._tts_callback or not text:
+            return
+        try:
+            self._tts_queue.put_nowait(text)
+        except queue.Full:
+            logger.debug("TTS queue full, dropping announcement")
     
     def _announce_winner(self, country: str) -> None:
         """
@@ -639,15 +693,7 @@ class AudioManager:
             f"And the winner is {country}!",
         ]
         announcement = random.choice(announcements)
-        
-        # Run TTS in separate thread to avoid blocking
-        def tts_thread():
-            try:
-                self._tts_callback(announcement)
-            except Exception as e:
-                logger.error(f"TTS announcement failed: {e}")
-        
-        threading.Thread(target=tts_thread, daemon=True).start()
+        self._enqueue_tts(announcement)
         logger.info(f"🎤 TTS announcement triggered: {announcement}")
     
     def announce_combo(self, country: str, combo_level: int) -> None:
@@ -682,14 +728,7 @@ class AudioManager:
             ]
         
         announcement = random.choice(announcements)
-        
-        def tts_thread():
-            try:
-                self._tts_callback(announcement)
-            except Exception as e:
-                logger.error(f"TTS combo announcement failed: {e}")
-        
-        threading.Thread(target=tts_thread, daemon=True).start()
+        self._enqueue_tts(announcement)
     
     def announce_final_stretch(self, leader: str) -> None:
         """
@@ -709,14 +748,7 @@ class AudioManager:
             f"Here comes the finish line! {leader} is ahead!",
         ]
         announcement = random.choice(announcements)
-        
-        def tts_thread():
-            try:
-                self._tts_callback(announcement)
-            except Exception as e:
-                logger.error(f"TTS final stretch announcement failed: {e}")
-        
-        threading.Thread(target=tts_thread, daemon=True).start()
+        self._enqueue_tts(announcement)
     
     def announce_overtake(self, country: str, overtaken: str) -> None:
         """
@@ -736,14 +768,7 @@ class AudioManager:
             f"{country} moves ahead of {overtaken}!",
         ]
         announcement = random.choice(announcements)
-        
-        def tts_thread():
-            try:
-                self._tts_callback(announcement)
-            except Exception as e:
-                logger.error(f"TTS overtake announcement failed: {e}")
-        
-        threading.Thread(target=tts_thread, daemon=True).start()
+        self._enqueue_tts(announcement)
     
     def announce_close_race(self, leader: str, chaser: str) -> None:
         """
@@ -763,14 +788,7 @@ class AudioManager:
             f"Tight race! {leader} just ahead of {chaser}!",
         ]
         announcement = random.choice(announcements)
-        
-        def tts_thread():
-            try:
-                self._tts_callback(announcement)
-            except Exception as e:
-                logger.error(f"TTS close race announcement failed: {e}")
-        
-        threading.Thread(target=tts_thread, daemon=True).start()
+        self._enqueue_tts(announcement)
     
     def announce_custom(self, text: str) -> None:
         """
@@ -779,12 +797,7 @@ class AudioManager:
         Args:
             text: Text to announce
         """
-        if self._tts_callback:
-            threading.Thread(
-                target=self._tts_callback,
-                args=(text,),
-                daemon=True
-            ).start()
+        self._enqueue_tts(text)
     
     # ========================================================================
     # UTILITY METHODS
