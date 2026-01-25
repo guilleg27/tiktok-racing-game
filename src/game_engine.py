@@ -349,6 +349,9 @@ class GameEngine:
         self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
         self.victory_flash_duration = 0.3  # Seconds to fade out
         self.victory_flash_time = 0.0  # Time elapsed since flash started
+        
+        # Shortcuts panel position (dynamic for COMMENT mode)
+        self.shortcuts_panel_position = "right"  # "right" or "left"
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -852,6 +855,9 @@ class GameEngine:
     
         elif event.type == EventType.JOIN:
             await self._handle_join_event(event)
+        
+        elif event.type == EventType.VOTE:
+            await self._handle_vote_event(event)
     
     async def _handle_join_event(self, event: GameEvent) -> None:
         """Handle user joining a team via keyword."""
@@ -900,6 +906,87 @@ class GameEngine:
         
         logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
     
+    async def _handle_vote_event(self, event: GameEvent) -> None:
+        """
+        Handle vote event in COMMENT mode.
+        User votes for a country by typing sigla/number in chat.
+        
+        Args:
+            event: Vote event with country as content
+        """
+        from .config import COMMENT_POINTS_PER_MESSAGE, COMMENT_COOLDOWN
+        import time
+        
+        # TRANSICIÓN: IDLE -> RACING al primer voto
+        if self.game_state == 'IDLE':
+            self.game_state = 'RACING'
+            logger.info("🏁 Game state: RACING (first vote received!)")
+        
+        username = self.sanitize_username(event.username)
+        country = event.content
+        shortcut_used = event.extra.get("shortcut", "") if event.extra else ""
+        
+        # Anti-spam: cooldown between votes
+        current_time = time.time()
+        last_vote_time = getattr(self, '_last_vote_time', {})
+        if username in last_vote_time:
+            time_since_last = current_time - last_vote_time[username]
+            if time_since_last < COMMENT_COOLDOWN:
+                return  # Too soon, ignore
+        
+        # Update last vote time
+        if not hasattr(self, '_last_vote_time'):
+            self._last_vote_time = {}
+        self._last_vote_time[username] = current_time
+        
+        # Update user assignment
+        self.user_assignments[username] = country
+        
+        # 🏆 CAPTAIN SYSTEM: Track points
+        self._update_captain_points(username, country, COMMENT_POINTS_PER_MESSAGE)
+        
+        logger.info(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
+        
+        # Apply movement to country's flag
+        success = self.physics_world.apply_gift_impulse(
+            country=country,
+            gift_name="Vote",
+            diamond_count=COMMENT_POINTS_PER_MESSAGE
+        )
+        
+        if success:
+            # Visual feedback: small particle effect
+            racer = self.physics_world.racers[country]
+            pos = (racer.body.position.x, racer.body.position.y)
+            
+            self.emit_explosion(
+                pos=pos,
+                color=racer.color,
+                count=5,
+                power=0.6,
+                diamond_count=COMMENT_POINTS_PER_MESSAGE
+            )
+            
+            # Optional: floating text feedback (limited)
+            if len(self.floating_texts) < self.MAX_FLOATING_TEXTS // 2:
+                self.floating_texts.append(
+                    FloatingText(
+                        text=f"+{COMMENT_POINTS_PER_MESSAGE}",
+                        x=pos[0],
+                        y=pos[1] - 20,
+                        color=(255, 255, 255),
+                        lifespan=30,
+                        max_lifespan=30,
+                        font_size=14
+                    )
+                )
+        
+        # Add message to feed
+        message = event.format_message()
+        self.messages.append((message, event.type))
+        if len(self.messages) > MAX_MESSAGES:
+            self.messages = self.messages[-MAX_MESSAGES:]
+    
     def handle_pygame_events(self) -> None:
         """Process Pygame input events."""
         for event in pygame.event.get():
@@ -947,7 +1034,9 @@ class GameEngine:
                     
                     logger.info(f"TEST BIG: {country} received {diamonds}💎")
 
-                elif event.key == pygame.K_1:  # 1 = Test Rosa
+                elif event.key == pygame.K_1:  # 1 = Test Vote/Rosa (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self.game_state = 'RACING'
@@ -955,20 +1044,42 @@ class GameEngine:
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Rosa", country)
-                    logger.info(f"TEST ROSA: {country}")
                     
-                    # Spawn floating text
-                    if result['effect'] == 'advance':
-                        racer = self.physics_world.racers[country]
-                        self.spawn_floating_text(
-                            "+5m", 
-                            racer.body.position.x, 
-                            racer.body.position.y,
-                            COLOR_TEXT_POSITIVE
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        import time
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "1"}
                         )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Rosa effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Rosa", country)
+                        logger.info(f"TEST ROSA: {country}")
+                        
+                        # Spawn floating text
+                        if result['effect'] == 'advance':
+                            racer = self.physics_world.racers[country]
+                            self.spawn_floating_text(
+                                "+5m", 
+                                racer.body.position.x, 
+                                racer.body.position.y,
+                                COLOR_TEXT_POSITIVE
+                            )
 
-                elif event.key == pygame.K_2:  # 2 = Test Pesa (ataca líder)
+                elif event.key == pygame.K_2:  # 2 = Test Vote/Pesa (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self.game_state = 'RACING'
@@ -976,22 +1087,44 @@ class GameEngine:
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Pesa", country)
-                    logger.info(f"TEST PESA: attacking leader")
                     
-                    # Spawn floating text on the affected target (leader)
-                    if result['effect'] == 'setback':
-                        target = result['target']
-                        if target in self.physics_world.racers:
-                            racer = self.physics_world.racers[target]
-                            self.spawn_floating_text(
-                                "-10m", 
-                                racer.body.position.x, 
-                                racer.body.position.y,
-                                COLOR_TEXT_NEGATIVE
-                            )
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        import time
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "2"}
+                        )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Pesa effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Pesa", country)
+                        logger.info(f"TEST PESA: attacking leader")
+                        
+                        # Spawn floating text on the affected target (leader)
+                        if result['effect'] == 'setback':
+                            target = result['target']
+                            if target in self.physics_world.racers:
+                                racer = self.physics_world.racers[target]
+                                self.spawn_floating_text(
+                                    "-10m", 
+                                    racer.body.position.x, 
+                                    racer.body.position.y,
+                                    COLOR_TEXT_NEGATIVE
+                                )
                     
-                elif event.key == pygame.K_3:  # 3 = Test Helado (congela líder)
+                elif event.key == pygame.K_3:  # 3 = Test Vote/Helado (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self.game_state = 'RACING'
@@ -999,20 +1132,40 @@ class GameEngine:
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Helado", country)
-                    logger.info(f"TEST HELADO: freezing leader")
                     
-                    # Spawn floating text on the frozen target
-                    if result['effect'] == 'freeze':
-                        target = result['target']
-                        if target in self.physics_world.racers:
-                            racer = self.physics_world.racers[target]
-                            self.spawn_floating_text(
-                                "FREEZE!", 
-                                racer.body.position.x, 
-                                racer.body.position.y,
-                                COLOR_TEXT_FREEZE
-                            )
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        import time
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "3"}
+                        )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Helado effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Helado", country)
+                        logger.info(f"TEST HELADO: freezing leader")
+                        
+                        # Spawn floating text on the frozen target
+                        if result['effect'] == 'freeze':
+                            target = result['target']
+                            if target in self.physics_world.racers:
+                                racer = self.physics_world.racers[target]
+                                self.spawn_floating_text(
+                                    "FREEZE!", 
+                                    racer.body.position.x, 
+                                    racer.body.position.y,
+                                    COLOR_TEXT_FREEZE
+                                )
     
                 elif event.key == pygame.K_j:  # J = Test JoinEvent
                     # Generate random test join
@@ -1286,6 +1439,11 @@ class GameEngine:
         self._render_header()
         self._render_legend()
         self._render_leaderboard()
+        
+        # Render shortcuts panel in COMMENT mode
+        from .config import GAME_MODE
+        if GAME_MODE == "COMMENT":
+            self._render_shortcuts_panel()
         
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
@@ -2191,7 +2349,7 @@ class GameEngine:
     
     def _render_idle_screen(self) -> None:
         """Render the IDLE state screen with animated prompt."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_MODE
         
         # 1️⃣ OVERLAY OSCURO (alpha=150 como solicitado)
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -2226,9 +2384,13 @@ class GameEngine:
         breathe_scale = 1.0 + 0.05 * math.sin(ticks * 0.003)  # Oscila entre 1.0 y 1.05
         pulse_alpha = int(200 + 55 * math.sin(ticks * 0.0025))  # Alpha pulsante
 
-        # Main title - renderizar primero a tamaño base
+        # Main title - different text depending on mode
         title_font = pygame.font.SysFont("Arial", 24, bold=True)
-        title_text = "SEND A ROSE"
+        if GAME_MODE == "COMMENT":
+            title_text = "VOTE IN CHAT"
+        else:
+            title_text = "SEND A ROSE"
+        
         title_surface = self._render_text_enhanced(
             title_text,
             title_font,
@@ -2300,6 +2462,99 @@ class GameEngine:
         # 🏆 Render Global Ranking Panel (futuristic style) only
         # 3D tracks visualization is reserved for post-race screens
         self._render_global_ranking_futuristic()
+    
+    def _render_shortcuts_panel(self) -> None:
+        """
+        Render shortcuts panel showing country numbers and siglas.
+        Displays in top-right by default, moves to top-left when any country passes halfway.
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, COUNTRY_ABBREV
+        
+        # Check if any country passed halfway (dynamic positioning)
+        halfway_x = (self.physics_world.start_x + self.physics_world.finish_line_x) / 2
+        any_past_halfway = any(
+            racer.body.position.x > halfway_x 
+            for racer in self.physics_world.racers.values()
+        )
+        
+        # Update position if needed
+        if any_past_halfway and self.shortcuts_panel_position == "right":
+            self.shortcuts_panel_position = "left"
+            logger.info("📍 Shortcuts panel moved to LEFT (flags past halfway)")
+        
+        # Panel dimensions (más compacto)
+        panel_width = 120
+        panel_height = 270
+        margin = 10
+        
+        if self.shortcuts_panel_position == "left":
+            panel_x = margin  # Top-left
+        else:
+            panel_x = SCREEN_WIDTH - panel_width - margin  # Top-right
+        
+        panel_y = margin + 35  # Below header
+        
+        # Background panel with gradient
+        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        
+        # Gradient background (dark with high alpha for clarity)
+        for i in range(panel_height):
+            ratio = i / panel_height
+            r = int(15 + (25 - 15) * ratio)
+            g = int(20 + (30 - 20) * ratio)
+            b = int(35 + (45 - 35) * ratio)
+            pygame.draw.line(panel_surface, (r, g, b, 230), (0, i), (panel_width, i))
+        
+        # Border with glow effect
+        pygame.draw.rect(panel_surface, (255, 215, 0, 220), (0, 0, panel_width, panel_height), 3, border_radius=10)
+        
+        # Title - Compact
+        title_font = pygame.font.SysFont("Arial", 14, bold=True)
+        title_text = "VOTE!"
+        title_surface = self._render_text_enhanced(
+            title_text,
+            title_font,
+            (255, 215, 0),
+            outline_color=(0, 0, 0),
+            outline_width=2
+        )
+        title_rect = title_surface.get_rect(center=(panel_width // 2, 15))
+        panel_surface.blit(title_surface, title_rect)
+        
+        # Subtitle - Clear instruction (más compacto)
+        subtitle_font = pygame.font.SysFont("Arial", 9, bold=True)
+        subtitle_text = "# or SIGLA"
+        subtitle_surface = subtitle_font.render(subtitle_text, True, (200, 200, 200))
+        subtitle_rect = subtitle_surface.get_rect(center=(panel_width // 2, 32))
+        panel_surface.blit(subtitle_surface, subtitle_rect)
+        
+        # List of countries - SOLO número y sigla
+        item_font = pygame.font.SysFont("Arial", 11, bold=True)
+        y_offset = 48
+        line_height = 18
+        
+        for i, country in enumerate(self.physics_world.countries, start=1):
+            abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
+            color = self.physics_world.racers[country].color
+            
+            # Number (bigger and bolder)
+            number_text = f"{i:2d}"  # Right-aligned with 2 digits
+            number_surface = item_font.render(number_text, True, (255, 255, 100))
+            panel_surface.blit(number_surface, (15, y_offset))
+            
+            # Separator
+            sep_surface = item_font.render("→", True, (150, 150, 150))
+            panel_surface.blit(sep_surface, (40, y_offset))
+            
+            # Sigla (with country color, bold)
+            sigla_text = f"{abbrev}"
+            sigla_surface = item_font.render(sigla_text, True, color)
+            panel_surface.blit(sigla_surface, (60, y_offset))
+            
+            y_offset += line_height
+        
+        # Blit to screen
+        self.render_surface.blit(panel_surface, (panel_x, panel_y))
     
     def _render_global_ranking(self) -> None:
         """
@@ -2825,6 +3080,9 @@ class GameEngine:
         self.winner_animation_time = 0.0
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
+        
+        # 📍 Reset shortcuts panel position for next race
+        self.shortcuts_panel_position = "right"
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
     

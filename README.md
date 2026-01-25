@@ -46,10 +46,19 @@ python main.py @streamer_username
 
 ## ⌨️ Controles
 
+### Controles Básicos
 - **ESC** - Salir
-- **C** - Limpiar bolas
-- **R** - Recargar sprites (hot reload)
-- **T** - Test mode (spawn regalo aleatorio)
+- **C/R** - Reset carrera (volver a IDLE)
+
+### Test Mode (sin conexión TikTok)
+- **T** - Regalo pequeño aleatorio
+- **Y** - Regalo grande aleatorio
+- **1/2/3** - Votos de prueba (modo COMMENT) o efectos combate (modo GIFT)
+- **J** - Simular usuario uniéndose
+- **K** - Simular puntos de capitán
+
+**Modo COMMENT:** Teclas 1/2/3 simulan votos de usuarios aleatorios
+**Modo GIFT:** Teclas 1/2/3 activan efectos Rosa/Pesa/Helado
 
 ## 🎥 OBS Setup
 
@@ -88,14 +97,22 @@ FROM gift_logs GROUP BY username ORDER BY total DESC;
 
 Edita `src/config.py`:
 
+### Modo de Juego
 ```python
-SCREEN_WIDTH = 1080
-SCREEN_HEIGHT = 1920
-FPS = 60
-MAX_BALLS = 50
-BALL_FRICTION = 0.4
-BALL_ELASTICITY = 0.85
+GAME_MODE = "COMMENT"  # o "GIFT"
 ```
+
+**COMMENT**: Votos gratis en chat (1, 2, 3, arg, bra, mex...)  
+**GIFT**: Regalos de TikTok (modo original)
+
+Ver [COMMENT_MODE.md](COMMENT_MODE.md) para detalles completos.
+
+### Configuración Visual
+```python
+SCREEN_WIDTH = 460
+SCREEN_HEIGHT = 820
+GAME_MARGIN = 40  # Borde externo
+FPS = 60
 
 ### Colores por Regalo
 

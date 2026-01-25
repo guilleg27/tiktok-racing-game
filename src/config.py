@@ -11,6 +11,10 @@ GAME_MARGIN = 40
 AUTO_STRESS_TEST = False
 STRESS_TEST_INTERVAL = 0.5
 
+# Game Mode Selection
+# Options: "GIFT" (traditional gift-based racing) or "COMMENT" (chat-based racing)
+GAME_MODE = "COMMENT"  # Change to "GIFT" for traditional mode
+
 # Game settings
 FPS = 60
 MAX_MESSAGES = 15
@@ -58,6 +62,65 @@ RACE_COUNTRIES = [
     "Colombia", "Chile", "Peru", "Venezuela",
     "USA", "Indonesia", "Russia", "Italy",
 ]
+
+# Country shortcuts for COMMENT mode (siglas + números)
+COUNTRY_SHORTCUTS = {
+    # Argentina
+    "1": "Argentina", "arg": "Argentina", "argentina": "Argentina",
+    
+    # Brasil
+    "2": "Brasil", "bra": "Brasil", "brasil": "Brasil", "brazil": "Brasil",
+    
+    # Mexico
+    "3": "Mexico", "mex": "Mexico", "mexico": "Mexico", "méxico": "Mexico",
+    
+    # España
+    "4": "España", "esp": "España", "españa": "España", "spain": "España",
+    
+    # Colombia
+    "5": "Colombia", "col": "Colombia", "colombia": "Colombia",
+    
+    # Chile
+    "6": "Chile", "chi": "Chile", "chile": "Chile",
+    
+    # Peru
+    "7": "Peru", "per": "Peru", "peru": "Peru", "perú": "Peru",
+    
+    # Venezuela
+    "8": "Venezuela", "ven": "Venezuela", "venezuela": "Venezuela", "vzla": "Venezuela",
+    
+    # USA
+    "9": "USA", "usa": "USA", "us": "USA", "america": "USA",
+    
+    # Indonesia
+    "10": "Indonesia", "idn": "Indonesia", "indonesia": "Indonesia", "indo": "Indonesia",
+    
+    # Russia
+    "11": "Russia", "rus": "Russia", "russia": "Russia", "ru": "Russia",
+    
+    # Italy
+    "12": "Italy", "ita": "Italy", "italy": "Italy", "italia": "Italy",
+}
+
+# Country abbreviations for display (3 letters)
+COUNTRY_ABBREV = {
+    "Argentina": "ARG",
+    "Brasil": "BRA",
+    "Mexico": "MEX",
+    "España": "ESP",
+    "Colombia": "COL",
+    "Chile": "CHI",
+    "Peru": "PER",
+    "Venezuela": "VEN",
+    "USA": "USA",
+    "Indonesia": "IDN",
+    "Russia": "RUS",
+    "Italy": "ITA",
+}
+
+# Comment mode settings
+COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
+COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche

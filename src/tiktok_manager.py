@@ -244,8 +244,10 @@ class TikTokManager:
         
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
-            """Handle chat comments for keyword binding."""
+            """Handle chat comments for keyword binding and votes."""
             try:
+                from .config import GAME_MODE, COUNTRY_SHORTCUTS
+                
                 username = self._extract_username(event)
                 
                 # Get message content
@@ -263,19 +265,36 @@ class TikTokManager:
                 # Clean message for keyword matching
                 clean_message = message.lower().strip()
                 
-                # Check for country keywords
-                from .config import COUNTRY_KEYWORDS
-                for keyword, country in COUNTRY_KEYWORDS.items():
-                    if keyword in clean_message:
-                        # Send JOIN event
-                        await self.queue.put(GameEvent(
-                            type=EventType.JOIN,
-                            username=username,
-                            content=country,
-                            extra={"keyword": keyword, "original_message": message}
-                        ))
-                        logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
-                        break  # Solo el primer match
+                # COMMENT MODE: Check for country shortcuts (siglas/números)
+                if GAME_MODE == "COMMENT":
+                    for shortcut, country in COUNTRY_SHORTCUTS.items():
+                        if shortcut == clean_message:  # Exact match only
+                            await self.queue.put(GameEvent(
+                                type=EventType.VOTE,
+                                username=username,
+                                content=country,
+                                extra={
+                                    "shortcut": shortcut,
+                                    "original_message": message,
+                                },
+                            ))
+                            logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
+                            return
+                
+                # GIFT MODE: Check for country keywords (for JOIN)
+                if GAME_MODE == "GIFT":
+                    from .config import COUNTRY_KEYWORDS
+                    for keyword, country in COUNTRY_KEYWORDS.items():
+                        if keyword in clean_message:
+                            # Send JOIN event
+                            await self.queue.put(GameEvent(
+                                type=EventType.JOIN,
+                                username=username,
+                                content=country,
+                                extra={"keyword": keyword, "original_message": message}
+                            ))
+                            logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
+                            break  # Solo el primer match
                         
                 # Also send regular COMMENT event for chat display
                 await self.queue.put(GameEvent(
