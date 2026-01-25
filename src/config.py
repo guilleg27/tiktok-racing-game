@@ -53,7 +53,7 @@ WALL_ELASTICITY = 0.7
 
 # Race Configuration - Posiciones optimizadas
 RACE_START_X = 50        # Inicio de los carriles
-RACE_FINISH_X = 400      # Línea de meta
+RACE_FINISH_X = 225      # Línea de meta (half track ~175px for testing; full = 400)
 FLAG_RADIUS = 12         # Flag radius (reduced to 12 for better fit in lanes)
 
 # Race countries (used for flag sprites)
