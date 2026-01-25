@@ -61,6 +61,102 @@ class Particle:
 
 
 @dataclass
+class TrailParticle:
+    """
+    Simple trail particle for flag movement trails.
+    Smaller and simpler than explosion particles.
+    """
+    pos: tuple[float, float]  # (x, y) position
+    color: tuple[int, int, int]  # RGB color
+    alpha: int  # Opacity (0-255)
+    size: float  # Current particle size
+    initial_size: float  # Initial size (for organic fade)
+    lifetime: float  # Remaining lifetime
+
+
+class ParticleManager:
+    """
+    Manages particle systems: trails and explosions.
+    Handles trail generation for flags and explosion effects.
+    """
+    
+    def __init__(self):
+        """Initialize the particle manager."""
+        # Trail particles: country -> list of trail particles
+        self.trail_particles: dict[str, list[TrailParticle]] = {}
+        # Trail configuration
+        self.trail_max_particles = 20  # Max particles per trail
+        self.trail_lifetime = 0.5  # Seconds
+        # Increased particle density by 20%: 0.05 * 0.8 = 0.04 (spawns more frequently)
+        self.trail_spawn_interval = 0.04  # Spawn every 0.04s (was 0.05s)
+        self.trail_last_spawn: dict[str, float] = {}  # country -> last spawn time
+    
+    def update_trail(self, country: str, pos: tuple[float, float], color: tuple[int, int, int], dt: float) -> None:
+        """
+        Update trail for a flag. Spawns new particles and updates existing ones.
+        
+        Args:
+            country: Country name (identifier)
+            pos: Current flag position (x, y)
+            color: Flag color for trail
+            dt: Delta time since last frame
+        """
+        current_time = time.time()
+        
+        # Initialize trail if needed
+        if country not in self.trail_particles:
+            self.trail_particles[country] = []
+            self.trail_last_spawn[country] = current_time
+        
+        # Spawn new trail particle if enough time has passed
+        if current_time - self.trail_last_spawn[country] >= self.trail_spawn_interval:
+            # Create trail particle with random size (2-5px) for organic look
+            import random
+            random_size = random.uniform(2.0, 5.0)  # Random size for organic trail effect
+            trail_particle = TrailParticle(
+                pos=pos,
+                color=color,
+                alpha=180,  # Start with good visibility
+                size=random_size,  # Current size (starts at random)
+                initial_size=random_size,  # Store initial size for fade calculation
+                lifetime=self.trail_lifetime
+            )
+            
+            self.trail_particles[country].append(trail_particle)
+            self.trail_last_spawn[country] = current_time
+            
+            # Limit trail length
+            if len(self.trail_particles[country]) > self.trail_max_particles:
+                self.trail_particles[country].pop(0)
+        
+        # Update existing trail particles
+        particles_to_keep = []
+        for particle in self.trail_particles[country]:
+            # Update lifetime
+            particle.lifetime -= dt
+            
+            if particle.lifetime > 0:
+                # Fade out over time
+                life_ratio = particle.lifetime / self.trail_lifetime
+                particle.alpha = int(180 * life_ratio)
+                # Fade size proportionally to lifetime, preserving initial random variation
+                particle.size = particle.initial_size * life_ratio
+                particles_to_keep.append(particle)
+        
+        self.trail_particles[country] = particles_to_keep
+    
+    def clear_trail(self, country: str) -> None:
+        """Clear trail for a specific country."""
+        if country in self.trail_particles:
+            self.trail_particles[country].clear()
+    
+    def clear_all_trails(self) -> None:
+        """Clear all trails."""
+        self.trail_particles.clear()
+        self.trail_last_spawn.clear()
+
+
+@dataclass
 class FloatingText:
     """
     Floating action text for visual feedback.
@@ -167,7 +263,11 @@ class GameEngine:
             "🇨🇴": "Colombia",
             "🇨🇱": "Chile",
             "🇵🇪": "Peru",
-            "🇻🇪": "Venezuela"
+            "🇻🇪": "Venezuela",
+            "🇺🇸": "USA",
+            "🇮🇩": "Indonesia",
+            "🇷🇺": "Russia",
+            "🇮🇹": "Italy"
         }
         
         # Asset Manager
@@ -184,6 +284,9 @@ class GameEngine:
         
         # Particle system
         self.particles: list[Particle] = []
+        
+        # Particle Manager (trails and explosions)
+        self.particle_manager = ParticleManager()
         
         # Floating texts
         self.floating_texts: list[FloatingText] = []
@@ -214,8 +317,8 @@ class GameEngine:
         # Game state system
         self.game_state = 'IDLE'  # 'IDLE' o 'RACING'
         self.idle_animation_time = 0.0  # Para animaciones pulsantes
-        self.last_winner = None  # Último ganador de la carrera anterior
-        self.last_winner_distance = 0.0  # Distancia del último ganador
+        self.last_winner = None  # Last winner of previous race
+        self.last_winner_distance = 0.0  # Distance of last winner
         
         # Leader change animation (VFX)
         self.last_leader_name = None  # Líder del frame anterior
@@ -241,6 +344,11 @@ class GameEngine:
         
         # 3D Visualization animation state
         self.ranking_3d_animation_time = 0.0  # For animated effects
+        
+        # Victory flash effect (white screen flash on win)
+        self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
+        self.victory_flash_duration = 0.3  # Seconds to fade out
+        self.victory_flash_time = 0.0  # Time elapsed since flash started
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -265,28 +373,40 @@ class GameEngine:
             pygame.display.set_caption("TikTokGameWindow")
             logger.info("🔧 Caption set")
             
-            # Use fixed size
+            # Use fixed window size
             self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT))
             logger.info("🔧 Display mode set")
             
-            self.render_surface = self.screen
+            # Render to inner game surface, then blit with margin
+            self.render_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
             self.display_scale = 1.0
             self.clock = pygame.time.Clock()
             logger.info("🔧 Clock created")
             
-            try:
-                self.font = pygame.font.SysFont("Arial", FONT_SIZE, bold=True)
-                self.font_small = pygame.font.SysFont("Arial", FONT_SIZE_SMALL)
-                logger.info("🔧 System fonts loaded")
-            except Exception as e:
-                logger.warning(f"🔧 System fonts failed, using default: {e}")
+            # Try to load better fonts with fallback chain
+            font_names = ["Verdana", "Arial Black", "Arial"]
+            font_loaded = False
+            
+            for font_name in font_names:
+                try:
+                    self.font = pygame.font.SysFont(font_name, FONT_SIZE, bold=True)
+                    self.font_small = pygame.font.SysFont(font_name, FONT_SIZE_SMALL, bold=True)
+                    logger.info(f"🔧 System font loaded: {font_name}")
+                    font_loaded = True
+                    break
+                except Exception:
+                    continue
+            
+            if not font_loaded:
+                logger.warning("🔧 System fonts failed, using default")
                 self.font = pygame.font.Font(None, FONT_SIZE)
                 self.font_small = pygame.font.Font(None, FONT_SIZE_SMALL)
             
-            # Create static gradient background
-            logger.info("🔧 Creating gradient...")
+            # Create static gradient backgrounds
+            logger.info("🔧 Creating gradients...")
             self.gradient_background = self._create_gradient_background()
-            logger.info("🔧 Gradient created")
+            self.outer_background = self._create_outer_background()
+            logger.info("🔧 Gradients created")
             
             # Render flag emojis
             logger.info("🔧 Rendering emojis...")
@@ -326,7 +446,28 @@ class GameEngine:
         
         logger.info("✨ Gradient background created (static surface)")
         return gradient_surf
-    
+
+    def _create_outer_background(self) -> pygame.Surface:
+        """
+        Create a subtle outer gradient background for the window margins.
+        
+        Returns:
+            pygame.Surface with vertical gradient for outer margins
+        """
+        from .config import OUTER_GRADIENT_TOP, OUTER_GRADIENT_BOTTOM, ACTUAL_WIDTH, ACTUAL_HEIGHT
+        
+        outer_surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT))
+        
+        for y in range(ACTUAL_HEIGHT):
+            ratio = y / ACTUAL_HEIGHT
+            r = int(OUTER_GRADIENT_TOP[0] + (OUTER_GRADIENT_BOTTOM[0] - OUTER_GRADIENT_TOP[0]) * ratio)
+            g = int(OUTER_GRADIENT_TOP[1] + (OUTER_GRADIENT_BOTTOM[1] - OUTER_GRADIENT_TOP[1]) * ratio)
+            b = int(OUTER_GRADIENT_TOP[2] + (OUTER_GRADIENT_BOTTOM[2] - OUTER_GRADIENT_TOP[2]) * ratio)
+            pygame.draw.line(outer_surf, (r, g, b), (0, y), (ACTUAL_WIDTH, y))
+        
+        logger.info("✨ Outer gradient background created (static surface)")
+        return outer_surf
+
     def _render_flag_emojis(self) -> None:
         """Render flag emojis as sprites for countries without PNG sprites."""
         import platform
@@ -497,6 +638,34 @@ class GameEngine:
         # Cleanup
         self.floating_texts = texts_to_keep
     
+    def _render_trails(self) -> None:
+        """
+        Render trail particles behind flags.
+        Creates smooth color trails showing flag movement.
+        """
+        for country, trail_particles in self.particle_manager.trail_particles.items():
+            for particle in trail_particles:
+                if particle.alpha <= 0 or particle.size <= 0:
+                    continue
+                
+                # Create surface for trail particle with alpha
+                size = max(int(particle.size * 2), 2)
+                trail_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+                
+                # Draw particle with alpha
+                color_with_alpha = (*particle.color, particle.alpha)
+                pygame.draw.circle(
+                    trail_surf,
+                    color_with_alpha,
+                    (size // 2, size // 2),
+                    max(int(particle.size), 1)
+                )
+                
+                # Blit to render surface
+                blit_x = int(particle.pos[0] - size // 2)
+                blit_y = int(particle.pos[1] - size // 2)
+                self.render_surface.blit(trail_surf, (blit_x, blit_y))
+    
     def _render_particles(self) -> None:
         """
         Render particles with optimized direct circle drawing.
@@ -601,8 +770,10 @@ class GameEngine:
                 racer = self.physics_world.racers[country]
                 pos = (racer.body.position.x, racer.body.position.y)
                 
-                count = 10 + int(diamond_count / 10)
-                power = 0.8
+                # Larger explosions for bigger gifts
+                is_large_gift = diamond_count > 50
+                count = 15 + int(diamond_count / 8) if is_large_gift else 10 + int(diamond_count / 10)
+                power = 1.2 if is_large_gift else 0.8
                 
                 self.emit_explosion(
                     pos=pos,
@@ -721,7 +892,7 @@ class GameEngine:
         lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
         
         self.spawn_floating_text(
-            f"¡@{username} unido!",
+            f"@{username} joined!",
             100,  # x position (start of lane)
             lane_y,
             (220, 220, 220)
@@ -970,7 +1141,7 @@ class GameEngine:
         
         # Golden floating text for new captain
         self.spawn_floating_text(
-            f"¡NUEVO CAPITÁN: @{new_captain}!",
+            f"NEW CAPTAIN: @{new_captain}!",
             200,  # Mid-lane position
             lane_y,
             (255, 215, 0)  # Gold color
@@ -990,6 +1161,25 @@ class GameEngine:
         self.physics_world.update(dt)
         self.update_particles(dt)
         self.update_floating_texts()
+        
+        # Update victory flash effect (fade out) - non-blocking, runs independently
+        if self.victory_flash_alpha > 0:
+            self.victory_flash_time += dt
+            # Fade out over 0.3 seconds
+            fade_progress = self.victory_flash_time / self.victory_flash_duration
+            if fade_progress >= 1.0:
+                self.victory_flash_alpha = 0.0
+                self.victory_flash_time = 0.0
+            else:
+                # Linear fade out
+                self.victory_flash_alpha = 255.0 * (1.0 - fade_progress)
+        
+        # Update trail particles for all flags
+        if self.game_state == 'RACING':
+            for country, racer in self.physics_world.get_racers().items():
+                x = float(racer.body.position.x) if math.isfinite(racer.body.position.x) else self.physics_world.start_x
+                y = float(racer.body.position.y) if math.isfinite(racer.body.position.y) else (racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2)
+                self.particle_manager.update_trail(country, (x, y), racer.color, dt)
         
         # Update idle animation timer
         if self.game_state == 'IDLE':
@@ -1081,12 +1271,16 @@ class GameEngine:
     
     def render(self) -> None:
         """Render all visual elements."""
-        from .config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        from .config import GAME_MARGIN
         
-        # Use pre-rendered gradient background
+        # Draw outer background (window margin)
+        self.screen.blit(self.outer_background, (0, 0))
+        
+        # Use pre-rendered gradient background in game area
         self.render_surface.blit(self.gradient_background, (0, 0))
         
         self._render_balls()
+        self._render_trails()  # Render trails before particles (behind)
         self._render_particles()
         self._render_floating_texts()
         self._render_header()
@@ -1096,7 +1290,13 @@ class GameEngine:
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
             self._render_idle_screen()
+        
+        # Render victory flash effect (white screen flash) - on top of everything
+        if self.victory_flash_alpha > 0:
+            self._render_victory_flash()
     
+        # Blit game area into the window with margins
+        self.screen.blit(self.render_surface, (GAME_MARGIN, GAME_MARGIN))
         pygame.display.flip()
     
     def _render_balls(self) -> None:
@@ -1155,20 +1355,28 @@ class GameEngine:
             pygame.draw.circle(self.render_surface, racer.color, (ix, iy), ir)
             pygame.draw.circle(self.render_surface, (0, 0, 0), (ix, iy), ir, 2)
         
-        # Draw country name con TEXTO MEJORADO
+        # Draw country abbreviation (ARG, BRA, MEX, etc.) to the left of the flag
         ix = self._safe_int(x, self.physics_world.start_x)
         iy = self._safe_int(y, SCREEN_HEIGHT // 2)
         
-        # Usar texto mejorado con outline grueso
-        text_enhanced = self._render_text_enhanced(
-            racer.country,
-            self.font_small,
+        # Get country abbreviation
+        country_abbrev = self._get_country_abbrev(racer.country)
+        
+        # Position abbreviation to the left of the flag
+        abbrev_x = ix - radius - 25  # 25px to the left of flag edge
+        abbrev_y = iy
+        
+        # Render abbreviation with enhanced text
+        abbrev_font = pygame.font.SysFont("Arial", 11, bold=True)
+        abbrev_surface = self._render_text_enhanced(
+            country_abbrev,
+            abbrev_font,
             (255, 255, 255),
             outline_color=(0, 0, 0),
-            outline_width=2  # Outline más grueso
+            outline_width=1
         )
-        text_rect = text_enhanced.get_rect(center=(ix, iy))
-        self.render_surface.blit(text_enhanced, text_rect)
+        abbrev_rect = abbrev_surface.get_rect(center=(abbrev_x, abbrev_y))
+        self.render_surface.blit(abbrev_surface, abbrev_rect)
 
         # 👑 CAPTAIN LABEL
         self._render_captain_label(racer, ix, iy)
@@ -1185,8 +1393,8 @@ class GameEngine:
         country = racer.country
         captain = self.current_captains.get(country, "")
         
-        # Position below the flag
-        label_y = flag_y + 35  # Below flag and country name
+        # Position below the flag (closer now that we removed country name)
+        label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
             # Get points for display
@@ -1198,10 +1406,11 @@ class GameEngine:
                 color = (255, 255, 0)  # Bright yellow for new captain
                 font_size = 15
             else:
-                color = (255, 215, 0)  # Gold for established captain
+                # Improved legibility: light gray/off-white for better contrast
+                color = (204, 204, 204)  # #CCCCCC - Light gray for better readability
                 font_size = 12
             
-            # Render with enhanced text (outline)
+            # Render with enhanced text (outline) - 1px outline for better legibility
             try:
                 captain_font = pygame.font.SysFont("Arial", font_size, bold=True)
                 captain_surface = self._render_text_enhanced(
@@ -1209,7 +1418,7 @@ class GameEngine:
                     captain_font,
                     color,
                     outline_color=(0, 0, 0),
-                    outline_width=2
+                    outline_width=1  # 1px outline as requested
                 )
                 
                 captain_rect = captain_surface.get_rect(center=(flag_x, label_y))
@@ -1218,19 +1427,22 @@ class GameEngine:
             except Exception as e:
                 logger.debug(f"Error rendering captain label: {e}")
         else:
-            # No captain yet - optional "Sin Capitán" text
+            # No captain yet - optional "No Captain" text
             if self.game_state == 'RACING':  # Only show during active race
                 try:
-                    no_captain_font = pygame.font.SysFont("Arial", 10)
+                    no_captain_font = pygame.font.SysFont("Arial", 9, bold=True)
+                    # Improved legibility: brighter color and better position
                     no_captain_surface = self._render_text_enhanced(
-                        "Sin Capitán",
+                        "No Captain",
                         no_captain_font,
-                        (128, 128, 128),  # Gray
+                        (220, 220, 220),  # Brighter gray for better visibility
                         outline_color=(0, 0, 0),
-                        outline_width=1
+                        outline_width=2  # Thicker outline for better visibility
                     )
                     
-                    no_captain_rect = no_captain_surface.get_rect(center=(flag_x, label_y))
+                    # Position to the right of the flag, aligned with captain text position
+                    no_captain_x = flag_x + 30  # To the right of flag
+                    no_captain_rect = no_captain_surface.get_rect(center=(no_captain_x, label_y))
                     self.render_surface.blit(no_captain_surface, no_captain_rect)
                     
                 except Exception:
@@ -1474,12 +1686,19 @@ class GameEngine:
         self.render_surface.blit(overlay, (0, 0))
 
         leaderboard = self.physics_world.get_leaderboard()
-        table_w, table_h = 420, 420
-        table_x = (SCREEN_WIDTH - table_w) // 2
+        # Limit to first 10 entries only
+        leaderboard = leaderboard[:10]
+        
+        # Reduced table width and added side margins
+        side_margin = 20  # Margin on each side of screen
+        left_margin = 15  # Additional left margin for text visibility
+        table_w, table_h = SCREEN_WIDTH - (side_margin * 2), 420  # Full width minus margins
+        table_x = side_margin  # Start with margin from left
         table_y = SCREEN_HEIGHT - table_h - 60
 
-        bar_margin_left = 100
-        bar_margin_right = 20
+        # Adjusted internal margins for better content fit
+        bar_margin_left = 90 + left_margin  # Increased left margin for text visibility
+        bar_margin_right = 80  # Increased from 20 to prevent cutoff
         bar_h = 10
         bar_w = table_w - bar_margin_left - bar_margin_right
         bar_x = bar_margin_left
@@ -1489,8 +1708,8 @@ class GameEngine:
         pygame.draw.rect(surf, (255, 215, 0, 180), (0, 0, table_w, table_h), 2, border_radius=10)
         
         header_font = pygame.font.SysFont("Arial", 18, bold=True)
-        hdr = header_font.render("CLASIFICACION FINAL", True, (255, 215, 0))
-        surf.blit(hdr, (15, 10))
+        hdr = header_font.render("FINAL CLASSIFICATION", True, (255, 215, 0))
+        surf.blit(hdr, (15 + left_margin, 10))  # Add left margin to header
 
         row_font = pygame.font.SysFont("Arial", 14, bold=True)
         start_y = 45
@@ -1514,30 +1733,41 @@ class GameEngine:
             else:
                 bg = (20, 20, 20, 70)
             
-            pygame.draw.rect(surf, bg, (10, y - 5, table_w - 20, row_h - 4), border_radius=6)
+            # Add left margin to row background
+            pygame.draw.rect(surf, bg, (10 + left_margin, y - 5, table_w - 20 - left_margin, row_h - 4), border_radius=6)
 
-            # Position con medalla de color
+            # Position con medalla de color - with left margin
+            position_x = 25 + left_margin
             if position <= 3:
                 # Dibujar círculo de medalla
                 medal_color = medal_colors[position]
-                pygame.draw.circle(surf, medal_color, (25, y + 8), 10)
-                pygame.draw.circle(surf, (255, 255, 255), (25, y + 8), 10, 1)
+                pygame.draw.circle(surf, medal_color, (position_x, y + 8), 10)
+                pygame.draw.circle(surf, (255, 255, 255), (position_x, y + 8), 10, 1)
                 pos_s = row_font.render(f"{position}", True, (0, 0, 0))
-                surf.blit(pos_s, (21, y))
+                surf.blit(pos_s, (position_x - 4, y))
             else:
                 pos_s = row_font.render(f"{position}", True, (200, 200, 200))
-                surf.blit(pos_s, (20, y))
+                surf.blit(pos_s, (position_x - 5, y))
         
-            # Country name (sin medal emoji)
+            # Country name (sin medal emoji) - with left margin
+            country_x = 45 + left_margin
             country_s = row_font.render(country, True, (255, 255, 255))
-            surf.blit(country_s, (45, y))
+            # Truncate long country names to fit
+            max_country_width = bar_x - country_x - 10  # Space between country name and bar start
+            if country_s.get_width() > max_country_width:
+                # Truncate country name if too long
+                truncated = country[:12] + "..." if len(country) > 12 else country
+                country_s = row_font.render(truncated, True, (255, 255, 255))
+            surf.blit(country_s, (country_x, y))
 
-            # Distance en diamantes (sin emoji)
+            # Distance en diamantes (sin emoji) - positioned with margin
             dist_val = distance if (isinstance(distance, (int, float)) and math.isfinite(distance)) else 0.0
             diamonds_approx = self._safe_int(dist_val / 0.8, 0)
             dist_txt = f"{diamonds_approx}d"
             dist_s = row_font.render(dist_txt, True, (255, 215, 100))
-            surf.blit(dist_s, (table_w - 70, y))
+            # Position with right margin to prevent cutoff
+            dist_x = table_w - bar_margin_right - 5  # 5px padding from bar margin
+            surf.blit(dist_s, (dist_x, y))
 
             # Progress bar
             prog = (dist_val / max_distance) if max_distance > 0 else 0.0
@@ -1574,7 +1804,7 @@ class GameEngine:
         # Title
         title_font = pygame.font.SysFont("Arial", 15, bold=True)
         title_enhanced = self._render_text_enhanced(
-            "PODERES DE COMBATE",
+            "COMBAT POWERS",
             title_font,
             (255, 235, 50),
             outline_color=(0, 0, 0),
@@ -1584,9 +1814,9 @@ class GameEngine:
         
         # Combat items
         items = [
-            ("rosa", "+5m", "Rosa", (255, 120, 180)),
-            ("pesa", "Frena Lider", "Pesa", (180, 180, 180)),
-            ("hielo", "Congela 3s", "Helado", (120, 220, 255)),
+            ("rosa", "+5m", "Rose", (255, 120, 180)),
+            ("pesa", "Stops Leader", "Weight", (180, 180, 180)),
+            ("hielo", "Freeze 3s", "Ice Cream", (120, 220, 255)),
         ]
         
         item_width = (SCREEN_WIDTH - 2 * padding) // len(items)
@@ -1889,6 +2119,25 @@ class GameEngine:
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
+    def _render_victory_flash(self) -> None:
+        """
+        Render white flash effect on victory.
+        Creates a full-screen white overlay that fades out over 0.3 seconds.
+        Does not block state updates or final classification rendering.
+        """
+        from .config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        
+        if self.victory_flash_alpha <= 0:
+            return
+        
+        # Create white surface with alpha
+        flash_surface = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
+        alpha = int(self.victory_flash_alpha)
+        flash_surface.fill((255, 255, 255, alpha))
+        
+        # Blit flash overlay on top of everything
+        self.render_surface.blit(flash_surface, (0, 0))
+    
     def _render_text_enhanced(
         self,
         text: str,
@@ -1979,7 +2228,7 @@ class GameEngine:
 
         # Main title - renderizar primero a tamaño base
         title_font = pygame.font.SysFont("Arial", 24, bold=True)
-        title_text = "¡ENVÍA UNA ROSA"
+        title_text = "SEND A ROSE"
         title_surface = self._render_text_enhanced(
             title_text,
             title_font,
@@ -2004,7 +2253,7 @@ class GameEngine:
 
         # Subtitle con mismo efecto de respiración
         subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
-        subtitle_text = "PARA INICIAR!"
+        subtitle_text = "TO START!"
         subtitle_surface = self._render_text_enhanced(
             subtitle_text,
             subtitle_font,
@@ -2030,7 +2279,7 @@ class GameEngine:
         # Last winner info (if exists) - sin efecto de respiración
         if self.last_winner:
             winner_font = pygame.font.SysFont("Arial", 14, bold=True)
-            winner_text = f"Último ganador: {self.last_winner}"
+            winner_text = f"Last winner: {self.last_winner}"
             winner_surface = self._render_text_enhanced(
                 winner_text,
                 winner_font,
@@ -2043,7 +2292,7 @@ class GameEngine:
             
             # Distance info
             diamonds_approx = self._safe_int(self.last_winner_distance / 0.8, 0)
-            distance_text = f"Distancia: {diamonds_approx} diamantes"
+            distance_text = f"Distance: {diamonds_approx} diamonds"
             distance_surface = winner_font.render(distance_text, True, (200, 200, 200))
             distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, box_y + 165))
             self.render_surface.blit(distance_surface, distance_rect)
@@ -2088,7 +2337,7 @@ class GameEngine:
         
         # Title: "*** RÉCORDS MUNDIALES ***"
         title_font = pygame.font.SysFont("Arial", 16, bold=True)
-        title_text = "*** RECORDS MUNDIALES ***"
+        title_text = "*** WORLD RECORDS ***"
         title_surface = self._render_text_enhanced(
             title_text,
             title_font,
@@ -2140,11 +2389,11 @@ class GameEngine:
             footer_font = pygame.font.SysFont("Arial", 9)
             elapsed = time.time() - self.global_rank_last_update
             if elapsed < 60:
-                footer_text = "Actualizado hace unos segundos"
+                footer_text = "Updated a few seconds ago"
             elif elapsed < 3600:
-                footer_text = f"Actualizado hace {int(elapsed/60)}m"
+                footer_text = f"Updated {int(elapsed/60)}m ago"
             else:
-                footer_text = f"Actualizado hace {int(elapsed/3600)}h"
+                footer_text = f"Updated {int(elapsed/3600)}h ago"
             
             footer_surface = footer_font.render(footer_text, True, (150, 150, 150))
             footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 10))
@@ -2166,63 +2415,85 @@ class GameEngine:
         panel_x = (SCREEN_WIDTH - panel_width) // 2
         panel_y = 20
         
-        # Create panel surface with alpha
+        # Create panel surface with alpha for glassmorphism
         panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
         
         # Animated glow intensity
         glow_intensity = 0.7 + 0.3 * math.sin(self.ranking_3d_animation_time * 2.0)
         
-        # Futuristic gradient background (dark with cyan tint)
+        # Glassmorphism: Semi-transparent background with blur effect simulation
+        # Base glass color (dark with slight blue tint)
+        glass_base = (15, 25, 45, 180)  # Semi-transparent dark blue
+        
+        # Draw glass background with gradient
         for i in range(panel_height):
             ratio = i / panel_height
-            # Dark blue to darker with cyan hint
-            r = int(10 + (20 - 10) * ratio)
-            g = int(20 + (40 - 20) * ratio)
-            b = int(40 + (60 - 40) * ratio)
-            # Add cyan glow effect
-            cyan_glow = int(30 * glow_intensity * (1 - abs(ratio - 0.5) * 2))
-            g = min(255, g + cyan_glow)
-            b = min(255, b + cyan_glow * 2)
-            pygame.draw.line(panel_surface, (r, g, b, 240), (0, i), (panel_width, i))
+            # Subtle gradient from slightly lighter to darker
+            alpha = int(180 - 20 * ratio)  # Fade from top to bottom
+            r = int(15 + 5 * (1 - ratio))
+            g = int(25 + 10 * (1 - ratio))
+            b = int(45 + 15 * (1 - ratio))
+            pygame.draw.line(panel_surface, (r, g, b, alpha), (0, i), (panel_width, i))
         
-        # Glowing cyan border (multiple layers for glow effect)
+        # Glassmorphism border: Bright, glowing border with multiple layers
         border_color_base = (100, 200, 255)  # Cyan
-        border_alpha = int(200 * glow_intensity)
+        border_alpha = int(220 * glow_intensity)
         
-        # Outer glow
-        for i in range(3):
-            alpha = border_alpha // (i + 2)
+        # Outer glow layers (creates depth)
+        for i in range(4):
+            alpha = int(border_alpha * (0.3 / (i + 1)))
             pygame.draw.rect(
                 panel_surface, 
                 (*border_color_base, alpha), 
                 (i, i, panel_width - i*2, panel_height - i*2), 
                 2, 
-                border_radius=12 - i
+                border_radius=15 - i
             )
         
-        # Main border
+        # Main bright border (glass edge effect)
         pygame.draw.rect(
             panel_surface, 
             (*border_color_base, border_alpha), 
             (0, 0, panel_width, panel_height), 
             3, 
+            border_radius=15
+        )
+        
+        # Inner highlight (top edge light reflection)
+        highlight_alpha = int(150 * glow_intensity)
+        pygame.draw.rect(
+            panel_surface, 
+            (200, 240, 255, highlight_alpha), 
+            (4, 4, panel_width - 8, 8), 
+            0, 
+            border_radius=11
+        )
+        
+        # Subtle inner border for depth
+        pygame.draw.rect(
+            panel_surface, 
+            (150, 220, 255, 80), 
+            (3, 3, panel_width - 6, panel_height - 6), 
+            1, 
             border_radius=12
         )
         
-        # Inner highlight
-        pygame.draw.rect(
-            panel_surface, 
-            (150, 220, 255, 100), 
-            (3, 3, panel_width - 6, panel_height - 6), 
-            1, 
-            border_radius=9
-        )
-        
+        # Blit glassmorphic panel
         self.render_surface.blit(panel_surface, (panel_x, panel_y))
         
-        # Title with glow effect
-        title_font = pygame.font.SysFont("Arial", 20, bold=True)
-        title_text = "* RECORDS MUNDIALES *"
+        # Title with glow effect - using improved font
+        font_names = ["Verdana", "Arial Black", "Arial"]
+        title_font = None
+        for font_name in font_names:
+            try:
+                title_font = pygame.font.SysFont(font_name, 20, bold=True)
+                break
+            except:
+                continue
+        if title_font is None:
+            title_font = pygame.font.Font(None, 20)
+        
+        title_text = "* WORLD RECORDS *"
         
         # Title with cyan glow
         title_color = (150, 220, 255)  # Bright cyan
@@ -2236,9 +2507,24 @@ class GameEngine:
         title_rect = title_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + 25))
         self.render_surface.blit(title_surface, title_rect)
         
-        # Render Top 3 with enhanced styling
-        entry_font = pygame.font.SysFont("Arial", 16, bold=True)
-        medal_font = pygame.font.SysFont("Arial", 18, bold=True)
+        # Render Top 3 with enhanced styling - using improved fonts
+        font_names = ["Verdana", "Arial Black", "Arial"]
+        entry_font = None
+        medal_font = None
+        for font_name in font_names:
+            try:
+                if entry_font is None:
+                    entry_font = pygame.font.SysFont(font_name, 16, bold=True)
+                if medal_font is None:
+                    medal_font = pygame.font.SysFont(font_name, 18, bold=True)
+                if entry_font and medal_font:
+                    break
+            except:
+                continue
+        if entry_font is None:
+            entry_font = pygame.font.Font(None, 16)
+        if medal_font is None:
+            medal_font = pygame.font.Font(None, 18)
         
         start_y = panel_y + 65
         line_height = 35
@@ -2276,16 +2562,25 @@ class GameEngine:
             entry_surface = entry_font.render(entry_text, True, entry_color)
             self.render_surface.blit(entry_surface, (panel_x + 70, y_pos + 2))
         
-        # Footer with update time
+        # Footer with update time - using improved font
         if self.global_rank_last_update > 0:
-            footer_font = pygame.font.SysFont("Arial", 10)
+            font_names = ["Verdana", "Arial Black", "Arial"]
+            footer_font = None
+            for font_name in font_names:
+                try:
+                    footer_font = pygame.font.SysFont(font_name, 10)
+                    break
+                except:
+                    continue
+            if footer_font is None:
+                footer_font = pygame.font.Font(None, 10)
             elapsed = time.time() - self.global_rank_last_update
             if elapsed < 60:
-                footer_text = "Actualizado hace unos segundos"
+                footer_text = "Updated a few seconds ago"
             elif elapsed < 3600:
-                footer_text = f"Actualizado hace {int(elapsed/60)}m"
+                footer_text = f"Updated {int(elapsed/60)}m ago"
             else:
-                footer_text = f"Actualizado hace {int(elapsed/3600)}h"
+                footer_text = f"Updated {int(elapsed/3600)}h ago"
             
             footer_surface = footer_font.render(footer_text, True, (150, 200, 255))
             footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 15))
@@ -2479,7 +2774,11 @@ class GameEngine:
             'Colombia': 'COL',
             'Chile': 'CHI',
             'Peru': 'PER',
-            'Venezuela': 'VEN'
+            'Venezuela': 'VEN',
+            'USA': 'USA',
+            'Indonesia': 'IDN',
+            'Russia': 'RUS',
+            'Italy': 'ITA'
         }
         return abbrev_map.get(country, '???')
     
@@ -2618,7 +2917,7 @@ class GameEngine:
             lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
             
             self.spawn_floating_text(
-                f"¡@{username} unido!",
+                f"@{username} joined!",
                 100,
                 lane_y,
                 (255, 215, 0)

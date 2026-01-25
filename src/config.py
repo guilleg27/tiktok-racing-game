@@ -1,8 +1,11 @@
 """Configuration constants for the TikTok Live Bot."""
 
-# Screen settings - Resolución optimizada para transmisión vertical
+# Screen settings - Optimized for vertical streaming
 SCREEN_WIDTH = 460
 SCREEN_HEIGHT = 820
+
+# Window margins (outer frame around the game area)
+GAME_MARGIN = 40
 
 # Auto stress test for performance testing  
 AUTO_STRESS_TEST = False
@@ -29,8 +32,8 @@ WALL_THICKNESS = 20
 
 # Fixed window mode (no scaling needed)
 DEBUG_MODE = False
-ACTUAL_WIDTH = SCREEN_WIDTH   # Fixed 450px
-ACTUAL_HEIGHT = SCREEN_HEIGHT # Fixed 800px
+ACTUAL_WIDTH = SCREEN_WIDTH + (GAME_MARGIN * 2)
+ACTUAL_HEIGHT = SCREEN_HEIGHT + (GAME_MARGIN * 2)
 
 # Physics settings (Pymunk)
 GRAVITY = (0, 900)
@@ -47,12 +50,23 @@ WALL_ELASTICITY = 0.7
 # Race Configuration - Posiciones optimizadas
 RACE_START_X = 50        # Inicio de los carriles
 RACE_FINISH_X = 400      # Línea de meta
-FLAG_RADIUS = 18         # Radio de las banderas (reducido de 25 a 18)
+FLAG_RADIUS = 12         # Flag radius (reduced to 12 for better fit in lanes)
 
-# Background colors - Degradado elegante estilo TikTok
+# Race countries (used for flag sprites)
+RACE_COUNTRIES = [
+    "Argentina", "Brasil", "Mexico", "España",
+    "Colombia", "Chile", "Peru", "Venezuela",
+    "USA", "Indonesia", "Russia", "Italy",
+]
+
+# Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
 GRADIENT_BOTTOM = (10, 10, 20)   # Casi negro con toque azul
 COLOR_LANE_LINE = (80, 100, 140, 80)  # Líneas azuladas visibles pero sutiles
+
+# Outer background (window margin)
+OUTER_GRADIENT_TOP = (70, 80, 110)
+OUTER_GRADIENT_BOTTOM = (45, 50, 80)
 
 # UI Colors
 COLOR_BACKGROUND = (0, 0, 0)                # Black background (fallback)
@@ -123,6 +137,20 @@ GIFT_COLORS = {
     
     "Universe": (25, 25, 112),          # Midnight blue
     "Universo": (25, 25, 112),
+    
+    # Country colors (for flags)
+    "Argentina": (116, 172, 223),       # Light blue
+    "Brasil": (0, 156, 59),             # Green
+    "Mexico": (0, 102, 51),             # Dark green
+    "España": (200, 20, 20),           # Red
+    "Colombia": (255, 205, 0),         # Yellow
+    "Chile": (0, 57, 166),             # Blue
+    "Peru": (212, 0, 0),               # Red
+    "Venezuela": (255, 221, 0),        # Yellow
+    "USA": (0, 50, 150),               # Blue (USA flag)
+    "Indonesia": (200, 0, 0),          # Red (Indonesia flag)
+    "Russia": (0, 50, 150),            # Blue (Russia flag)
+    "Italy": (0, 150, 0),              # Green (Italy flag)
     
     # Default fallback
     "default": (255, 255, 255),
@@ -267,6 +295,22 @@ COUNTRY_KEYWORDS = {
     # Venezuela
     'ven': 'Venezuela', 'venezuela': 'Venezuela', 've': 'Venezuela',
     'vzla': 'Venezuela', '🇻🇪': 'Venezuela',
+    
+    # USA
+    'usa': 'USA', 'united states': 'USA', 'us': 'USA',
+    'america': 'USA', '🇺🇸': 'USA',
+    
+    # Indonesia
+    'ind': 'Indonesia', 'indonesia': 'Indonesia', 'id': 'Indonesia',
+    '🇮🇩': 'Indonesia',
+    
+    # Russia
+    'rus': 'Russia', 'russia': 'Russia', 'ru': 'Russia',
+    'russian': 'Russia', '🇷🇺': 'Russia',
+    
+    # Italy
+    'ita': 'Italy', 'italy': 'Italy', 'it': 'Italy',
+    'italia': 'Italy', '🇮🇹': 'Italy',
 }
 
 # Anti-spam para joins

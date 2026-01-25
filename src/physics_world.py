@@ -21,7 +21,8 @@ from .config import (
     FLAG_RADIUS,       
     VOL_BGM,           
     GAME_AREA_TOP,      
-    GAME_AREA_BOTTOM
+    GAME_AREA_BOTTOM,
+    RACE_COUNTRIES,
 )
 
 if TYPE_CHECKING:
@@ -60,23 +61,20 @@ class PhysicsWorld:
         # Flag racers by country
         self.racers: dict[str, FlagRacer] = {}
         
-        # Race configuration - Usando constantes optimizadas de config
-        self.num_lanes = 8
+        # Race configuration - Using optimized constants from config
+        self.num_lanes = 12  # Increased from 8 to accommodate new countries
         
-        # Área de juego (excluyendo header y footer)
-        self.game_area_top = GAME_AREA_TOP       # 35px debajo del header
-        self.game_area_bottom = GAME_AREA_BOTTOM # 65px para la leyenda
+        # Game area (excluding header and footer)
+        self.game_area_top = GAME_AREA_TOP       # 35px below header
+        self.game_area_bottom = GAME_AREA_BOTTOM # 65px for legend
         self.game_area_height = SCREEN_HEIGHT - self.game_area_top - self.game_area_bottom
         
         self.lane_height = self.game_area_height // self.num_lanes
         self.start_x = RACE_START_X
         self.finish_line_x = RACE_FINISH_X
         
-        # Countries/teams (top 8 - países más activos)
-        self.countries = [
-            "Argentina", "Brasil", "Mexico", "España", 
-            "Colombia", "Chile", "Peru", "Venezuela"
-        ]
+        # Countries/teams (12 countries total)
+        self.countries = list(RACE_COUNTRIES)
         
         # Winner tracking
         self.winner = None
@@ -86,8 +84,8 @@ class PhysicsWorld:
         
         self.final_leaderboard: list[tuple[int, str, float, str]] | None = None
 
-        # Smooth movement configuration (Lerp)
-        self.smoothing_factor = 0.08
+        # Smooth movement configuration (Lerp) - Improved for smoother motion
+        self.smoothing_factor = 0.12  # Increased from 0.08 for smoother interpolation
 
         # Combat system - freeze tracking
         self.frozen_countries: dict[str, float] = {}  # country -> remaining freeze time
@@ -268,8 +266,13 @@ class PhysicsWorld:
 
         logger.info(f"🏆 WINNER: {country}!")
 
-        # Trigger golden particle explosion at VISUAL position
+        # Trigger victory flash effect (white screen flash)
         if self.game_engine:
+            # Activate white flash effect
+            self.game_engine.victory_flash_alpha = 255.0  # Full white
+            self.game_engine.victory_flash_time = 0.0  # Reset timer
+            
+            # Trigger golden particle explosion at VISUAL position
             racer = self.racers[country]
             pos = (racer.body.position.x, racer.body.position.y)
             self.game_engine.emit_explosion(
@@ -311,10 +314,14 @@ class PhysicsWorld:
                 current_x = racer.body.position.x
                 target_x = racer.target_x
             
-                # Only interpolate if there's a difference
-                if abs(target_x - current_x) > 0.1:
+                # Only interpolate if there's a difference (reduced threshold for smoother motion)
+                if abs(target_x - current_x) > 0.05:  # Reduced from 0.1 for more responsive movement
+                    # Smooth Lerp with adaptive factor based on distance
+                    distance = abs(target_x - current_x)
+                    # Use slightly higher factor for larger distances (faster catch-up)
+                    adaptive_factor = min(self.smoothing_factor * (1.0 + distance / 100.0), 0.25)
                     # Lerp formula: current += (target - current) * factor
-                    new_x = current_x + (target_x - current_x) * self.smoothing_factor
+                    new_x = current_x + (target_x - current_x) * adaptive_factor
                 
                     # Update body position (visual position)
                     racer.body.position = (new_x, racer.body.position.y)
@@ -448,10 +455,10 @@ class PhysicsWorld:
                     'effect': 'setback',
                     'target': leader,
                     'value': self.EFFECT_PESA_SETBACK,
-                    'message': f'🏋️ ¡Atacando al líder: {leader}! -{self.EFFECT_PESA_SETBACK}m'
+                    'message': f'🏋️ Attacking leader: {leader}! -{self.EFFECT_PESA_SETBACK}m'
                 }
                 logger.info(result['message'])
-                print(f"Atacando al líder: {leader}")  # Debug console
+                print(f"Attacking leader: {leader}")  # Debug console
         
         # 🍦 HELADO/ICE CREAM: Congela al país en 1er lugar por 3 segundos
         elif 'helado' in gift_lower or 'ice cream' in gift_lower or 'ice' in gift_lower:
@@ -463,10 +470,10 @@ class PhysicsWorld:
                     'effect': 'freeze',
                     'target': leader,
                     'value': self.EFFECT_HELADO_FREEZE,
-                    'message': f'🍦 ¡{leader} congelado por {self.EFFECT_HELADO_FREEZE}s!'
+                    'message': f'🍦 {leader} frozen for {self.EFFECT_HELADO_FREEZE}s!'
                 }
                 logger.info(result['message'])
-                print(f"Atacando al líder: {leader}")  # Debug console
+                print(f"Attacking leader: {leader}")  # Debug console
         
         return result
     
@@ -509,6 +516,10 @@ class PhysicsWorld:
         self.race_finished = False
         self.win_time = 0.0
         self.final_leaderboard = None
+        
+        # Clear trail particles when race resets
+        if self.game_engine and hasattr(self.game_engine, 'particle_manager'):
+            self.game_engine.particle_manager.clear_all_trails()
         
         # Restore BGM volume and ensure it's playing
         if self.game_engine and hasattr(self.game_engine, 'audio_manager'):
@@ -579,7 +590,8 @@ class PhysicsWorld:
         emoji_map = {
             "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Mexico": "🇲🇽",
             "España": "🇪🇸", "Colombia": "🇨🇴", "Chile": "🇨🇱",
-            "Peru": "🇵🇪", "Venezuela": "🇻🇪"
+            "Peru": "🇵🇪", "Venezuela": "🇻🇪",
+            "USA": "🇺🇸", "Indonesia": "🇮🇩", "Russia": "🇷🇺", "Italy": "🇮🇹"
         }
         
         for country, racer in self.racers.items():

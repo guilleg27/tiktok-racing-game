@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict
 
-from .config import GIFT_NAME_MAPPING
+from .config import GIFT_NAME_MAPPING, RACE_COUNTRIES
 from .resources import resource_path
 
 logger = logging.getLogger(__name__)
@@ -74,18 +74,34 @@ class AssetManager:
         
         # Try translated name first
         if translated_name in self._cache:
-            return self._scale_sprite(self._cache[translated_name], size)
+            return self._scale_sprite(
+                self._cache[translated_name],
+                size,
+                apply_bg_remove=self._is_country_name(translated_name)
+            )
         
         # Try original name
         if gift_name in self._cache:
-            return self._scale_sprite(self._cache[gift_name], size)
+            return self._scale_sprite(
+                self._cache[gift_name],
+                size,
+                apply_bg_remove=self._is_country_name(gift_name)
+            )
         
         # Try case-insensitive search
         for cached_name in self._cache.keys():
             if cached_name.lower() == gift_name.lower():
-                return self._scale_sprite(self._cache[cached_name], size)
+                return self._scale_sprite(
+                    self._cache[cached_name],
+                    size,
+                    apply_bg_remove=self._is_country_name(cached_name)
+                )
             if cached_name.lower() == translated_name.lower():
-                return self._scale_sprite(self._cache[cached_name], size)
+                return self._scale_sprite(
+                    self._cache[cached_name],
+                    size,
+                    apply_bg_remove=self._is_country_name(cached_name)
+                )
         
         # Log missing asset only once
         if gift_name not in self._missing_assets:
@@ -100,15 +116,64 @@ class AssetManager:
         normalized = name.lower().replace(" ", "").replace("_", "")
         return normalized
     
-    def _scale_sprite(self, surface: pygame.Surface, size: int) -> pygame.Surface:
+    def _scale_sprite(
+        self,
+        surface: pygame.Surface,
+        size: int,
+        apply_bg_remove: bool = False,
+    ) -> pygame.Surface:
         """Escala un sprite manteniendo aspect ratio."""
         # Create square canvas
         scaled = pygame.transform.smoothscale(surface, (size * 2, size * 2))
         # Ahora sí convert_alpha (después de que display esté inicializado)
         try:
-            return scaled.convert_alpha()
+            scaled = scaled.convert_alpha()
         except:
-            return scaled  # Fallback si aún no hay display
+            pass  # Fallback si aún no hay display
+
+        if apply_bg_remove:
+            return self._remove_background_color(scaled)
+
+        return scaled
+
+    def _is_country_name(self, name: str) -> bool:
+        """
+        Check if a sprite name matches a racing country.
+
+        Args:
+            name: Sprite name to validate.
+
+        Returns:
+            True if the name belongs to a racing country.
+        """
+        return name.lower() in {country.lower() for country in RACE_COUNTRIES}
+
+    def _remove_background_color(self, surface: pygame.Surface) -> pygame.Surface:
+        """
+        Remove a solid background color using the corner pixel as reference.
+        
+        Args:
+            surface: Surface to clean.
+        
+        Returns:
+            Surface with background pixels made transparent.
+        """
+        width, height = surface.get_size()
+        bg_color = surface.get_at((0, 0))[:3]
+        tolerance = 10
+        
+        cleaned = surface.copy()
+        for x in range(width):
+            for y in range(height):
+                r, g, b, a = cleaned.get_at((x, y))
+                if (
+                    abs(r - bg_color[0]) <= tolerance
+                    and abs(g - bg_color[1]) <= tolerance
+                    and abs(b - bg_color[2]) <= tolerance
+                ):
+                    cleaned.set_at((x, y), (r, g, b, 0))
+        
+        return cleaned
     
     def reload(self) -> None:
         """Recarga todos los assets (útil para hot-reload durante desarrollo)."""
