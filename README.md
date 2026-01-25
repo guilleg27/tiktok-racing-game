@@ -44,21 +44,28 @@ pip install -r requirements.txt
 python main.py @streamer_username
 ```
 
+**Probar sin TikTok (modo IDLE):**
+```bash
+python main.py --idle
+```
+→ Ventana abierta, sin conexión. Usa teclas para simular votos/regalos. Pulsa **L** para conectar cuando quieras ir LIVE.
+
+Ver **[TESTING_BEFORE_LIVE.md](TESTING_BEFORE_LIVE.md)** para la guía completa de pruebas pre-LIVE.
+
 ## ⌨️ Controles
 
 ### Controles Básicos
 - **ESC** - Salir
 - **C/R** - Reset carrera (volver a IDLE)
+- **L** - Conectar a TikTok (en modo IDLE)
 
 ### Test Mode (sin conexión TikTok)
-- **T** - Regalo pequeño aleatorio
-- **Y** - Regalo grande aleatorio
-- **1/2/3** - Votos de prueba (modo COMMENT) o efectos combate (modo GIFT)
-- **J** - Simular usuario uniéndose
-- **K** - Simular puntos de capitán
+- **T** - Regalo pequeño | **Y** - Regalo grande
+- **1/2/3** - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)
+- **J** - Usuario se une a equipo | **K** - Puntos de capitán
+- **F** - Combo ON FIRE | **G** - Final Stretch | **V** - Secuencia victoria
 
-**Modo COMMENT:** Teclas 1/2/3 simulan votos de usuarios aleatorios
-**Modo GIFT:** Teclas 1/2/3 activan efectos Rosa/Pesa/Helado
+**Modo COMMENT:** 1/2/3 simulan votos. **Modo GIFT:** 1/2/3 activan Rosa/Pesa/Helado.
 
 ## 🎥 OBS Setup
 

@@ -550,6 +550,11 @@ class GameEngine:
         self._last_close_race_announcement: float = 0.0  # Cooldown for close race announcements
         self._overtake_cooldown = 3.0  # Seconds between overtake announcements
         self._close_race_cooldown = 5.0  # Seconds between close race announcements
+        
+        # 🧪 Test FIRE (F key) rate limiting – avoid crash when spamming
+        self._test_fire_active = False  # Skip TTS during TEST FIRE burst
+        self._last_test_fire_time: float = 0.0
+        self._test_fire_cooldown = 2.0  # Seconds before F can be pressed again
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -1450,25 +1455,32 @@ class GameEngine:
                     logger.info(f"TEST CAPTAIN: {test_user} → {test_country} (+{test_points}💎)")
                 
                 elif event.key == pygame.K_f:  # F = Test FIRE (rapid combo)
-                    # CAMBIAR A RACING SI ESTÁ EN IDLE
-                    if self.game_state == 'IDLE':
-                        self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
-                    
-                    # Simulate 12 rapid votes to trigger ON FIRE
-                    countries = list(self.physics_world.racers.keys())
-                    test_country = random.choice(countries)
-                    
-                    for _ in range(12):
-                        self.register_combo_event(test_country)
-                        # Also apply movement
-                        self.physics_world.apply_gift_impulse(
-                            country=test_country,
-                            gift_name="ComboTest",
-                            diamond_count=1
-                        )
-                    
-                    logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
+                    # Cooldown to avoid crash when spamming F (TTS/audio flood)
+                    now = time.time()
+                    if now - self._last_test_fire_time >= self._test_fire_cooldown:
+                        self._last_test_fire_time = now
+                        # CAMBIAR A RACING SI ESTÁ EN IDLE
+                        if self.game_state == 'IDLE':
+                            self._transition_to_racing()
+                            logger.info("🏁 Game state: RACING (test mode)")
+                        try:
+                            self._test_fire_active = True
+                            countries = list(self.physics_world.racers.keys())
+                            test_country = random.choice(countries)
+                            for _ in range(12):
+                                self.register_combo_event(test_country)
+                                self.physics_world.apply_gift_impulse(
+                                    country=test_country,
+                                    gift_name="ComboTest",
+                                    diamond_count=1
+                                )
+                            logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
+                        except Exception as e:
+                            logger.exception("🔥 TEST FIRE failed: %s", e)
+                        finally:
+                            self._test_fire_active = False
+                    else:
+                        logger.debug("🔥 TEST FIRE: cooldown %.1fs", self._test_fire_cooldown - (now - self._last_test_fire_time))
                 
                 elif event.key == pygame.K_g:  # G = Test Final Stretch
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
@@ -3807,7 +3819,8 @@ class GameEngine:
             combo_level = min(5, combo_count // 2)  # Scale to 0-5
             self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
             # 🎤 Announce combo (only for milestone combos to avoid spam)
-            if combo_count % 5 == 0:  # Every 5 combos
+            # Skip TTS during TEST FIRE (F key) to prevent queue flood and crash
+            if combo_count % 5 == 0 and not getattr(self, "_test_fire_active", False):
                 self.audio_manager.announce_combo(country, combo_level)
         
         # Check for ON FIRE state
@@ -3926,8 +3939,9 @@ class GameEngine:
         combo_level = min(5, self.combo_counts.get(country, 10) // 2)  # Scale to 0-5
         self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
         
-        # 🎤 Announce combo achievement
-        self.audio_manager.announce_combo(country, combo_level)
+        # 🎤 Announce combo achievement (skip during TEST FIRE to avoid TTS flood)
+        if not getattr(self, "_test_fire_active", False):
+            self.audio_manager.announce_combo(country, combo_level)
         
         logger.info(f"🔥 {country} is ON FIRE!")
     
