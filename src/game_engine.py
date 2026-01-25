@@ -1655,25 +1655,12 @@ class GameEngine:
                          (self._safe_int(ix + size*0.7), self._safe_int(iy - size*0.7)), 1)
 
     def _render_header(self) -> None:
-        """Render header with connection status."""
+        """Render header with leader info."""
         header_surface = pygame.Surface((SCREEN_WIDTH, self.header_height), pygame.SRCALPHA)
         header_surface.fill((20, 20, 20, 230))
         self.render_surface.blit(header_surface, (0, 0))
         
-        status_color = self._get_status_color()
-        circle_x = PADDING + 6
-        circle_y = self.header_height // 2
-        pygame.draw.circle(self.render_surface, status_color, (circle_x, circle_y), 7)
-        
-        title = f"@{self.streamer_name}"
-        title_surface = self.font.render(title, True, (255, 255, 255))
-        self.render_surface.blit(title_surface, (circle_x + 20, circle_y - 10))
-        
-        status_text = self._get_status_text()
-        status_surface = self.font_small.render(status_text, True, status_color)
-        self.render_surface.blit(status_surface, (circle_x + 20, circle_y + 4))
-        
-        # Leader info (solo posición y país)
+        # Leader info (centrado en el header)
         leader_info = self.physics_world.get_leader()
         leader_text = f"1st: {leader_info[0]}" if leader_info else "1st: ---"
         
@@ -1686,10 +1673,10 @@ class GameEngine:
         else:
             count_surface = self.font.render(leader_text, True, (255, 255, 255))
         
-        # Centrar el texto (considerando el cambio de tamaño)
+        # Centrar el texto en el header
         text_rect = count_surface.get_rect()
         text_rect.right = SCREEN_WIDTH - 10
-        text_rect.centery = circle_y
+        text_rect.centery = self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
     
     def _get_status_color(self) -> tuple[int, int, int]:
