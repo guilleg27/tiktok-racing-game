@@ -1440,9 +1440,9 @@ class GameEngine:
         self._render_legend()
         self._render_leaderboard()
         
-        # Render shortcuts panel in COMMENT mode
+        # Render shortcuts panel in COMMENT mode (solo durante RACING)
         from .config import GAME_MODE
-        if GAME_MODE == "COMMENT":
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
             self._render_shortcuts_panel()
         
         # Render IDLE screen on top if in IDLE state
@@ -2349,16 +2349,21 @@ class GameEngine:
     
     def _render_idle_screen(self) -> None:
         """Render the IDLE state screen with animated prompt."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_MODE
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_MODE, COUNTRY_ABBREV
         
         # 1️⃣ OVERLAY OSCURO (alpha=150 como solicitado)
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 150))  # ← Cambiado de 180 a 150
         self.render_surface.blit(overlay, (0, 0))
         
-        # Central message box
-        box_width = 380
-        box_height = 200
+        # Central message box - MÁS GRANDE en COMMENT mode para incluir lista
+        if GAME_MODE == "COMMENT":
+            box_width = 320
+            box_height = 420
+        else:
+            box_width = 380
+            box_height = 200
+        
         box_x = (SCREEN_WIDTH - box_width) // 2
         box_y = (SCREEN_HEIGHT - box_height) // 2
         
@@ -2385,9 +2390,9 @@ class GameEngine:
         pulse_alpha = int(200 + 55 * math.sin(ticks * 0.0025))  # Alpha pulsante
 
         # Main title - different text depending on mode
-        title_font = pygame.font.SysFont("Arial", 24, bold=True)
+        title_font = pygame.font.SysFont("Arial", 22, bold=True)
         if GAME_MODE == "COMMENT":
-            title_text = "VOTE IN CHAT"
+            title_text = "VOTE IN CHAT!"
         else:
             title_text = "SEND A ROSE"
         
@@ -2410,33 +2415,73 @@ class GameEngine:
         title_surface = title_surface.copy()
         title_surface.blit(title_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         
-        title_rect = title_surface.get_rect(center=(box_x + box_width // 2, box_y + 60))
+        title_rect = title_surface.get_rect(center=(box_x + box_width // 2, box_y + 40))
         self.render_surface.blit(title_surface, title_rect)
 
-        # Subtitle con mismo efecto de respiración
-        subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
-        subtitle_text = "TO START!"
-        subtitle_surface = self._render_text_enhanced(
-            subtitle_text,
-            subtitle_font,
-            (255, 255, 100),
-            outline_color=(0, 0, 0),
-            outline_width=3
-        )
+        # COMMENT MODE: Mostrar lista de opciones dentro del recuadro
+        if GAME_MODE == "COMMENT":
+            # Subtitle
+            subtitle_font = pygame.font.SysFont("Arial", 14, bold=True)
+            subtitle_text = "Type # or SIGLA to start:"
+            subtitle_surface = subtitle_font.render(subtitle_text, True, (200, 200, 200))
+            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
+            self.render_surface.blit(subtitle_surface, subtitle_rect)
+            
+            # Lista de países (2 columnas para compactar)
+            item_font = pygame.font.SysFont("Arial", 12, bold=True)
+            y_offset = box_y + 95
+            line_height = 24
+            col_width = box_width // 2
+            
+            for i, country in enumerate(self.physics_world.countries, start=1):
+                abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
+                color = self.physics_world.racers[country].color
+                
+                # Determinar columna (izquierda o derecha)
+                col = 0 if i <= 6 else 1
+                row = (i - 1) % 6
+                
+                x_base = box_x + 20 + (col * col_width)
+                y_pos = y_offset + (row * line_height)
+                
+                # Number
+                number_text = f"{i:2d}"
+                number_surface = item_font.render(number_text, True, (255, 255, 100))
+                self.render_surface.blit(number_surface, (x_base, y_pos))
+                
+                # Separator
+                sep_surface = item_font.render("→", True, (150, 150, 150))
+                self.render_surface.blit(sep_surface, (x_base + 25, y_pos))
+                
+                # Sigla (with country color)
+                sigla_surface = item_font.render(abbrev, True, color)
+                self.render_surface.blit(sigla_surface, (x_base + 45, y_pos))
         
-        # Aplicar escala de "respiración"
-        scaled_width = int(subtitle_surface.get_width() * breathe_scale)
-        scaled_height = int(subtitle_surface.get_height() * breathe_scale)
-        subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
-        
-        # Apply pulsating alpha
-        subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
-        subtitle_alpha_surface.fill((255, 255, 255, pulse_alpha))
-        subtitle_surface = subtitle_surface.copy()
-        subtitle_surface.blit(subtitle_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        
-        subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
-        self.render_surface.blit(subtitle_surface, subtitle_rect)
+        else:
+            # GIFT MODE: Subtitle con mismo efecto de respiración
+            subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
+            subtitle_text = "TO START!"
+            subtitle_surface = self._render_text_enhanced(
+                subtitle_text,
+                subtitle_font,
+                (255, 255, 100),
+                outline_color=(0, 0, 0),
+                outline_width=3
+            )
+            
+            # Aplicar escala de "respiración"
+            scaled_width = int(subtitle_surface.get_width() * breathe_scale)
+            scaled_height = int(subtitle_surface.get_height() * breathe_scale)
+            subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
+            
+            # Apply pulsating alpha
+            subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
+            subtitle_alpha_surface.fill((255, 255, 255, pulse_alpha))
+            subtitle_surface = subtitle_surface.copy()
+            subtitle_surface.blit(subtitle_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            
+            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
+            self.render_surface.blit(subtitle_surface, subtitle_rect)
 
         # Last winner info (if exists) - sin efecto de respiración
         if self.last_winner:
