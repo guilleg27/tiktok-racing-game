@@ -150,7 +150,9 @@ class AssetManager:
 
     def _remove_background_color(self, surface: pygame.Surface) -> pygame.Surface:
         """
-        Remove a solid background color using the corner pixel as reference.
+        Remove background color from flag sprites.
+        Samples multiple corner pixels and removes matching colors.
+        Also removes common dark backgrounds.
         
         Args:
             surface: Surface to clean.
@@ -159,18 +161,57 @@ class AssetManager:
             Surface with background pixels made transparent.
         """
         width, height = surface.get_size()
-        bg_color = surface.get_at((0, 0))[:3]
-        tolerance = 10
+        
+        # Sample corners to find likely background colors
+        corners = [
+            (0, 0), (width - 1, 0),
+            (0, height - 1), (width - 1, height - 1)
+        ]
+        
+        bg_colors = set()
+        for cx, cy in corners:
+            try:
+                color = surface.get_at((cx, cy))[:3]
+                bg_colors.add(color)
+            except:
+                pass
+        
+        # Also add common dark backgrounds that might appear
+        bg_colors.add((0, 0, 0))        # Pure black
+        bg_colors.add((1, 1, 1))        # Near black
+        bg_colors.add((30, 35, 55))     # Dark blue-ish (matches game bg)
+        bg_colors.add((25, 30, 50))     # Variant
+        bg_colors.add((20, 25, 45))     # Variant
+        
+        tolerance = 25  # Increased tolerance for better matching
         
         cleaned = surface.copy()
         for x in range(width):
             for y in range(height):
                 r, g, b, a = cleaned.get_at((x, y))
-                if (
-                    abs(r - bg_color[0]) <= tolerance
-                    and abs(g - bg_color[1]) <= tolerance
-                    and abs(b - bg_color[2]) <= tolerance
-                ):
+                
+                # Skip already transparent pixels
+                if a == 0:
+                    continue
+                
+                # Check against all known background colors
+                should_remove = False
+                for bg_color in bg_colors:
+                    if (
+                        abs(r - bg_color[0]) <= tolerance
+                        and abs(g - bg_color[1]) <= tolerance
+                        and abs(b - bg_color[2]) <= tolerance
+                    ):
+                        should_remove = True
+                        break
+                
+                # Also remove very dark pixels near edges (common background)
+                edge_margin = 3
+                is_near_edge = (x < edge_margin or x >= width - edge_margin or 
+                               y < edge_margin or y >= height - edge_margin)
+                is_very_dark = (r < 40 and g < 45 and b < 60)
+                
+                if should_remove or (is_near_edge and is_very_dark):
                     cleaned.set_at((x, y), (r, g, b, 0))
         
         return cleaned

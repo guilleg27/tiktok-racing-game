@@ -1948,23 +1948,43 @@ class GameEngine:
             pygame.draw.circle(self.render_surface, racer.color, (ix, iy), ir)
             pygame.draw.circle(self.render_surface, (0, 0, 0), (ix, iy), ir, 2)
         
-        # Draw country abbreviation (ARG, BRA, MEX, etc.) to the left of the flag
+        # Draw number on LEFT and abbreviation on RIGHT of the flag
         ix = self._safe_int(x, self.physics_world.start_x)
         iy = self._safe_int(y, SCREEN_HEIGHT // 2)
+        
+        # Get country number (1-12 based on lane position)
+        country_number = racer.lane + 1  # Lanes are 0-indexed
         
         # Get country abbreviation
         country_abbrev = self._get_country_abbrev(racer.country)
         
-        # Position abbreviation to the left of the flag
-        abbrev_x = ix - radius - 25  # 25px to the left of flag edge
+        # Font for labels
+        label_font = pygame.font.SysFont("Arial", 11, bold=True)
+        
+        # === NUMBER on LEFT side ===
+        number_x = ix - radius - 18  # To the left of flag edge
+        number_y = iy
+        
+        # Number with yellow color for visibility
+        number_surface = self._render_text_enhanced(
+            str(country_number),
+            label_font,
+            (255, 255, 100),  # Yellow for numbers
+            outline_color=(0, 0, 0),
+            outline_width=1
+        )
+        number_rect = number_surface.get_rect(center=(number_x, number_y))
+        self.render_surface.blit(number_surface, number_rect)
+        
+        # === ABBREVIATION on RIGHT side ===
+        abbrev_x = ix + radius + 20  # To the right of flag edge
         abbrev_y = iy
         
-        # Render abbreviation with enhanced text
-        abbrev_font = pygame.font.SysFont("Arial", 11, bold=True)
+        # Abbreviation with country color
         abbrev_surface = self._render_text_enhanced(
             country_abbrev,
-            abbrev_font,
-            (255, 255, 255),
+            label_font,
+            racer.color,  # Use country's color
             outline_color=(0, 0, 0),
             outline_width=1
         )
@@ -2980,14 +3000,15 @@ class GameEngine:
     
     def _render_shortcuts_panel(self) -> None:
         """
-        Render shortcuts as a modern scrolling ticker at the bottom.
+        Render shortcuts as a modern scrolling ticker at the TOP of screen.
         Semi-transparent, non-intrusive, and always visible during racing.
+        Positioned above the race area to avoid interfering with combat powers.
         """
         from .config import SCREEN_WIDTH, SCREEN_HEIGHT, COUNTRY_ABBREV
         
-        # Ticker dimensions
-        ticker_height = 28
-        ticker_y = SCREEN_HEIGHT - ticker_height
+        # Ticker dimensions - positioned below header but above first lane
+        ticker_height = 20
+        ticker_y = 32  # Between leader score and first flag lane
         
         # Semi-transparent background
         ticker_bg = pygame.Surface((SCREEN_WIDTH, ticker_height), pygame.SRCALPHA)
