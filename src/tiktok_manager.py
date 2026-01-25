@@ -357,17 +357,27 @@ class TikTokManager:
         self._running = True
         self.client = self._create_client()
         
+        from .config import INITIAL_CONNECT_TIMEOUT
+        
         try:
             await self._push_status(
                 ConnectionState.RECONNECTING,
-                f"Conectando a @{self.unique_id}..."
+                f"Conectando a @{self.unique_id}... (hasta {INITIAL_CONNECT_TIMEOUT}s)"
             )
-            await self.client.start()
+            
+            # Timeout más largo para conexión inicial
+            try:
+                await asyncio.wait_for(self.client.start(), timeout=INITIAL_CONNECT_TIMEOUT)
+                logger.info(f"✅ Conexión inicial exitosa a @{self.unique_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Timeout de conexión inicial ({INITIAL_CONNECT_TIMEOUT}s). Iniciando reconexión...")
+                raise ConnectionError("Initial connection timeout")
+                
         except Exception as e:
             logger.error(f"Initial connection failed: {e}")
             await self._push_status(
                 ConnectionState.DISCONNECTED,
-                f"Error de conexión: {e}"
+                f"Error de conexión inicial. Reintentando..."
             )
             self._start_reconnect()
     

@@ -292,9 +292,10 @@ GIFT_NAME_MAPPING = {
 }
 
 # Reconnection settings
-MAX_RETRIES = 5
-BASE_DELAY = 2
-MAX_DELAY = 60
+MAX_RETRIES = 15         # Aumentado de 5 a 15 reintentos
+BASE_DELAY = 3           # Aumentado de 2 a 3 segundos
+MAX_DELAY = 120          # Aumentado de 60 a 120 segundos
+INITIAL_CONNECT_TIMEOUT = 45  # Tiempo de espera inicial (segundos)
 
 # Database
 import os
