@@ -308,9 +308,21 @@ SOUND_BIG_GIFT = os.path.join("assets", "audio", "big_gift.wav")
 SOUND_VICTORY = os.path.join("assets", "audio", "victory.wav")
 SOUND_FREEZE = os.path.join("assets", "audio", "freeze_sfx.wav")
 
+# NEW: Event-specific sound effects
+SOUND_VOTE = os.path.join("assets", "audio", "vote.wav")           # Click/coin for votes
+SOUND_COMBO_FIRE = os.path.join("assets", "audio", "combo_fire.wav")  # Ignition for combos
+SOUND_FINAL_STRETCH = os.path.join("assets", "audio", "final_stretch.wav")  # Race siren
+SOUND_COUNTDOWN = os.path.join("assets", "audio", "countdown.wav")  # Countdown beeps
+
 # Audio volume levels
 VOL_BGM = 0.3      
 VOL_SFX = 0.5
+
+# NEW: Event-specific volume levels
+VOL_VOTE = 0.4           # Slightly lower for vote clicks (high frequency)
+VOL_COMBO = 0.6          # Slightly higher for combo emphasis
+VOL_FINAL_STRETCH = 0.7  # Louder for dramatic final stretch
+VOL_VICTORY = 0.65       # Victory fanfare volume
 
 # Floating Text Colors (VFX)
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante

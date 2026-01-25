@@ -228,8 +228,7 @@ class PhysicsWorld:
         # Notify game engine about victory for audio effects
         if hasattr(self, 'game_engine') and self.game_engine:
             if hasattr(self.game_engine, 'audio_manager'):
-                self.game_engine.audio_manager.play_sfx('victory')
-                self.game_engine.audio_manager.lower_bgm_volume(3.0)
+                self.game_engine.audio_manager.play_victory_sound(winner_country=country)
 
         # Stop all racers and sync target_x to current position
         for r in self.racers.values():

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Dict
 import math
 import random
 import time
@@ -40,7 +40,8 @@ from .config import (
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
 from .database import Database
-from .asset_manager import AssetManager, AudioManager
+from .asset_manager import AssetManager
+from .audio_manager import AudioManager, SoundType, create_tts_provider, Pyttsx3Provider
 from .camera import ScreenShaker
 from .background_manager import BackgroundManager
 
@@ -359,6 +360,54 @@ class GameEngine:
         # Audio Manager
         self.audio_manager = AudioManager()
         
+        # Initialize TTS (Text-to-Speech) if available
+        # Try to find an English voice, fallback to voice_index=106 or default
+        try:
+            # First, try to find an English voice
+            temp_provider = Pyttsx3Provider()
+            if temp_provider.is_available():
+                voices = temp_provider.list_voices()
+                english_voice_id = None
+                
+                # Look for common English voice patterns
+                for voice_id in voices:
+                    voice_lower = voice_id.lower()
+                    # Common English voice names on macOS/Windows
+                    if any(name in voice_lower for name in ['alex', 'samantha', 'victoria', 'daniel', 
+                                                             'karen', 'lee', 'zira', 'david', 'mark', 
+                                                             'richard', 'susan', 'hazel', 'tom']):
+                        english_voice_id = voice_id
+                        break
+                
+                # If no English voice found, use voice_index=106 or first available
+                if english_voice_id:
+                    tts_provider = Pyttsx3Provider(voice_id=english_voice_id)
+                    logger.info(f"🎤 TTS enabled with English voice: {english_voice_id.split('.')[-1]}")
+                else:
+                    # Fallback to voice 106 if available, otherwise first voice
+                    if len(voices) > 106:
+                        tts_provider = Pyttsx3Provider(voice_index=106)
+                        logger.info(f"🎤 TTS enabled with voice index 106")
+                    else:
+                        tts_provider = Pyttsx3Provider(voice_index=0)
+                        logger.info(f"🎤 TTS enabled with default voice")
+                
+                if tts_provider.is_available():
+                    self.audio_manager.set_tts_callback(tts_provider.speak)
+                else:
+                    raise Exception("TTS provider not available")
+            else:
+                raise Exception("Could not initialize TTS")
+        except Exception as e:
+            logger.warning(f"Failed to initialize TTS: {e}, trying fallback...")
+            # Fallback to auto detection
+            tts_provider = create_tts_provider("auto")
+            if tts_provider and tts_provider.is_available():
+                self.audio_manager.set_tts_callback(tts_provider.speak)
+                logger.info("🎤 TTS enabled (fallback to default voice)")
+            else:
+                logger.debug("🎤 TTS not available (install pyttsx3 for voice announcements)")
+        
         # Physics World
         self.physics_world = PhysicsWorld(
             asset_manager=self.asset_manager,
@@ -493,6 +542,14 @@ class GameEngine:
         self.final_stretch_threshold = 0.80  # 80% of track
         self.final_stretch_time = 0.0  # animation timer
         self.original_parallax_speed = 50.0  # store original speed
+        
+        # 🎤 TTS Announcements tracking
+        self._last_leader: Optional[str] = None
+        self._last_positions: Dict[str, float] = {}  # Track positions for overtake detection
+        self._last_overtake_announcement: float = 0.0  # Cooldown for overtake announcements
+        self._last_close_race_announcement: float = 0.0  # Cooldown for close race announcements
+        self._overtake_cooldown = 3.0  # Seconds between overtake announcements
+        self._close_race_cooldown = 5.0  # Seconds between close race announcements
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -912,11 +969,10 @@ class GameEngine:
             )
             
             if success:
-                # Play appropriate sound effect
-                self.audio_manager.play_sfx(
-                    sound_type='auto',
+                # Play appropriate sound effect based on gift value
+                self.audio_manager.play_gift_sound(
                     gift_name=gift_name,
-                    diamond_count=diamond_count
+                    diamond_value=diamond_count
                 )
                 
                 # Emit particle effect at flag position
@@ -968,7 +1024,7 @@ class GameEngine:
                 target = combat_result['target']
                 if target in self.physics_world.racers:
                     # Play freeze sound effect
-                    self.audio_manager.play_freeze_sfx()
+                    self.audio_manager.play_freeze_sound()
                     
                     # 🎥 Trigger screen shake for impact
                     self.screen_shaker.impact_shake()
@@ -1613,6 +1669,9 @@ class GameEngine:
             # Update final stretch animation timer
             if self.final_stretch_triggered:
                 self.final_stretch_time += dt
+            
+            # 🎤 Check for overtakes and close races (TTS announcements)
+            self._check_race_events(dt)
         
         # Update victory flash effect (fade out) - non-blocking, runs independently
         if self.victory_flash_alpha > 0:
@@ -3744,6 +3803,12 @@ class GameEngine:
         # Check for combo milestone
         if combo_count >= self.combo_threshold and combo_count > old_count:
             self._show_combo_text(country, combo_count)
+            # 🔥 Play combo fire sound when combo increases (scaled by level)
+            combo_level = min(5, combo_count // 2)  # Scale to 0-5
+            self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
+            # 🎤 Announce combo (only for milestone combos to avoid spam)
+            if combo_count % 5 == 0:  # Every 5 combos
+                self.audio_manager.announce_combo(country, combo_level)
         
         # Check for ON FIRE state
         if combo_count >= self.on_fire_threshold:
@@ -3856,6 +3921,13 @@ class GameEngine:
         
         # Impact shake
         self.screen_shaker.impact_shake()
+        
+        # 🔥 Play combo fire sound with appropriate level
+        combo_level = min(5, self.combo_counts.get(country, 10) // 2)  # Scale to 0-5
+        self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
+        
+        # 🎤 Announce combo achievement
+        self.audio_manager.announce_combo(country, combo_level)
         
         logger.info(f"🔥 {country} is ON FIRE!")
     
@@ -4052,7 +4124,95 @@ class GameEngine:
         # Impact shake
         self.screen_shaker.big_impact_shake()
         
+        # 🏁 Play final stretch sound
+        self.audio_manager.play_final_stretch_sound()
+        
+        # 🎤 Announce final stretch
+        leader_info = self.physics_world.get_leader()
+        if leader_info:
+            leader_country = leader_info[0]
+            self.audio_manager.announce_final_stretch(leader_country)
+        
         logger.info("🏁 FINAL STRETCH triggered with WARP MODE!")
+    
+    def _check_race_events(self, dt: float) -> None:
+        """
+        Check for race events like overtakes and close races for TTS announcements.
+        
+        Args:
+            dt: Delta time since last frame
+        """
+        import time
+        current_time = time.time()
+        
+        if self.game_state != 'RACING' or self.physics_world.race_finished:
+            return
+        
+        # Get current leaderboard
+        leader_info = self.physics_world.get_leader()
+        if not leader_info:
+            return
+        
+        current_leader = leader_info[0]
+        
+        # Track current positions
+        current_positions = {}
+        for country, racer in self.physics_world.racers.items():
+            current_positions[country] = racer.body.position.x
+        
+        # Check for leader change
+        if self._last_leader and self._last_leader != current_leader:
+            # Leader changed - this is an overtake!
+            if (current_time - self._last_overtake_announcement) >= self._overtake_cooldown:
+                self.audio_manager.announce_overtake(current_leader, self._last_leader)
+                self._last_overtake_announcement = current_time
+                logger.debug(f"🎤 Overtake: {current_leader} overtook {self._last_leader}")
+        
+        # Check for overtakes (position changes)
+        if self._last_positions:
+            for country, current_pos in current_positions.items():
+                if country in self._last_positions:
+                    last_pos = self._last_positions[country]
+                    # Check if this country overtook someone
+                    for other_country, other_last_pos in self._last_positions.items():
+                        if (other_country != country and 
+                            other_country in current_positions and
+                            last_pos < other_last_pos and  # Was behind
+                            current_pos > current_positions[other_country]):  # Now ahead
+                            # Overtake detected!
+                            if (current_time - self._last_overtake_announcement) >= self._overtake_cooldown:
+                                self.audio_manager.announce_overtake(country, other_country)
+                                self._last_overtake_announcement = current_time
+                                logger.debug(f"🎤 Overtake: {country} overtook {other_country}")
+                                break
+        
+        # Check for close race (top 2 are very close)
+        sorted_racers = sorted(
+            current_positions.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        if len(sorted_racers) >= 2:
+            leader_pos = sorted_racers[0][1]
+            second_pos = sorted_racers[1][1]
+            gap = leader_pos - second_pos
+            
+            # Close race if gap is less than 5% of track length
+            track_length = self.physics_world.finish_line_x - self.physics_world.start_x
+            close_threshold = track_length * 0.05  # 5% of track
+            
+            if gap < close_threshold and gap > 0:
+                if (current_time - self._last_close_race_announcement) >= self._close_race_cooldown:
+                    leader_country = sorted_racers[0][0]
+                    chaser_country = sorted_racers[1][0]
+                    self.audio_manager.announce_close_race(leader_country, chaser_country)
+                    self._last_close_race_announcement = current_time
+                    logger.debug(f"🎤 Close race: {leader_country} vs {chaser_country}")
+        
+        # Update tracking
+        self._last_leader = current_leader
+        self._last_positions = current_positions.copy()
     
     def _render_final_stretch_announcement(self) -> None:
         """Render the FINAL STRETCH announcement with pulsing glow."""
