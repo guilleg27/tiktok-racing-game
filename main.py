@@ -30,10 +30,25 @@ os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 ssl._create_default_https_context = ssl._create_unverified_context
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Configure logging - write to file if frozen (windowed executable)
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Executable mode: log to file
+    log_file = os.path.join(os.path.dirname(sys.executable), 'tiktok_live_bot.log')
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()  # Also try to log to stderr if available
+        ]
+    )
+else:
+    # Development mode: log to console
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,12 +83,22 @@ class Application:
         self._connect_requested = False  # Flag para conectar durante ejecución
     
     def setup_signal_handlers(self) -> None:
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(
-                sig,
-                lambda: asyncio.create_task(self._signal_shutdown())
-            )
+        """Setup signal handlers for graceful shutdown. Windows-compatible."""
+        try:
+            loop = asyncio.get_running_loop()
+            # Only setup signal handlers on Unix systems (Windows uses different signals)
+            if sys.platform != 'win32':
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        loop.add_signal_handler(
+                            sig,
+                            lambda: asyncio.create_task(self._signal_shutdown())
+                        )
+                    except (NotImplementedError, ValueError):
+                        # Signal handlers not supported on this platform
+                        pass
+        except (NotImplementedError, RuntimeError) as e:
+            logger.warning(f"Could not setup signal handlers: {e}")
     
     async def _signal_shutdown(self) -> None:
         logger.info("Shutdown signal received")
@@ -102,40 +127,61 @@ class Application:
                 self.tiktok_manager = None
     
     async def run(self) -> None:
+        """Main application run loop with comprehensive error handling."""
         if self.idle_mode:
             logger.info("🎮 Starting in IDLE mode - Press L to connect")
         else:
             logger.info(f"Starting TikTok Live Bot for @{self.username}")
         
         try:
+            logger.info("Initializing database...")
             self.database = Database()
             await self.database.connect()
+            logger.info("Database initialized")
             
+            logger.info("Initializing game engine...")
             self.game_engine = GameEngine(
                 self.queue, 
                 self.username or "idle",
                 database=self.database
             )
+            logger.info("Game engine created")
             
             # Pasar referencia de la app al game engine para poder conectar
             self.game_engine.app = self
             
+            logger.info("Setting up signal handlers...")
             self.setup_signal_handlers()
-            self.game_engine.init_pygame()
+            
+            logger.info("Initializing pygame...")
+            try:
+                self.game_engine.init_pygame()
+                logger.info("Pygame initialized successfully")
+            except Exception as e:
+                logger.critical(f"Failed to initialize pygame: {e}")
+                logger.critical(traceback.format_exc())
+                raise
             
             if not self.idle_mode and self.username:
+                logger.info(f"Connecting to TikTok for @{self.username}...")
                 self.tiktok_manager = TikTokManager(self.queue, self.username)
                 await self.tiktok_manager.start()
+                logger.info("Connected to TikTok")
             else:
                 logger.info("✅ Ventana lista. L=Conectar, T=Test, C=Limpiar, ESC=Salir")
             
+            logger.info("Starting game loop...")
             await self._game_loop()
+            logger.info("Game loop ended")
             
         except Exception as e:
-            logger.error(f"Application error: {e}")
+            logger.critical(f"Application error: {e}")
+            logger.critical(f"Traceback:\n{traceback.format_exc()}")
             raise
         finally:
+            logger.info("Cleaning up...")
             await self._cleanup()
+            logger.info("Cleanup complete")
     
     async def _game_loop(self) -> None:
         dt = 1.0 / FPS
@@ -202,37 +248,50 @@ def get_username() -> tuple[str, bool]:
 
 
 def main() -> None:
-    username, idle_mode = get_username()
-    
-    # Only print to console if stdin is available (not windowed)
+    """Main entry point. Handles initialization and error reporting."""
     try:
-        if sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False:
-            print("\nControles:")
-            print("  L   - Conectar a TikTok (ingresa username)")
-            print("  T   - Regalo pequeño | Y - Regalo grande")
-            print("  1/2/3 - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)")
-            print("  J   - Test usuario uniéndose | K - Test capitanes")
-            print("  F   - Test combo ON FIRE | G - Test Final Stretch | V - Test Victoria")
-            print("  C/R - Reset carrera | ESC - Salir")
-            print("\n  Ver TESTING_BEFORE_LIVE.md para probar sin ir LIVE")
-            print()
-    except (OSError, AttributeError):
-        # Windowed mode - logs will go to file if configured
-        pass
-    
-    app = Application(username, idle_mode)
-    
-    try:
+        username, idle_mode = get_username()
+        logger.info(f"Starting application - username: {username or 'idle'}, idle_mode: {idle_mode}")
+        
+        # Only print to console if stdin is available (not windowed)
+        try:
+            if sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False:
+                print("\nControles:")
+                print("  L   - Conectar a TikTok (ingresa username)")
+                print("  T   - Regalo pequeño | Y - Regalo grande")
+                print("  1/2/3 - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)")
+                print("  J   - Test usuario uniéndose | K - Test capitanes")
+                print("  F   - Test combo ON FIRE | G - Test Final Stretch | V - Test Victoria")
+                print("  C/R - Reset carrera | ESC - Salir")
+                print("\n  Ver TESTING_BEFORE_LIVE.md para probar sin ir LIVE")
+                print()
+        except (OSError, AttributeError, RuntimeError):
+            # Windowed mode - logs will go to file if configured
+            logger.info("Running in windowed mode - check log file for details")
+        
+        app = Application(username, idle_mode)
+        logger.info("Application initialized, starting main loop")
+        
         asyncio.run(app.run())
+        logger.info("Application exited normally")
+        
     except KeyboardInterrupt:
+        logger.info("Interrupted by user")
         try:
             if sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False:
                 print("\n¡Hasta luego!")
-        except (OSError, AttributeError):
+        except (OSError, AttributeError, RuntimeError):
             pass
     except Exception as e:
-        logger.error("Fatal error: %s", e)
-        logger.error("Traceback:\n%s", traceback.format_exc())
+        error_msg = f"Fatal error: {e}"
+        logger.critical(error_msg)
+        logger.critical("Traceback:\n%s", traceback.format_exc())
+        
+        # Log file location for user reference
+        if is_frozen():
+            log_file = os.path.join(os.path.dirname(sys.executable), 'tiktok_live_bot.log')
+            logger.critical(f"Log file location: {log_file}")
+        
         sys.exit(1)
 
 
