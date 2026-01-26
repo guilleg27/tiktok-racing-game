@@ -2292,7 +2292,7 @@ class GameEngine:
         self.render_surface.blit(lane_surf, (0, 0))
     
     def _render_final_stretch_line(self) -> None:
-        """Draw a vertical line at 80% of track marking where final stretch begins."""
+        """Draw a dashed, blurred yellow line at 80% of track marking where final stretch begins."""
         start_x = self.physics_world.start_x
         finish_x = self.physics_world.finish_line_x
         track_len = finish_x - start_x
@@ -2300,8 +2300,38 @@ class GameEngine:
             return
         stretch_x = start_x + self.final_stretch_threshold * track_len
         ix = self._safe_int(stretch_x, SCREEN_WIDTH // 2)
-        color = (255, 165, 0)  # Orange – distinct from finish line
-        pygame.draw.line(self.render_surface, color, (ix, 0), (ix, SCREEN_HEIGHT), 3)
+        
+        # Yellow color (golden yellow)
+        base_color = (255, 215, 0)
+        
+        # Create dashed pattern: draw segments with gaps
+        dash_length = 12  # Length of each dash
+        gap_length = 8    # Length of gap between dashes
+        segment_length = dash_length + gap_length
+        
+        # Blur effect: draw multiple lines with slight offsets and reduced opacity
+        # Create a temporary surface with alpha channel for blur effect
+        blur_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        
+        # Draw multiple blurred layers
+        blur_offsets = [-2, -1, 0, 1, 2]  # Horizontal blur spread
+        blur_alphas = [60, 100, 200, 100, 60]  # Opacity for each blur layer (center is brightest)
+        
+        for offset, alpha in zip(blur_offsets, blur_alphas):
+            # Create color with alpha for this blur layer
+            blur_color = (*base_color, alpha)
+            
+            # Draw dashed segments for this blur layer
+            y = 0
+            while y < SCREEN_HEIGHT:
+                # Draw dash segment
+                dash_end = min(y + dash_length, SCREEN_HEIGHT)
+                pygame.draw.line(blur_surf, blur_color, (ix + offset, y), (ix + offset, dash_end), 3)
+                # Move to next segment
+                y += segment_length
+        
+        # Blit the blurred dashed line onto the render surface
+        self.render_surface.blit(blur_surf, (0, 0))
     
     def _render_finish_line(self) -> None:
         """Draw the finish line with smaller checkered pattern."""
