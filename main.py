@@ -177,27 +177,13 @@ def get_username() -> tuple[str, bool]:
     if len(sys.argv) > 1:
         return (sys.argv[1], False)
     
-    # Check if stdin is available (not windowed executable)
-    stdin_available = False
-    try:
-        # Try to check if stdin is available
-        if hasattr(sys.stdin, 'isatty'):
-            stdin_available = sys.stdin.isatty()
-        elif hasattr(sys.stdin, 'fileno'):
-            # Try to access stdin to see if it's available
-            sys.stdin.fileno()
-            stdin_available = True
-    except (OSError, RuntimeError, AttributeError):
-        # stdin is not available (windowed executable)
-        stdin_available = False
-    
-    # If no stdin (windowed executable), default to IDLE mode
-    if not stdin_available or is_frozen():
+    # If frozen (executable), default to IDLE mode (no console available)
+    if is_frozen():
         logger.info("Running as windowed executable - starting in IDLE mode")
         logger.info("Use --idle or @username as command line argument, or press L in-game to connect")
         return ("", True)
     
-    # Interactive mode: prompt user
+    # Interactive mode: prompt user (only in development)
     print("\n╔═══════════════════════════════════════════╗")
     print("║   TikTok Live Interactive - MVP           ║")
     print("╚═══════════════════════════════════════════╝\n")
@@ -209,9 +195,9 @@ def get_username() -> tuple[str, bool]:
             return ("", True)
         
         return (username, False)
-    except (EOFError, OSError, RuntimeError):
+    except (EOFError, OSError, RuntimeError) as e:
         # Fallback if stdin becomes unavailable
-        logger.warning("Could not read from stdin - defaulting to IDLE mode")
+        logger.warning(f"Could not read from stdin ({e}) - defaulting to IDLE mode")
         return ("", True)
 
 
