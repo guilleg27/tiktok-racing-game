@@ -23,6 +23,7 @@ from src.events import EventType, GameEvent, ConnectionState
 from src.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
+from src.resources import is_frozen
 
 # Configurar certificados SSL para el ejecutable
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -162,43 +163,87 @@ class Application:
 
 
 def get_username() -> tuple[str, bool]:
+    """Get username from command line arguments or prompt user.
+    
+    If running as windowed executable (no console), defaults to IDLE mode
+    when no arguments are provided.
+    
+    Returns:
+        tuple[str, bool]: (username, idle_mode)
+    """
     if len(sys.argv) > 1 and sys.argv[1] in ("--idle", "-i"):
         return ("", True)
     
     if len(sys.argv) > 1:
         return (sys.argv[1], False)
     
+    # Check if stdin is available (not windowed executable)
+    stdin_available = False
+    try:
+        # Try to check if stdin is available
+        if hasattr(sys.stdin, 'isatty'):
+            stdin_available = sys.stdin.isatty()
+        elif hasattr(sys.stdin, 'fileno'):
+            # Try to access stdin to see if it's available
+            sys.stdin.fileno()
+            stdin_available = True
+    except (OSError, RuntimeError, AttributeError):
+        # stdin is not available (windowed executable)
+        stdin_available = False
+    
+    # If no stdin (windowed executable), default to IDLE mode
+    if not stdin_available or is_frozen():
+        logger.info("Running as windowed executable - starting in IDLE mode")
+        logger.info("Use --idle or @username as command line argument, or press L in-game to connect")
+        return ("", True)
+    
+    # Interactive mode: prompt user
     print("\n╔═══════════════════════════════════════════╗")
     print("║   TikTok Live Interactive - MVP           ║")
     print("╚═══════════════════════════════════════════╝\n")
     
-    username = input("Username (o Enter para modo IDLE): ").strip()
-    
-    if not username or username.lower() == "idle":
+    try:
+        username = input("Username (o Enter para modo IDLE): ").strip()
+        
+        if not username or username.lower() == "idle":
+            return ("", True)
+        
+        return (username, False)
+    except (EOFError, OSError, RuntimeError):
+        # Fallback if stdin becomes unavailable
+        logger.warning("Could not read from stdin - defaulting to IDLE mode")
         return ("", True)
-    
-    return (username, False)
 
 
 def main() -> None:
     username, idle_mode = get_username()
     
-    print("\nControles:")
-    print("  L   - Conectar a TikTok (ingresa username)")
-    print("  T   - Regalo pequeño | Y - Regalo grande")
-    print("  1/2/3 - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)")
-    print("  J   - Test usuario uniéndose | K - Test capitanes")
-    print("  F   - Test combo ON FIRE | G - Test Final Stretch | V - Test Victoria")
-    print("  C/R - Reset carrera | ESC - Salir")
-    print("\n  Ver TESTING_BEFORE_LIVE.md para probar sin ir LIVE")
-    print()
+    # Only print to console if stdin is available (not windowed)
+    try:
+        if sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False:
+            print("\nControles:")
+            print("  L   - Conectar a TikTok (ingresa username)")
+            print("  T   - Regalo pequeño | Y - Regalo grande")
+            print("  1/2/3 - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)")
+            print("  J   - Test usuario uniéndose | K - Test capitanes")
+            print("  F   - Test combo ON FIRE | G - Test Final Stretch | V - Test Victoria")
+            print("  C/R - Reset carrera | ESC - Salir")
+            print("\n  Ver TESTING_BEFORE_LIVE.md para probar sin ir LIVE")
+            print()
+    except (OSError, AttributeError):
+        # Windowed mode - logs will go to file if configured
+        pass
     
     app = Application(username, idle_mode)
     
     try:
         asyncio.run(app.run())
     except KeyboardInterrupt:
-        print("\n¡Hasta luego!")
+        try:
+            if sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False:
+                print("\n¡Hasta luego!")
+        except (OSError, AttributeError):
+            pass
     except Exception as e:
         logger.error("Fatal error: %s", e)
         logger.error("Traceback:\n%s", traceback.format_exc())
