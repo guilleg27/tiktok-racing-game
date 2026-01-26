@@ -1092,6 +1092,19 @@ class GameEngine:
         
         elif event.type == EventType.VOTE:
             await self._handle_vote_event(event)
+        
+        elif event.type == EventType.COMMENT:
+            # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
+            if self.game_state == 'IDLE':
+                logger.info(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
+                self._transition_to_racing()
+                logger.info("🏁 Game state: RACING (first comment received!)")
+            
+            # Display comment in message log
+            message = event.format_message()
+            self.messages.append((message, event.type))
+            if len(self.messages) > MAX_MESSAGES:
+                self.messages = self.messages[-MAX_MESSAGES:]
     
     async def _handle_join_event(self, event: GameEvent) -> None:
         """Handle user joining a team via keyword."""

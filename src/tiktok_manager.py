@@ -116,9 +116,19 @@ class TikTokManager:
         except Exception:
             pass  # Continuar con fallback
         
-        # Método 3: Fallback con ID único temporal
+        # Método 3: Intentar acceder directamente a atributos del evento
+        try:
+            # Algunos eventos tienen el username directamente
+            if hasattr(event, 'username'):
+                val = getattr(event, 'username', None)
+                if val and str(val).strip():
+                    return str(val).strip()
+        except Exception:
+            pass
+        
+        # Método 4: Fallback con ID único temporal (solo si todo falla)
         fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
-        logger.debug(f"Could not extract username, using fallback: {fallback_name}")
+        logger.warning(f"⚠️ Could not extract username from event, using fallback: {fallback_name}")
         return fallback_name
     
     def _extract_diamond_count(self, event, gift_name: str) -> int:
@@ -150,6 +160,7 @@ class TikTokManager:
     
     def _setup_handlers(self, client: TikTokLiveClient) -> None:
         """Set up event handlers for the TikTok client."""
+        logger.info("🔧 Setting up TikTok event handlers...")
         
         @client.on(ConnectEvent)
         async def on_connect(event: ConnectEvent) -> None:
@@ -245,12 +256,18 @@ class TikTokManager:
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
             """Handle chat comments for keyword binding and votes."""
+            logger.info("📨 CommentEvent received!")
             try:
                 from .config import GAME_MODE, COUNTRY_SHORTCUTS
                 
+                logger.info(f"   GAME_MODE: {GAME_MODE}")
                 username = self._extract_username(event)
+                logger.info(f"   Username extracted: {username}")
                 
-                # Get message content
+                # Debug: log event attributes
+                logger.info(f"   Event attributes: {[attr for attr in dir(event) if not attr.startswith('_')]}")
+                
+                # Get message content - try all possible methods
                 message = ""
                 if hasattr(event, 'comment') and event.comment:
                     message = str(event.comment)
@@ -258,28 +275,56 @@ class TikTokManager:
                     proto_comment = getattr(event._proto, 'content', None)
                     if proto_comment:
                         message = str(proto_comment)
+                elif hasattr(event, 'text'):
+                    message = str(event.text)
                 
                 if not message:
+                    logger.debug(f"Empty message from {username}")
                     return
                 
-                # Clean message for keyword matching
-                clean_message = message.lower().strip()
+                # Clean message for keyword matching - simple strip
+                clean_message = message.strip()
+                
+                # TEMPORARY: Log all comments that look like votes for debugging
+                if clean_message.isdigit() or (len(clean_message) <= 4 and clean_message.isalpha()):
+                    logger.info(f"🔍 Potential vote from {username}: '{message}' -> cleaned: '{clean_message}'")
                 
                 # COMMENT MODE: Check for country shortcuts (siglas/números)
                 if GAME_MODE == "COMMENT":
+                    # Check exact match (case-insensitive for text, exact for numbers)
                     for shortcut, country in COUNTRY_SHORTCUTS.items():
-                        if shortcut == clean_message:  # Exact match only
-                            await self.queue.put(GameEvent(
-                                type=EventType.VOTE,
-                                username=username,
-                                content=country,
-                                extra={
-                                    "shortcut": shortcut,
-                                    "original_message": message,
-                                },
-                            ))
-                            logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
-                            return
+                        # For numbers, compare directly (exact match)
+                        if shortcut.isdigit():
+                            if shortcut == clean_message:
+                                await self.queue.put(GameEvent(
+                                    type=EventType.VOTE,
+                                    username=username,
+                                    content=country,
+                                    extra={
+                                        "shortcut": shortcut,
+                                        "original_message": message,
+                                    },
+                                ))
+                                logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
+                                return
+                        else:
+                            # For text, compare case-insensitive
+                            if shortcut.lower() == clean_message.lower():
+                                await self.queue.put(GameEvent(
+                                    type=EventType.VOTE,
+                                    username=username,
+                                    content=country,
+                                    extra={
+                                        "shortcut": shortcut,
+                                        "original_message": message,
+                                    },
+                                ))
+                                logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
+                                return
+                    
+                    # If we get here and it looked like a vote, log why it didn't match
+                    if clean_message.isdigit() or (len(clean_message) <= 4 and clean_message.isalpha()):
+                        logger.warning(f"⚠️ '{clean_message}' from {username} didn't match any shortcut. Available: {list(COUNTRY_SHORTCUTS.keys())[:15]}...")
                 
                 # GIFT MODE: Check for country keywords (for JOIN)
                 if GAME_MODE == "GIFT":
@@ -304,7 +349,7 @@ class TikTokManager:
                 ))
                 
             except Exception as e:
-                logger.error(f"Error processing comment: {e}")
+                logger.error(f"❌ Error processing comment: {e}", exc_info=True)
     
     async def _push_status(self, state: ConnectionState, message: str) -> None:
         self._connection_state = state

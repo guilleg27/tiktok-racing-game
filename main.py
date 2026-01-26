@@ -221,8 +221,8 @@ class Application:
 def get_username() -> tuple[str, bool]:
     """Get username from command line arguments or prompt user.
     
-    If running as windowed executable (no console), defaults to IDLE mode
-    when no arguments are provided.
+    If running as windowed executable (no console), shows a GUI dialog
+    to request username.
     
     Returns:
         tuple[str, bool]: (username, idle_mode)
@@ -233,11 +233,89 @@ def get_username() -> tuple[str, bool]:
     if len(sys.argv) > 1:
         return (sys.argv[1], False)
     
-    # If frozen (executable), default to IDLE mode (no console available)
+    # If frozen (executable), show GUI dialog to get username
     if is_frozen():
-        logger.info("Running as windowed executable - starting in IDLE mode")
-        logger.info("Use --idle or @username as command line argument, or press L in-game to connect")
-        return ("", True)
+        try:
+            # Try tkinter first (most user-friendly)
+            try:
+                import tkinter as tk
+                from tkinter import simpledialog
+                
+                # Create a root window (hidden)
+                root = tk.Tk()
+                root.withdraw()  # Hide the main window
+                root.attributes('-topmost', True)  # Bring to front
+                
+                # Show dialog
+                username = simpledialog.askstring(
+                    "TikTok Live Bot",
+                    "Ingresa el username de TikTok (sin @):\n\nDeja vacío para modo IDLE",
+                    parent=root
+                )
+                root.destroy()
+                
+                if username and username.strip():
+                    username = username.strip().lstrip("@")
+                    logger.info(f"Username from dialog: {username}")
+                    return (username, False)
+                else:
+                    logger.info("No username provided - starting in IDLE mode")
+                    return ("", True)
+            except ImportError:
+                # tkinter not available, try pygame
+                logger.info("tkinter not available, trying pygame dialog...")
+                try:
+                    import pygame
+                    pygame.init()
+                    pygame.display.init()
+                    
+                    # Simple pygame input box
+                    screen = pygame.display.set_mode((400, 200))
+                    pygame.display.set_caption("TikTok Live Bot - Username")
+                    font = pygame.font.Font(None, 32)
+                    clock = pygame.time.Clock()
+                    
+                    input_text = ""
+                    prompt = "Username (Enter for IDLE):"
+                    done = False
+                    
+                    while not done:
+                        for event in pygame.event.get():
+                            if event.type == pygame.QUIT:
+                                done = True
+                                input_text = ""
+                            elif event.type == pygame.KEYDOWN:
+                                if event.key == pygame.K_RETURN:
+                                    done = True
+                                elif event.key == pygame.K_BACKSPACE:
+                                    input_text = input_text[:-1]
+                                else:
+                                    input_text += event.unicode
+                        
+                        screen.fill((30, 30, 40))
+                        text_surface = font.render(prompt, True, (255, 255, 255))
+                        screen.blit(text_surface, (20, 20))
+                        input_surface = font.render(input_text, True, (255, 255, 255))
+                        screen.blit(input_surface, (20, 80))
+                        pygame.display.flip()
+                        clock.tick(30)
+                    
+                    pygame.quit()
+                    
+                    if input_text and input_text.strip():
+                        username = input_text.strip().lstrip("@")
+                        logger.info(f"Username from pygame dialog: {username}")
+                        return (username, False)
+                    else:
+                        logger.info("No username provided - starting in IDLE mode")
+                        return ("", True)
+                except Exception as e2:
+                    logger.warning(f"Could not show pygame dialog ({e2}) - defaulting to IDLE mode")
+                    return ("", True)
+        except Exception as e:
+            logger.warning(f"Could not show GUI dialog ({e}) - defaulting to IDLE mode")
+            logger.info("Use --idle or @username as command line argument, or press L in-game to connect")
+            return ("", True)
     
     # Interactive mode: prompt user (only in development)
     print("\n╔═══════════════════════════════════════════╗")
