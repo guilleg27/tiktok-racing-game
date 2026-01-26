@@ -555,6 +555,11 @@ class GameEngine:
         self._test_fire_active = False  # Skip TTS during TEST FIRE burst
         self._last_test_fire_time: float = 0.0
         self._test_fire_cooldown = 2.0  # Seconds before F can be pressed again
+        
+        # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
+        self._esc_quit_requested = False
+        self._esc_quit_time: float = 0.0
+        self._esc_quit_window = 2.0  # Seconds to press ESC again to confirm
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -931,6 +936,7 @@ class GameEngine:
     async def _handle_event(self, event: GameEvent) -> None:
         """Handle a single event from the queue."""
         if event.type == EventType.QUIT:
+            logger.info("🚪 Exiting: EventType.QUIT (e.g. TikTok disconnect)")
             self.running = False
             return
         
@@ -1225,10 +1231,22 @@ class GameEngine:
         """Process Pygame input events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                logger.info("🚪 Exiting: window closed (pygame.QUIT)")
                 self.running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    self.running = False
+                    now = time.time()
+                    if not self._esc_quit_requested:
+                        self._esc_quit_requested = True
+                        self._esc_quit_time = now
+                        logger.info("🚪 Press ESC again within 2s to quit")
+                    elif (now - self._esc_quit_time) < self._esc_quit_window:
+                        logger.info("🚪 Exiting: ESC confirmed")
+                        self.running = False
+                    else:
+                        self._esc_quit_requested = True
+                        self._esc_quit_time = now
+                        logger.info("🚪 Press ESC again within 2s to quit")
                 elif event.key == pygame.K_c or event.key == pygame.K_r:
                     self._return_to_idle()  # Usar nuevo método
                     logger.info("Race reset to IDLE!")
@@ -1281,7 +1299,6 @@ class GameEngine:
                     
                     if GAME_MODE == "COMMENT":
                         # Test vote for country
-                        import time
                         test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
                         
                         vote_event = GameEvent(
@@ -1324,7 +1341,6 @@ class GameEngine:
                     
                     if GAME_MODE == "COMMENT":
                         # Test vote for country
-                        import time
                         test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
                         
                         vote_event = GameEvent(
@@ -1369,7 +1385,6 @@ class GameEngine:
                     
                     if GAME_MODE == "COMMENT":
                         # Test vote for country
-                        import time
                         test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
                         
                         vote_event = GameEvent(
@@ -1403,8 +1418,6 @@ class GameEngine:
     
                 elif event.key == pygame.K_j:  # J = Test JoinEvent
                     # Generate random test join
-                    import time
-                    
                     # Random username with timestamp to make it unique
                     test_usernames = [
                         "TestUser", "Viewer", "Fan", "Supporter", "Player", 
@@ -1443,8 +1456,6 @@ class GameEngine:
 
                 elif event.key == pygame.K_k:  # K = Test Captain Points
                     # Add random points to random user in random country
-                    import time
-                    
                     countries = list(self.physics_world.racers.keys())
                     test_country = random.choice(countries)
                     
@@ -1620,6 +1631,10 @@ class GameEngine:
 
     def update(self, dt: float) -> None:
         """Update physics and particles."""
+        # 🚪 Reset ESC “press again to quit” if window expired
+        if self._esc_quit_requested and (time.time() - self._esc_quit_time) >= self._esc_quit_window:
+            self._esc_quit_requested = False
+        
         # 🎬 SLOW MOTION: Apply time dilation during victory sequence
         original_dt = dt
         if self.slow_motion_active:
@@ -1892,6 +1907,9 @@ class GameEngine:
         # Draw lanes
         self._render_lanes()
         
+        # Draw final stretch line (80% of track) – where stretch begins
+        self._render_final_stretch_line()
+        
         # Draw finish line
         self._render_finish_line()
         
@@ -2081,9 +2099,7 @@ class GameEngine:
         label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
-            # Get points for display
-            points = self.session_points.get(country, {}).get(captain, 0)
-            captain_text = f"@{captain} - ({points})"
+            captain_text = f"@{captain}"
             
             # Special highlight if just became captain
             if country in self.captain_change_timer:
@@ -2262,6 +2278,18 @@ class GameEngine:
             pygame.draw.line(lane_surf, COLOR_LANE_LINE, (0, y), (SCREEN_WIDTH, y), 1)
         
         self.render_surface.blit(lane_surf, (0, 0))
+    
+    def _render_final_stretch_line(self) -> None:
+        """Draw a vertical line at 80% of track marking where final stretch begins."""
+        start_x = self.physics_world.start_x
+        finish_x = self.physics_world.finish_line_x
+        track_len = finish_x - start_x
+        if track_len <= 0:
+            return
+        stretch_x = start_x + self.final_stretch_threshold * track_len
+        ix = self._safe_int(stretch_x, SCREEN_WIDTH // 2)
+        color = (255, 165, 0)  # Orange – distinct from finish line
+        pygame.draw.line(self.render_surface, color, (ix, 0), (ix, SCREEN_HEIGHT), 3)
     
     def _render_finish_line(self) -> None:
         """Draw the finish line with smaller checkered pattern."""
@@ -3751,6 +3779,39 @@ class GameEngine:
             self.background_manager.deactivate_warp_mode()
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
+    
+    def on_physics_race_reset(self) -> None:
+        """
+        Reset per-race game state when physics auto-resets (new race, stay RACING).
+        Fixes: total counter, victory zoom, final stretch not resetting between races.
+        """
+        self.floating_texts.clear()
+        self.particles.clear()
+        self.user_country_cache.clear()
+        self.country_player_count.clear()
+        self.user_assignments.clear()
+        self.users_notified.clear()
+        self.last_join_time.clear()
+        self.session_points.clear()
+        self.current_captains.clear()
+        self.captain_change_timer.clear()
+        self.race_synced = False
+        self.winner_animation_time = 0.0
+        self.winner_scale_pulse = 1.0
+        self.winner_glow_alpha = 0
+        self.combo_tracker.clear()
+        self.combo_counts.clear()
+        self.on_fire_countries.clear()
+        self.motion_trails.clear()
+        self.motion_trail_history.clear()
+        self.combo_flashes.clear()
+        self.final_stretch_triggered = False
+        self.final_stretch_time = 0.0
+        self._reset_victory_sequence()
+        if self.background_manager and getattr(self, "original_parallax_speed", None) is not None:
+            self.background_manager.set_scroll_speed(self.original_parallax_speed)
+            self.background_manager.deactivate_warp_mode()
+        logger.info("🔄 Game state reset for new race (physics auto-reset)")
     
     def _transition_to_racing(self) -> None:
         """

@@ -344,8 +344,7 @@ class PhysicsWorld:
                 logger.info(f"⏱️ Auto-resetting race after {self.auto_reset_delay}s")
                 self.reset_race()
                 if self.game_engine:
-                    self.game_engine.user_country_cache.clear()
-                    self.game_engine.country_player_count.clear()
+                    self.game_engine.on_physics_race_reset()
     
     def get_racers(self) -> dict[str, FlagRacer]:
         """Get all racers for rendering."""
