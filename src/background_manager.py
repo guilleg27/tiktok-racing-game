@@ -104,8 +104,12 @@ class BackgroundManager:
         self.warp_mode = False
         self.warp_speed_lines_max = 100  # Triple for warp
         
+        # Tension mode (after crossing final stretch line - red/orange theme)
+        self.tension_mode = False
+        
         # Pre-rendered static background (dark gradient, no nebulas)
         self.static_bg: Optional[pygame.Surface] = None
+        self.tension_bg: Optional[pygame.Surface] = None
         
         # Try to load image, fallback to procedural
         self._try_load_background_image()
@@ -114,6 +118,8 @@ class BackgroundManager:
         
         # Create static background (clean gradient, NO nebulas)
         self._create_static_background()
+        # Pre-create tension background (red/orange theme)
+        self._create_tension_background()
         
         # Pre-generate some speed lines
         self._init_speed_lines()
@@ -188,6 +194,23 @@ class BackgroundManager:
             b = int(25 + 25 * (1 - ratio))
             pygame.draw.line(self.static_bg, (r, g, b), (0, y), (self.width, y))
     
+    def _create_tension_background(self) -> None:
+        """Create tension background with red/orange theme for high-stakes moments."""
+        try:
+            self.tension_bg = pygame.Surface((self.width, self.height))
+            
+            # Red/orange gradient (top to bottom) - intense, dramatic
+            for y in range(self.height):
+                ratio = y / self.height
+                # Dark red/orange to deep red-black
+                r = int(25 + 30 * (1 - ratio))
+                g = int(5 + 10 * (1 - ratio))
+                b = int(5 + 8 * (1 - ratio))
+                pygame.draw.line(self.tension_bg, (r, g, b), (0, y), (self.width, y))
+        except Exception as e:
+            logger.error(f"Failed to create tension background: {e}")
+            self.tension_bg = None
+    
     def _init_speed_lines(self) -> None:
         """Pre-generate initial speed lines."""
         for _ in range(15):
@@ -217,19 +240,30 @@ class BackgroundManager:
         if self.warp_mode:
             base_speed *= 2.0  # Double speed in warp
         
-        # Colors (white to light blue, very subtle)
-        color_choices = [
-            (255, 255, 255),    # Pure white
-            (220, 230, 255),    # Light blue-white
-            (240, 240, 255),    # Very light blue
-            (255, 255, 240),    # Warm white
-        ]
+        # Colors: red/orange in tension mode, white/blue otherwise
+        if self.tension_mode:
+            color_choices = [
+                (255, 100, 80),     # Bright red-orange
+                (255, 150, 100),   # Orange-red
+                (255, 80, 60),      # Deep red
+                (255, 120, 90),     # Warm red-orange
+            ]
+        else:
+            color_choices = [
+                (255, 255, 255),    # Pure white
+                (220, 230, 255),    # Light blue-white
+                (240, 240, 255),    # Very light blue
+                (255, 255, 240),    # Warm white
+            ]
         color = random.choice(color_choices)
         
         # Alpha (subtle, not too bright)
-        alpha = random.randint(40, 120)
-        if self.warp_mode:
+        if self.tension_mode:
+            alpha = random.randint(100, 200)  # Brighter in tension
+        elif self.warp_mode:
             alpha = random.randint(80, 180)  # Brighter in warp
+        else:
+            alpha = random.randint(40, 120)
         
         # Thickness (1-2 pixels for crisp look)
         thickness = random.choice([1, 1, 1, 2])  # Mostly 1px
@@ -251,6 +285,19 @@ class BackgroundManager:
     def deactivate_warp_mode(self) -> None:
         """Deactivate warp speed mode."""
         self.warp_mode = False
+    
+    def activate_tension_mode(self) -> None:
+        """Activate tension mode (red/orange theme after crossing final stretch line)."""
+        if not self.tension_mode:
+            self.tension_mode = True
+            # Spawn more intense speed lines
+            for _ in range(30):
+                self._spawn_speed_line(random_x=True)
+            logger.info("🔥 TENSION MODE activated - red/orange theme!")
+    
+    def deactivate_tension_mode(self) -> None:
+        """Deactivate tension mode."""
+        self.tension_mode = False
     
     def update(self, dt: float) -> None:
         """
@@ -326,9 +373,16 @@ class BackgroundManager:
     
     def _render_procedural_background(self, surface: pygame.Surface) -> None:
         """Render procedural star field with crisp edges."""
-        # Draw static background first
-        if self.static_bg:
-            surface.blit(self.static_bg, (0, 0))
+        # Draw background: tension (red) or normal (blue)
+        try:
+            if self.tension_mode and self.tension_bg:
+                surface.blit(self.tension_bg, (0, 0))
+            elif self.static_bg:
+                surface.blit(self.static_bg, (0, 0))
+        except Exception as e:
+            logger.error(f"Error rendering background gradient: {e}")
+            # Fallback: draw a simple dark background
+            surface.fill((10, 10, 20))
         
         # Draw stars as crisp points (no glow for sharpness)
         for star in self.stars:
@@ -336,19 +390,35 @@ class BackgroundManager:
             twinkle = 0.8 + 0.2 * math.sin(self.time * 2.0 + star.twinkle_offset)
             brightness = star.brightness * twinkle
             
-            # Color based on layer
-            if star.layer == 0:
-                r = int(180 * brightness)
-                g = int(190 * brightness)
-                b = int(255 * brightness)
-            elif star.layer == 1:
-                r = int(220 * brightness)
-                g = int(220 * brightness)
-                b = int(255 * brightness)
+            # Color based on layer and mode
+            if self.tension_mode:
+                # Red/orange stars in tension mode
+                if star.layer == 0:
+                    r = int(255 * brightness)
+                    g = int(120 * brightness)
+                    b = int(80 * brightness)
+                elif star.layer == 1:
+                    r = int(255 * brightness)
+                    g = int(150 * brightness)
+                    b = int(100 * brightness)
+                else:
+                    r = int(255 * brightness)
+                    g = int(180 * brightness)
+                    b = int(120 * brightness)
             else:
-                r = int(255 * brightness)
-                g = int(250 * brightness)
-                b = int(245 * brightness)
+                # Normal blue/white stars
+                if star.layer == 0:
+                    r = int(180 * brightness)
+                    g = int(190 * brightness)
+                    b = int(255 * brightness)
+                elif star.layer == 1:
+                    r = int(220 * brightness)
+                    g = int(220 * brightness)
+                    b = int(255 * brightness)
+                else:
+                    r = int(255 * brightness)
+                    g = int(250 * brightness)
+                    b = int(245 * brightness)
             
             # Draw star as crisp rectangle (1x1 or 2x2 pixel)
             size = int(star.size)

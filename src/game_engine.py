@@ -1230,7 +1230,13 @@ class GameEngine:
     
     def handle_pygame_events(self) -> None:
         """Process Pygame input events."""
-        for event in pygame.event.get():
+        try:
+            events = pygame.event.get()
+        except Exception as e:
+            logger.exception("Error getting pygame events: %s", e)
+            return
+        
+        for event in events:
             if event.type == pygame.QUIT:
                 logger.info("🚪 Exiting: window closed (pygame.QUIT)")
                 self.running = False
@@ -1824,7 +1830,12 @@ class GameEngine:
         
         # 🌌 Render parallax background FIRST (behind everything)
         if self.background_manager:
-            self.background_manager.render(self.render_surface)
+            try:
+                self.background_manager.render(self.render_surface)
+            except Exception as e:
+                logger.exception("Error rendering background: %s", e)
+                # Fallback to static gradient on error
+                self.render_surface.blit(self.gradient_background, (0, 0))
         else:
             # Fallback to static gradient if no background manager
             self.render_surface.blit(self.gradient_background, (0, 0))
@@ -3762,10 +3773,14 @@ class GameEngine:
         # 🏆 Reset victory sequence
         self._reset_victory_sequence()
         
-        # Restore original parallax speed and deactivate warp
+        # Restore original parallax speed and deactivate warp/tension
         if self.background_manager:
             self.background_manager.set_scroll_speed(self.original_parallax_speed)
             self.background_manager.deactivate_warp_mode()
+            self.background_manager.deactivate_tension_mode()
+        
+        # 🎵 Restore normal background music
+        self.audio_manager.play_bgm_normal(fade_in_ms=1500)
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
     
@@ -3800,6 +3815,10 @@ class GameEngine:
         if self.background_manager and getattr(self, "original_parallax_speed", None) is not None:
             self.background_manager.set_scroll_speed(self.original_parallax_speed)
             self.background_manager.deactivate_warp_mode()
+            self.background_manager.deactivate_tension_mode()
+        
+        # 🎵 Restore normal background music
+        self.audio_manager.play_bgm_normal(fade_in_ms=1500)
         logger.info("🔄 Game state reset for new race (physics auto-reset)")
     
     def _transition_to_racing(self) -> None:
@@ -4184,6 +4203,11 @@ class GameEngine:
             self.background_manager.set_scroll_speed(self.original_parallax_speed * 1.5)
             # 🚀 Activate WARP MODE for triple speed lines
             self.background_manager.activate_warp_mode()
+            # 🔥 Activate TENSION MODE - red/orange theme for intensity
+            self.background_manager.activate_tension_mode()
+        
+        # 🎵 Switch to tension background music
+        self.audio_manager.play_bgm_tension(fade_in_ms=1500)
         
         # Impact shake
         self.screen_shaker.big_impact_shake()
@@ -4197,7 +4221,7 @@ class GameEngine:
             leader_country = leader_info[0]
             self.audio_manager.announce_final_stretch(leader_country)
         
-        logger.info("🏁 FINAL STRETCH triggered with WARP MODE!")
+        logger.info("🏁 FINAL STRETCH triggered with WARP + TENSION MODE!")
     
     def _check_race_events(self, dt: float) -> None:
         """

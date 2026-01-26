@@ -187,14 +187,24 @@ class Application:
         dt = 1.0 / FPS
         
         while self.game_engine.running and not self._shutdown_event.is_set():
-            self.game_engine.handle_pygame_events()
+            try:
+                self.game_engine.handle_pygame_events()
+                
+                # Intentar conectar si fue solicitado
+                await self._try_connect()
+                
+                await self.game_engine.process_events()
+                self.game_engine.update(dt)
+                self.game_engine.render()
+            except Exception as e:
+                logger.exception("Error in game loop: %s", e)
+                # Continue running to avoid crash, but log the error
+                # If it's a critical error, set running=False
+                if "pygame" in str(e).lower() or "surface" in str(e).lower():
+                    logger.critical("Critical pygame error - shutting down")
+                    self.game_engine.running = False
+                    break
             
-            # Intentar conectar si fue solicitado
-            await self._try_connect()
-            
-            await self.game_engine.process_events()
-            self.game_engine.update(dt)
-            self.game_engine.render()
             await asyncio.sleep(dt)
     
     async def _cleanup(self) -> None:
