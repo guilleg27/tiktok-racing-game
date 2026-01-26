@@ -31,6 +31,7 @@ class SoundType(Enum):
     """Types of sound effects available in the game."""
     # Background music
     BGM = auto()
+    BGM_TENSION = auto()  # High-intensity music for final stretch
     
     # Basic SFX
     SMALL_GIFT = auto()
@@ -82,6 +83,12 @@ class AudioManager:
     SOUND_PATHS: Dict[SoundType, SoundConfig] = {
         SoundType.BGM: SoundConfig(
             file_path=os.path.join("assets", "audio", "bgm.wav"),
+            volume=VOL_BGM,
+            allow_overlap=False,
+            max_instances=1
+        ),
+        SoundType.BGM_TENSION: SoundConfig(
+            file_path=os.path.join("assets", "audio", "bgm_tension.wav"),
             volume=VOL_BGM,
             allow_overlap=False,
             max_instances=1
@@ -404,6 +411,78 @@ class AudioManager:
     def is_bgm_playing(self) -> bool:
         """Check if background music is currently playing."""
         return bool(self._bgm_channel and self._bgm_channel.get_busy())
+    
+    def play_bgm_tension(self, fade_in_ms: int = 1500) -> None:
+        """
+        Switch to tension background music (high-intensity for final stretch).
+        
+        Args:
+            fade_in_ms: Fade-in duration in milliseconds (0 for instant)
+        """
+        if not self._initialized:
+            return
+        
+        if SoundType.BGM_TENSION not in self._sound_cache:
+            logger.debug("BGM TENSION not available - using normal BGM")
+            # Fallback: just continue with normal BGM if tension music not found
+            return
+        
+        with self._lock:
+            try:
+                # Stop current BGM with fade-out
+                self.stop_bgm(fade_out_ms=800)
+                
+                # Small delay to allow fade-out (non-blocking, approximate)
+                # Get reserved channel 0 for BGM
+                self._bgm_channel = pygame.mixer.Channel(0)
+                
+                tension_sound = self._sound_cache[SoundType.BGM_TENSION]
+                tension_sound.set_volume(VOL_BGM)
+                
+                if fade_in_ms > 0:
+                    self._bgm_channel.play(tension_sound, loops=-1, fade_ms=fade_in_ms)
+                else:
+                    self._bgm_channel.play(tension_sound, loops=-1)
+                
+                logger.info("🔥 Tension background music started")
+                
+            except Exception as e:
+                logger.error(f"Failed to play BGM TENSION: {e}")
+    
+    def play_bgm_normal(self, fade_in_ms: int = 1500) -> None:
+        """
+        Switch back to normal background music.
+        
+        Args:
+            fade_in_ms: Fade-in duration in milliseconds (0 for instant)
+        """
+        if not self._initialized:
+            return
+        
+        if SoundType.BGM not in self._sound_cache:
+            logger.debug("BGM not available")
+            return
+        
+        with self._lock:
+            try:
+                # Stop current BGM (tension) with fade-out
+                self.stop_bgm(fade_out_ms=800)
+                
+                # Get reserved channel 0 for BGM
+                self._bgm_channel = pygame.mixer.Channel(0)
+                
+                bgm_sound = self._sound_cache[SoundType.BGM]
+                bgm_sound.set_volume(VOL_BGM)
+                
+                if fade_in_ms > 0:
+                    self._bgm_channel.play(bgm_sound, loops=-1, fade_ms=fade_in_ms)
+                else:
+                    self._bgm_channel.play(bgm_sound, loops=-1)
+                
+                logger.info("🎵 Normal background music restored")
+                
+            except Exception as e:
+                logger.error(f"Failed to play normal BGM: {e}")
     
     # ========================================================================
     # SOUND EFFECTS

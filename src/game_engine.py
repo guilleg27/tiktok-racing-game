@@ -1092,6 +1092,19 @@ class GameEngine:
         
         elif event.type == EventType.VOTE:
             await self._handle_vote_event(event)
+        
+        elif event.type == EventType.COMMENT:
+            # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
+            if self.game_state == 'IDLE':
+                logger.info(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
+                self._transition_to_racing()
+                logger.info("🏁 Game state: RACING (first comment received!)")
+            
+            # Display comment in message log
+            message = event.format_message()
+            self.messages.append((message, event.type))
+            if len(self.messages) > MAX_MESSAGES:
+                self.messages = self.messages[-MAX_MESSAGES:]
     
     async def _handle_join_event(self, event: GameEvent) -> None:
         """Handle user joining a team via keyword."""
@@ -1230,7 +1243,13 @@ class GameEngine:
     
     def handle_pygame_events(self) -> None:
         """Process Pygame input events."""
-        for event in pygame.event.get():
+        try:
+            events = pygame.event.get()
+        except Exception as e:
+            logger.exception("Error getting pygame events: %s", e)
+            return
+        
+        for event in events:
             if event.type == pygame.QUIT:
                 logger.info("🚪 Exiting: window closed (pygame.QUIT)")
                 self.running = False
@@ -1824,7 +1843,12 @@ class GameEngine:
         
         # 🌌 Render parallax background FIRST (behind everything)
         if self.background_manager:
-            self.background_manager.render(self.render_surface)
+            try:
+                self.background_manager.render(self.render_surface)
+            except Exception as e:
+                logger.exception("Error rendering background: %s", e)
+                # Fallback to static gradient on error
+                self.render_surface.blit(self.gradient_background, (0, 0))
         else:
             # Fallback to static gradient if no background manager
             self.render_surface.blit(self.gradient_background, (0, 0))
@@ -2281,7 +2305,7 @@ class GameEngine:
         self.render_surface.blit(lane_surf, (0, 0))
     
     def _render_final_stretch_line(self) -> None:
-        """Draw a vertical line at 80% of track marking where final stretch begins."""
+        """Draw a dashed, blurred yellow line at 80% of track marking where final stretch begins."""
         start_x = self.physics_world.start_x
         finish_x = self.physics_world.finish_line_x
         track_len = finish_x - start_x
@@ -2289,8 +2313,38 @@ class GameEngine:
             return
         stretch_x = start_x + self.final_stretch_threshold * track_len
         ix = self._safe_int(stretch_x, SCREEN_WIDTH // 2)
-        color = (255, 165, 0)  # Orange – distinct from finish line
-        pygame.draw.line(self.render_surface, color, (ix, 0), (ix, SCREEN_HEIGHT), 3)
+        
+        # Yellow color (golden yellow)
+        base_color = (255, 215, 0)
+        
+        # Create dashed pattern: draw segments with gaps
+        dash_length = 12  # Length of each dash
+        gap_length = 8    # Length of gap between dashes
+        segment_length = dash_length + gap_length
+        
+        # Blur effect: draw multiple lines with slight offsets and reduced opacity
+        # Create a temporary surface with alpha channel for blur effect
+        blur_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        
+        # Draw multiple blurred layers
+        blur_offsets = [-2, -1, 0, 1, 2]  # Horizontal blur spread
+        blur_alphas = [60, 100, 200, 100, 60]  # Opacity for each blur layer (center is brightest)
+        
+        for offset, alpha in zip(blur_offsets, blur_alphas):
+            # Create color with alpha for this blur layer
+            blur_color = (*base_color, alpha)
+            
+            # Draw dashed segments for this blur layer
+            y = 0
+            while y < SCREEN_HEIGHT:
+                # Draw dash segment
+                dash_end = min(y + dash_length, SCREEN_HEIGHT)
+                pygame.draw.line(blur_surf, blur_color, (ix + offset, y), (ix + offset, dash_end), 3)
+                # Move to next segment
+                y += segment_length
+        
+        # Blit the blurred dashed line onto the render surface
+        self.render_surface.blit(blur_surf, (0, 0))
     
     def _render_finish_line(self) -> None:
         """Draw the finish line with smaller checkered pattern."""
@@ -3762,10 +3816,14 @@ class GameEngine:
         # 🏆 Reset victory sequence
         self._reset_victory_sequence()
         
-        # Restore original parallax speed and deactivate warp
+        # Restore original parallax speed and deactivate warp/tension
         if self.background_manager:
             self.background_manager.set_scroll_speed(self.original_parallax_speed)
             self.background_manager.deactivate_warp_mode()
+            self.background_manager.deactivate_tension_mode()
+        
+        # 🎵 Restore normal background music
+        self.audio_manager.play_bgm_normal(fade_in_ms=1500)
         
         logger.info("🎮 Game state: IDLE (race reset complete)")
     
@@ -3800,6 +3858,10 @@ class GameEngine:
         if self.background_manager and getattr(self, "original_parallax_speed", None) is not None:
             self.background_manager.set_scroll_speed(self.original_parallax_speed)
             self.background_manager.deactivate_warp_mode()
+            self.background_manager.deactivate_tension_mode()
+        
+        # 🎵 Restore normal background music
+        self.audio_manager.play_bgm_normal(fade_in_ms=1500)
         logger.info("🔄 Game state reset for new race (physics auto-reset)")
     
     def _transition_to_racing(self) -> None:
@@ -4184,6 +4246,11 @@ class GameEngine:
             self.background_manager.set_scroll_speed(self.original_parallax_speed * 1.5)
             # 🚀 Activate WARP MODE for triple speed lines
             self.background_manager.activate_warp_mode()
+            # 🔥 Activate TENSION MODE - red/orange theme for intensity
+            self.background_manager.activate_tension_mode()
+        
+        # 🎵 Switch to tension background music
+        self.audio_manager.play_bgm_tension(fade_in_ms=1500)
         
         # Impact shake
         self.screen_shaker.big_impact_shake()
@@ -4197,7 +4264,7 @@ class GameEngine:
             leader_country = leader_info[0]
             self.audio_manager.announce_final_stretch(leader_country)
         
-        logger.info("🏁 FINAL STRETCH triggered with WARP MODE!")
+        logger.info("🏁 FINAL STRETCH triggered with WARP + TENSION MODE!")
     
     def _check_race_events(self, dt: float) -> None:
         """
