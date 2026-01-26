@@ -11,7 +11,8 @@ class EventType(Enum):
     COMMENT = auto()
     GIFT = auto()
     CONNECTION_STATUS = auto()
-    JOIN = auto()          # ← NUEVO: Usuario se une a equipo
+    JOIN = auto()          # User joins a team
+    VOTE = auto()          # User votes for a country (COMMENT mode)
     QUIT = auto()
 
 
@@ -53,6 +54,10 @@ class GameEvent:
             if count > 1:
                 return f"[{time_str}] 🎁 {self.username} envió {count}x {self.content}"
             return f"[{time_str}] 🎁 {self.username} envió {self.content}"
+        
+        elif self.type == EventType.VOTE:
+            country = self.content
+            return f"[{time_str}] 🗳️ {self.username} votó por {country}"
         
         elif self.type == EventType.CONNECTION_STATUS:
             return f"[{time_str}] ⚡ {self.content}"

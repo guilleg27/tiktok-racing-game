@@ -11,6 +11,10 @@ GAME_MARGIN = 40
 AUTO_STRESS_TEST = False
 STRESS_TEST_INTERVAL = 0.5
 
+# Game Mode Selection
+# Options: "GIFT" (traditional gift-based racing) or "COMMENT" (chat-based racing)
+GAME_MODE = "COMMENT"  # Change to "GIFT" for traditional mode
+
 # Game settings
 FPS = 60
 MAX_MESSAGES = 15
@@ -58,6 +62,65 @@ RACE_COUNTRIES = [
     "Colombia", "Chile", "Peru", "Venezuela",
     "USA", "Indonesia", "Russia", "Italy",
 ]
+
+# Country shortcuts for COMMENT mode (siglas + números)
+COUNTRY_SHORTCUTS = {
+    # Argentina
+    "1": "Argentina", "arg": "Argentina", "argentina": "Argentina",
+    
+    # Brasil
+    "2": "Brasil", "bra": "Brasil", "brasil": "Brasil", "brazil": "Brasil",
+    
+    # Mexico
+    "3": "Mexico", "mex": "Mexico", "mexico": "Mexico", "méxico": "Mexico",
+    
+    # España
+    "4": "España", "esp": "España", "españa": "España", "spain": "España",
+    
+    # Colombia
+    "5": "Colombia", "col": "Colombia", "colombia": "Colombia",
+    
+    # Chile
+    "6": "Chile", "chi": "Chile", "chile": "Chile",
+    
+    # Peru
+    "7": "Peru", "per": "Peru", "peru": "Peru", "perú": "Peru",
+    
+    # Venezuela
+    "8": "Venezuela", "ven": "Venezuela", "venezuela": "Venezuela", "vzla": "Venezuela",
+    
+    # USA
+    "9": "USA", "usa": "USA", "us": "USA", "america": "USA",
+    
+    # Indonesia
+    "10": "Indonesia", "idn": "Indonesia", "indonesia": "Indonesia", "indo": "Indonesia",
+    
+    # Russia
+    "11": "Russia", "rus": "Russia", "russia": "Russia", "ru": "Russia",
+    
+    # Italy
+    "12": "Italy", "ita": "Italy", "italy": "Italy", "italia": "Italy",
+}
+
+# Country abbreviations for display (3 letters)
+COUNTRY_ABBREV = {
+    "Argentina": "ARG",
+    "Brasil": "BRA",
+    "Mexico": "MEX",
+    "España": "ESP",
+    "Colombia": "COL",
+    "Chile": "CHI",
+    "Peru": "PER",
+    "Venezuela": "VEN",
+    "USA": "USA",
+    "Indonesia": "IDN",
+    "Russia": "RUS",
+    "Italy": "ITA",
+}
+
+# Comment mode settings
+COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
+COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
@@ -229,9 +292,10 @@ GIFT_NAME_MAPPING = {
 }
 
 # Reconnection settings
-MAX_RETRIES = 5
-BASE_DELAY = 2
-MAX_DELAY = 60
+MAX_RETRIES = 15         # Aumentado de 5 a 15 reintentos
+BASE_DELAY = 3           # Aumentado de 2 a 3 segundos
+MAX_DELAY = 120          # Aumentado de 60 a 120 segundos
+INITIAL_CONNECT_TIMEOUT = 45  # Tiempo de espera inicial (segundos)
 
 # Database
 import os
@@ -244,9 +308,21 @@ SOUND_BIG_GIFT = os.path.join("assets", "audio", "big_gift.wav")
 SOUND_VICTORY = os.path.join("assets", "audio", "victory.wav")
 SOUND_FREEZE = os.path.join("assets", "audio", "freeze_sfx.wav")
 
+# NEW: Event-specific sound effects
+SOUND_VOTE = os.path.join("assets", "audio", "vote.wav")           # Click/coin for votes
+SOUND_COMBO_FIRE = os.path.join("assets", "audio", "combo_fire.wav")  # Ignition for combos
+SOUND_FINAL_STRETCH = os.path.join("assets", "audio", "final_stretch.wav")  # Race siren
+SOUND_COUNTDOWN = os.path.join("assets", "audio", "countdown.wav")  # Countdown beeps
+
 # Audio volume levels
 VOL_BGM = 0.3      
 VOL_SFX = 0.5
+
+# NEW: Event-specific volume levels
+VOL_VOTE = 0.4           # Slightly lower for vote clicks (high frequency)
+VOL_COMBO = 0.6          # Slightly higher for combo emphasis
+VOL_FINAL_STRETCH = 0.7  # Louder for dramatic final stretch
+VOL_VICTORY = 0.65       # Victory fanfare volume
 
 # Floating Text Colors (VFX)
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante

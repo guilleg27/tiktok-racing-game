@@ -244,8 +244,10 @@ class TikTokManager:
         
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
-            """Handle chat comments for keyword binding."""
+            """Handle chat comments for keyword binding and votes."""
             try:
+                from .config import GAME_MODE, COUNTRY_SHORTCUTS
+                
                 username = self._extract_username(event)
                 
                 # Get message content
@@ -263,19 +265,36 @@ class TikTokManager:
                 # Clean message for keyword matching
                 clean_message = message.lower().strip()
                 
-                # Check for country keywords
-                from .config import COUNTRY_KEYWORDS
-                for keyword, country in COUNTRY_KEYWORDS.items():
-                    if keyword in clean_message:
-                        # Send JOIN event
-                        await self.queue.put(GameEvent(
-                            type=EventType.JOIN,
-                            username=username,
-                            content=country,
-                            extra={"keyword": keyword, "original_message": message}
-                        ))
-                        logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
-                        break  # Solo el primer match
+                # COMMENT MODE: Check for country shortcuts (siglas/números)
+                if GAME_MODE == "COMMENT":
+                    for shortcut, country in COUNTRY_SHORTCUTS.items():
+                        if shortcut == clean_message:  # Exact match only
+                            await self.queue.put(GameEvent(
+                                type=EventType.VOTE,
+                                username=username,
+                                content=country,
+                                extra={
+                                    "shortcut": shortcut,
+                                    "original_message": message,
+                                },
+                            ))
+                            logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
+                            return
+                
+                # GIFT MODE: Check for country keywords (for JOIN)
+                if GAME_MODE == "GIFT":
+                    from .config import COUNTRY_KEYWORDS
+                    for keyword, country in COUNTRY_KEYWORDS.items():
+                        if keyword in clean_message:
+                            # Send JOIN event
+                            await self.queue.put(GameEvent(
+                                type=EventType.JOIN,
+                                username=username,
+                                content=country,
+                                extra={"keyword": keyword, "original_message": message}
+                            ))
+                            logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
+                            break  # Solo el primer match
                         
                 # Also send regular COMMENT event for chat display
                 await self.queue.put(GameEvent(
@@ -338,17 +357,27 @@ class TikTokManager:
         self._running = True
         self.client = self._create_client()
         
+        from .config import INITIAL_CONNECT_TIMEOUT
+        
         try:
             await self._push_status(
                 ConnectionState.RECONNECTING,
-                f"Conectando a @{self.unique_id}..."
+                f"Conectando a @{self.unique_id}... (hasta {INITIAL_CONNECT_TIMEOUT}s)"
             )
-            await self.client.start()
+            
+            # Timeout más largo para conexión inicial
+            try:
+                await asyncio.wait_for(self.client.start(), timeout=INITIAL_CONNECT_TIMEOUT)
+                logger.info(f"✅ Conexión inicial exitosa a @{self.unique_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Timeout de conexión inicial ({INITIAL_CONNECT_TIMEOUT}s). Iniciando reconexión...")
+                raise ConnectionError("Initial connection timeout")
+                
         except Exception as e:
             logger.error(f"Initial connection failed: {e}")
             await self._push_status(
                 ConnectionState.DISCONNECTED,
-                f"Error de conexión: {e}"
+                f"Error de conexión inicial. Reintentando..."
             )
             self._start_reconnect()
     

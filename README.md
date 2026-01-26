@@ -44,12 +44,28 @@ pip install -r requirements.txt
 python main.py @streamer_username
 ```
 
+**Probar sin TikTok (modo IDLE):**
+```bash
+python main.py --idle
+```
+→ Ventana abierta, sin conexión. Usa teclas para simular votos/regalos. Pulsa **L** para conectar cuando quieras ir LIVE.
+
+Ver **[TESTING_BEFORE_LIVE.md](TESTING_BEFORE_LIVE.md)** para la guía completa de pruebas pre-LIVE.
+
 ## ⌨️ Controles
 
+### Controles Básicos
 - **ESC** - Salir
-- **C** - Limpiar bolas
-- **R** - Recargar sprites (hot reload)
-- **T** - Test mode (spawn regalo aleatorio)
+- **C/R** - Reset carrera (volver a IDLE)
+- **L** - Conectar a TikTok (en modo IDLE)
+
+### Test Mode (sin conexión TikTok)
+- **T** - Regalo pequeño | **Y** - Regalo grande
+- **1/2/3** - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)
+- **J** - Usuario se une a equipo | **K** - Puntos de capitán
+- **F** - Combo ON FIRE | **G** - Final Stretch | **V** - Secuencia victoria
+
+**Modo COMMENT:** 1/2/3 simulan votos. **Modo GIFT:** 1/2/3 activan Rosa/Pesa/Helado.
 
 ## 🎥 OBS Setup
 
@@ -88,14 +104,22 @@ FROM gift_logs GROUP BY username ORDER BY total DESC;
 
 Edita `src/config.py`:
 
+### Modo de Juego
 ```python
-SCREEN_WIDTH = 1080
-SCREEN_HEIGHT = 1920
-FPS = 60
-MAX_BALLS = 50
-BALL_FRICTION = 0.4
-BALL_ELASTICITY = 0.85
+GAME_MODE = "COMMENT"  # o "GIFT"
 ```
+
+**COMMENT**: Votos gratis en chat (1, 2, 3, arg, bra, mex...)  
+**GIFT**: Regalos de TikTok (modo original)
+
+Ver [COMMENT_MODE.md](COMMENT_MODE.md) para detalles completos.
+
+### Configuración Visual
+```python
+SCREEN_WIDTH = 460
+SCREEN_HEIGHT = 820
+GAME_MARGIN = 40  # Borde externo
+FPS = 60
 
 ### Colores por Regalo
 

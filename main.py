@@ -11,6 +11,7 @@ import asyncio
 import logging
 import signal
 import sys
+import traceback
 import os
 import ssl
 import certifi
@@ -33,6 +34,21 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _log_uncaught(exc_type, exc_value, exc_tb):
+    """Log any uncaught exception (e.g. from pygame callbacks) then reraise."""
+    if exc_type is KeyboardInterrupt:
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    logger.critical("Uncaught exception: %s", exc_value)
+    logger.critical("Traceback:\n%s", "".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+    sys.stderr.flush()
+    sys.stdout.flush()
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _log_uncaught
 
 
 class Application:
@@ -169,11 +185,12 @@ def main() -> None:
     
     print("\nControles:")
     print("  L   - Conectar a TikTok (ingresa username)")
-    print("  T   - Spawn regalo de prueba")
-    print("  J   - Test usuario uniéndose a equipo") 
-    print("  K   - Test sistema de capitanes") 
-    print("  C   - Limpiar/Reset")
-    print("  ESC - Salir")
+    print("  T   - Regalo pequeño | Y - Regalo grande")
+    print("  1/2/3 - Votos (COMMENT) o Rosa/Pesa/Helado (GIFT)")
+    print("  J   - Test usuario uniéndose | K - Test capitanes")
+    print("  F   - Test combo ON FIRE | G - Test Final Stretch | V - Test Victoria")
+    print("  C/R - Reset carrera | ESC - Salir")
+    print("\n  Ver TESTING_BEFORE_LIVE.md para probar sin ir LIVE")
     print()
     
     app = Application(username, idle_mode)
@@ -183,7 +200,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n¡Hasta luego!")
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error("Fatal error: %s", e)
+        logger.error("Traceback:\n%s", traceback.format_exc())
         sys.exit(1)
 
 

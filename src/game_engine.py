@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Dict
 import math
 import random
 import time
@@ -40,7 +40,10 @@ from .config import (
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
 from .database import Database
-from .asset_manager import AssetManager, AudioManager
+from .asset_manager import AssetManager
+from .audio_manager import AudioManager, SoundType, create_tts_provider, Pyttsx3Provider
+from .camera import ScreenShaker
+from .background_manager import BackgroundManager
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,72 @@ class TrailParticle:
     size: float  # Current particle size
     initial_size: float  # Initial size (for organic fade)
     lifetime: float  # Remaining lifetime
+
+
+@dataclass
+class MotionTrailSegment:
+    """
+    Segment of a motion trail for 'ON FIRE' combo state.
+    Creates a neon streak effect behind the flag.
+    Uses pygame.draw.line for crisp edges.
+    
+    Attributes:
+        x1, y1: Start position (older)
+        x2, y2: End position (newer, closer to flag)
+        color: RGB color from country flag colors
+        alpha: Transparency (fades over time)
+        thickness: Line thickness (thicker when ON FIRE)
+    """
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    color: tuple[int, int, int]
+    alpha: float
+    thickness: int
+
+
+@dataclass
+class ComboFlash:
+    """
+    Flash effect triggered when combo reaches a new level.
+    
+    Attributes:
+        country: Country that leveled up
+        time: Time since flash started
+        duration: Total flash duration
+        intensity: Flash brightness
+    """
+    country: str
+    time: float
+    duration: float
+    intensity: float
+
+
+@dataclass
+class ConfettiParticle:
+    """
+    Confetti particle for victory celebration.
+    Colorful squares that fall and spin.
+    
+    Attributes:
+        x, y: Position on screen
+        vx, vy: Velocity (vy positive = falling)
+        size: Square size in pixels
+        color: RGB color
+        rotation: Current rotation angle (degrees)
+        rotation_speed: Degrees per second
+        lifetime: Seconds remaining
+    """
+    x: float
+    y: float
+    vx: float
+    vy: float
+    size: float
+    color: tuple[int, int, int]
+    rotation: float
+    rotation_speed: float
+    lifetime: float
 
 
 class ParticleManager:
@@ -137,7 +206,7 @@ class ParticleManager:
             
             if particle.lifetime > 0:
                 # Fade out over time
-                life_ratio = particle.lifetime / self.trail_lifetime
+                life_ratio = particle.lifetime / self.trail_lifetime if self.trail_lifetime > 0 else 0
                 particle.alpha = int(180 * life_ratio)
                 # Fade size proportionally to lifetime, preserving initial random variation
                 particle.size = particle.initial_size * life_ratio
@@ -161,6 +230,7 @@ class FloatingText:
     """
     Floating action text for visual feedback.
     Floats upward and fades out over time.
+    Includes elastic pulse effect for combo texts.
     """
     text: str
     x: float
@@ -177,19 +247,33 @@ class FloatingText:
         self.lifespan -= 1
     
     def draw(self, surface: pygame.Surface) -> None:
-        """Render the floating text with fade effect."""
+        """Render the floating text with fade and elastic pulse effect."""
         if self.lifespan <= 0:
             return
         
         # Calculate alpha
-        alpha = int(255 * (self.lifespan / self.max_lifespan))
+        alpha = int(255 * (self.lifespan / self.max_lifespan)) if self.max_lifespan > 0 else 0
         alpha = max(0, min(255, alpha))
+        
+        # 🎯 ELASTIC PULSE: Scale up then down in first 10 frames
+        life_progress = 1.0 - (self.lifespan / self.max_lifespan) if self.max_lifespan > 0 else 1.0
+        
+        if life_progress < 0.15:  # First 15% of life
+            # Elastic overshoot: grows to 1.3x then settles to 1.0x
+            t = life_progress / 0.15  # Normalize to 0-1
+            # Elastic formula: overshoot then bounce back
+            scale = 1.0 + 0.4 * math.sin(t * math.pi) * (1 - t * 0.5)
+        else:
+            scale = 1.0
+        
+        # Calculate actual font size with pulse
+        actual_font_size = max(8, int(self.font_size * scale))
         
         # Create font con BOLD para mejor legibilidad
         try:
-            font = pygame.font.SysFont("Arial", self.font_size, bold=True)
+            font = pygame.font.SysFont("Arial", actual_font_size, bold=True)
         except:
-            font = pygame.font.Font(None, self.font_size)
+            font = pygame.font.Font(None, actual_font_size)
     
         # Render main text con anti-aliasing
         text_surface = font.render(self.text, True, self.color)
@@ -276,6 +360,54 @@ class GameEngine:
         # Audio Manager
         self.audio_manager = AudioManager()
         
+        # Initialize TTS (Text-to-Speech) if available
+        # Try to find an English voice, fallback to voice_index=106 or default
+        try:
+            # First, try to find an English voice
+            temp_provider = Pyttsx3Provider()
+            if temp_provider.is_available():
+                voices = temp_provider.list_voices()
+                english_voice_id = None
+                
+                # Look for common English voice patterns
+                for voice_id in voices:
+                    voice_lower = voice_id.lower()
+                    # Common English voice names on macOS/Windows
+                    if any(name in voice_lower for name in ['alex', 'samantha', 'victoria', 'daniel', 
+                                                             'karen', 'lee', 'zira', 'david', 'mark', 
+                                                             'richard', 'susan', 'hazel', 'tom']):
+                        english_voice_id = voice_id
+                        break
+                
+                # If no English voice found, use voice_index=106 or first available
+                if english_voice_id:
+                    tts_provider = Pyttsx3Provider(voice_id=english_voice_id)
+                    logger.info(f"🎤 TTS enabled with English voice: {english_voice_id.split('.')[-1]}")
+                else:
+                    # Fallback to voice 106 if available, otherwise first voice
+                    if len(voices) > 106:
+                        tts_provider = Pyttsx3Provider(voice_index=106)
+                        logger.info(f"🎤 TTS enabled with voice index 106")
+                    else:
+                        tts_provider = Pyttsx3Provider(voice_index=0)
+                        logger.info(f"🎤 TTS enabled with default voice")
+                
+                if tts_provider.is_available():
+                    self.audio_manager.set_tts_callback(tts_provider.speak)
+                else:
+                    raise Exception("TTS provider not available")
+            else:
+                raise Exception("Could not initialize TTS")
+        except Exception as e:
+            logger.warning(f"Failed to initialize TTS: {e}, trying fallback...")
+            # Fallback to auto detection
+            tts_provider = create_tts_provider("auto")
+            if tts_provider and tts_provider.is_available():
+                self.audio_manager.set_tts_callback(tts_provider.speak)
+                logger.info("🎤 TTS enabled (fallback to default voice)")
+            else:
+                logger.debug("🎤 TTS not available (install pyttsx3 for voice announcements)")
+        
         # Physics World
         self.physics_world = PhysicsWorld(
             asset_manager=self.asset_manager,
@@ -349,6 +481,86 @@ class GameEngine:
         self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
         self.victory_flash_duration = 0.3  # Seconds to fade out
         self.victory_flash_time = 0.0  # Time elapsed since flash started
+        
+        # 🏆 EPIC VICTORY SEQUENCE
+        self.victory_sequence_active = False
+        self.victory_sequence_time = 0.0
+        self.victory_zoom_level = 1.0  # Camera zoom (1.0 = normal, 1.5 = zoomed in)
+        self.victory_zoom_target = 1.0
+        self.victory_zoom_center: tuple[float, float] = (0.0, 0.0)
+        self.slow_motion_active = False
+        self.slow_motion_duration = 2.0  # Seconds of slow motion
+        self.slow_motion_factor = 0.5  # dt multiplier (0.5 = half speed)
+        self.confetti_particles: list = []  # Confetti system
+        self.max_confetti = 150
+        self.victory_banner_scale = 0.0  # For entrance animation
+        self.victory_winner_captain: Optional[str] = None  # Captain who won
+        self.victory_was_gift_mode = False  # Track if gift mode for monetization message
+        
+        # Shortcuts panel position (dynamic for COMMENT mode)
+        self.shortcuts_panel_position = "right"  # "right" or "left"
+        
+        # 🎥 Screen Shaker (camera effects)
+        self.screen_shaker = ScreenShaker()
+        
+        # 🌌 Background Manager (parallax starfield) - initialized after pygame
+        self.background_manager: Optional[BackgroundManager] = None
+        
+        # 🌟 Leader spotlight with smooth interpolation
+        self.leader_glow_time = 0.0  # Animation time for pulsing effect
+        self.spotlight_current_pos: tuple[float, float] = (0.0, 0.0)  # Current interpolated position
+        self.spotlight_target_pos: tuple[float, float] = (0.0, 0.0)   # Target position (leader)
+        self.spotlight_lerp_speed = 5.0  # Interpolation speed (higher = faster)
+        
+        # 📺 HUD Timing (panel auto-hide after race starts)
+        self.race_start_time: Optional[float] = None  # When racing started
+        self.hud_fade_duration = 3.0  # Seconds before HUD fades
+        
+        # 📜 Ticker system for shortcuts (bottom scrolling bar)
+        self.ticker_offset = 0.0
+        self.ticker_speed = 40.0  # pixels per second
+        
+        # 🔥 COMBO SYSTEM
+        self.combo_tracker: dict[str, list[float]] = {}  # {country: [timestamps]}
+        self.combo_counts: dict[str, int] = {}  # {country: current_combo_count}
+        self.combo_window = 3.0  # seconds to count as combo
+        self.combo_threshold = 5  # minimum for "COMBO!" display
+        self.on_fire_threshold = 10  # threshold for "ON FIRE" state
+        self.on_fire_countries: set[str] = set()  # countries currently on fire
+        
+        # 🌈 MOTION TRAILS (replaces fire_particles for crisp neon effect)
+        self.motion_trails: dict[str, list[MotionTrailSegment]] = {}  # {country: [segments]}
+        self.motion_trail_history: dict[str, list[tuple[float, float]]] = {}  # Position history
+        self.max_trail_segments = 20  # Max segments per country
+        self.trail_segment_lifetime = 0.3  # Seconds before fade
+        
+        # ✨ COMBO FLASHES (flash effect on combo level up)
+        self.combo_flashes: list[ComboFlash] = []
+        
+        # 🏁 FINAL STRETCH system
+        self.final_stretch_triggered = False
+        self.final_stretch_threshold = 0.80  # 80% of track
+        self.final_stretch_time = 0.0  # animation timer
+        self.original_parallax_speed = 50.0  # store original speed
+        
+        # 🎤 TTS Announcements tracking
+        self._last_leader: Optional[str] = None
+        self._last_positions: Dict[str, float] = {}  # Track positions for overtake detection
+        self._last_overtake_announcement: float = 0.0  # Cooldown for overtake announcements
+        self._last_close_race_announcement: float = 0.0  # Cooldown for close race announcements
+        self._overtake_cooldown = 3.0  # Seconds between overtake announcements
+        self._close_race_cooldown = 5.0  # Seconds between close race announcements
+        
+        # 🧪 Test FIRE (F key) rate limiting – avoid crash when spamming
+        self._test_fire_active = False  # Skip TTS during TEST FIRE burst
+        self._last_test_fire_time: float = 0.0
+        self._test_fire_cooldown = 2.0  # Seconds before F can be pressed again
+        
+        # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
+        self._esc_quit_requested = False
+        self._esc_quit_time: float = 0.0
+        self._esc_quit_window = 2.0  # Seconds to press ESC again to confirm
+        
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -407,6 +619,11 @@ class GameEngine:
             self.gradient_background = self._create_gradient_background()
             self.outer_background = self._create_outer_background()
             logger.info("🔧 Gradients created")
+            
+            # 🌌 Initialize parallax background manager
+            logger.info("🔧 Creating parallax background...")
+            self.background_manager = BackgroundManager(SCREEN_WIDTH, SCREEN_HEIGHT)
+            logger.info("🔧 Parallax background created")
             
             # Render flag emojis
             logger.info("🔧 Rendering emojis...")
@@ -614,7 +831,7 @@ class GameEngine:
             particle.lifetime -= 60 * dt  # Convert dt to frames (60fps)
             
             # Proportional radius reduction based on lifetime
-            life_ratio = particle.lifetime / particle.max_lifetime
+            life_ratio = particle.lifetime / particle.max_lifetime if particle.max_lifetime > 0 else 0
             particle.radius = particle.initial_radius * life_ratio
             
             # Keep particle if still alive
@@ -720,6 +937,7 @@ class GameEngine:
     async def _handle_event(self, event: GameEvent) -> None:
         """Handle a single event from the queue."""
         if event.type == EventType.QUIT:
+            logger.info("🚪 Exiting: EventType.QUIT (e.g. TikTok disconnect)")
             self.running = False
             return
         
@@ -735,7 +953,7 @@ class GameEngine:
         elif event.type == EventType.GIFT:
             # TRANSICIÓN: IDLE -> RACING al primer regalo
             if self.game_state == 'IDLE':
-                self.game_state = 'RACING'
+                self._transition_to_racing()
                 logger.info("🏁 Game state: RACING (first gift received!)")
         
             gift_count = event.extra.get("count", 1) if event.extra else 1
@@ -748,6 +966,10 @@ class GameEngine:
             
             # 🏆 CAPTAIN SYSTEM: Track points
             self._update_captain_points(username, country, diamond_count)
+            
+            # 🔥 COMBO SYSTEM: Register this gift (count each gift_count as separate)
+            for _ in range(min(gift_count, 5)):  # Cap at 5 to prevent abuse
+                self.register_combo_event(country)
 
             logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | regalo: {gift_name}")
             
@@ -759,11 +981,10 @@ class GameEngine:
             )
             
             if success:
-                # Play appropriate sound effect
-                self.audio_manager.play_sfx(
-                    sound_type='auto',
+                # Play appropriate sound effect based on gift value
+                self.audio_manager.play_gift_sound(
                     gift_name=gift_name,
-                    diamond_count=diamond_count
+                    diamond_value=diamond_count
                 )
                 
                 # Emit particle effect at flag position
@@ -774,6 +995,12 @@ class GameEngine:
                 is_large_gift = diamond_count > 50
                 count = 15 + int(diamond_count / 8) if is_large_gift else 10 + int(diamond_count / 10)
                 power = 1.2 if is_large_gift else 0.8
+                
+                # 🎥 Big impact shake for large gifts
+                if diamond_count >= 100:
+                    self.screen_shaker.big_impact_shake()
+                elif is_large_gift:
+                    self.screen_shaker.impact_shake()
                 
                 self.emit_explosion(
                     pos=pos,
@@ -809,7 +1036,10 @@ class GameEngine:
                 target = combat_result['target']
                 if target in self.physics_world.racers:
                     # Play freeze sound effect
-                    self.audio_manager.play_freeze_sfx()
+                    self.audio_manager.play_freeze_sound()
+                    
+                    # 🎥 Trigger screen shake for impact
+                    self.screen_shaker.impact_shake()
                     
                     # Spawn floating text on the frozen target
                     target_racer = self.physics_world.racers[target]
@@ -828,6 +1058,13 @@ class GameEngine:
                         power=1.0,
                         diamond_count=0
                     )
+            
+            # Handle setback/pesa effect
+            elif combat_result['effect'] == 'setback':
+                target = combat_result.get('target')
+                if target in self.physics_world.racers:
+                    # 🎥 Trigger screen shake for attack impact
+                    self.screen_shaker.impact_shake()
             
             if self.database:
                 await self.database.save_event_to_db(
@@ -852,6 +1089,9 @@ class GameEngine:
     
         elif event.type == EventType.JOIN:
             await self._handle_join_event(event)
+        
+        elif event.type == EventType.VOTE:
+            await self._handle_vote_event(event)
     
     async def _handle_join_event(self, event: GameEvent) -> None:
         """Handle user joining a team via keyword."""
@@ -900,21 +1140,121 @@ class GameEngine:
         
         logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
     
+    async def _handle_vote_event(self, event: GameEvent) -> None:
+        """
+        Handle vote event in COMMENT mode.
+        User votes for a country by typing sigla/number in chat.
+        
+        Args:
+            event: Vote event with country as content
+        """
+        from .config import COMMENT_POINTS_PER_MESSAGE, COMMENT_COOLDOWN
+        import time
+        
+        # TRANSICIÓN: IDLE -> RACING al primer voto
+        if self.game_state == 'IDLE':
+            self._transition_to_racing()
+            logger.info("🏁 Game state: RACING (first vote received!)")
+        
+        username = self.sanitize_username(event.username)
+        country = event.content
+        shortcut_used = event.extra.get("shortcut", "") if event.extra else ""
+        
+        # Anti-spam: cooldown between votes
+        current_time = time.time()
+        last_vote_time = getattr(self, '_last_vote_time', {})
+        if username in last_vote_time:
+            time_since_last = current_time - last_vote_time[username]
+            if time_since_last < COMMENT_COOLDOWN:
+                return  # Too soon, ignore
+        
+        # Update last vote time
+        if not hasattr(self, '_last_vote_time'):
+            self._last_vote_time = {}
+        self._last_vote_time[username] = current_time
+        
+        # 🎥 Register vote for burst detection (micro-shake on vote bursts)
+        self.screen_shaker.register_vote()
+        
+        # Update user assignment
+        self.user_assignments[username] = country
+        
+        # 🔥 COMBO SYSTEM: Register this vote
+        self.register_combo_event(country)
+        
+        # 🏆 CAPTAIN SYSTEM: Track points
+        self._update_captain_points(username, country, COMMENT_POINTS_PER_MESSAGE)
+        
+        logger.info(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
+        
+        # Apply movement to country's flag
+        success = self.physics_world.apply_gift_impulse(
+            country=country,
+            gift_name="Vote",
+            diamond_count=COMMENT_POINTS_PER_MESSAGE
+        )
+        
+        if success:
+            # Visual feedback: small particle effect
+            racer = self.physics_world.racers[country]
+            pos = (racer.body.position.x, racer.body.position.y)
+            
+            self.emit_explosion(
+                pos=pos,
+                color=racer.color,
+                count=5,
+                power=0.6,
+                diamond_count=COMMENT_POINTS_PER_MESSAGE
+            )
+            
+            # Optional: floating text feedback (limited)
+            if len(self.floating_texts) < self.MAX_FLOATING_TEXTS // 2:
+                self.floating_texts.append(
+                    FloatingText(
+                        text=f"+{COMMENT_POINTS_PER_MESSAGE}",
+                        x=pos[0],
+                        y=pos[1] - 20,
+                        color=(0, 200, 255),  # Neon blue for votes
+                        lifespan=30,
+                        max_lifespan=30,
+                        font_size=14,
+                        dy=-2.5  # Faster jump
+                    )
+                )
+        
+        # Add message to feed
+        message = event.format_message()
+        self.messages.append((message, event.type))
+        if len(self.messages) > MAX_MESSAGES:
+            self.messages = self.messages[-MAX_MESSAGES:]
+    
     def handle_pygame_events(self) -> None:
         """Process Pygame input events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                logger.info("🚪 Exiting: window closed (pygame.QUIT)")
                 self.running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    self.running = False
+                    now = time.time()
+                    if not self._esc_quit_requested:
+                        self._esc_quit_requested = True
+                        self._esc_quit_time = now
+                        logger.info("🚪 Press ESC again within 2s to quit")
+                    elif (now - self._esc_quit_time) < self._esc_quit_window:
+                        logger.info("🚪 Exiting: ESC confirmed")
+                        self.running = False
+                    else:
+                        self._esc_quit_requested = True
+                        self._esc_quit_time = now
+                        logger.info("🚪 Press ESC again within 2s to quit")
                 elif event.key == pygame.K_c or event.key == pygame.K_r:
                     self._return_to_idle()  # Usar nuevo método
                     logger.info("Race reset to IDLE!")
                 elif event.key == pygame.K_t:  # Test mode
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
-                        self.game_state = 'RACING'
+                        self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
@@ -928,11 +1268,11 @@ class GameEngine:
                     )
                     
                     logger.info(f"TEST: {country} received {diamonds}💎")
-
+                    
                 elif event.key == pygame.K_y:  # Y = Test Big Gift
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
-                        self.game_state = 'RACING'
+                        self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
@@ -947,77 +1287,138 @@ class GameEngine:
                     
                     logger.info(f"TEST BIG: {country} received {diamonds}💎")
 
-                elif event.key == pygame.K_1:  # 1 = Test Rosa
+                elif event.key == pygame.K_1:  # 1 = Test Vote/Rosa (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
-                        self.game_state = 'RACING'
+                        self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Rosa", country)
-                    logger.info(f"TEST ROSA: {country}")
                     
-                    # Spawn floating text
-                    if result['effect'] == 'advance':
-                        racer = self.physics_world.racers[country]
-                        self.spawn_floating_text(
-                            "+5m", 
-                            racer.body.position.x, 
-                            racer.body.position.y,
-                            COLOR_TEXT_POSITIVE
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "1"}
                         )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Rosa effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Rosa", country)
+                        logger.info(f"TEST ROSA: {country}")
+                        
+                        # Spawn floating text
+                        if result['effect'] == 'advance':
+                            racer = self.physics_world.racers[country]
+                            self.spawn_floating_text(
+                                "+5m", 
+                                racer.body.position.x, 
+                                racer.body.position.y,
+                                COLOR_TEXT_POSITIVE
+                            )
 
-                elif event.key == pygame.K_2:  # 2 = Test Pesa (ataca líder)
+                elif event.key == pygame.K_2:  # 2 = Test Vote/Pesa (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
-                        self.game_state = 'RACING'
+                        self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Pesa", country)
-                    logger.info(f"TEST PESA: attacking leader")
                     
-                    # Spawn floating text on the affected target (leader)
-                    if result['effect'] == 'setback':
-                        target = result['target']
-                        if target in self.physics_world.racers:
-                            racer = self.physics_world.racers[target]
-                            self.spawn_floating_text(
-                                "-10m", 
-                                racer.body.position.x, 
-                                racer.body.position.y,
-                                COLOR_TEXT_NEGATIVE
-                            )
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "2"}
+                        )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Pesa effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Pesa", country)
+                        logger.info(f"TEST PESA: attacking leader")
+                        
+                        # Spawn floating text on the affected target (leader)
+                        if result['effect'] == 'setback':
+                            target = result['target']
+                            if target in self.physics_world.racers:
+                                racer = self.physics_world.racers[target]
+                                self.spawn_floating_text(
+                                    "-10m", 
+                                    racer.body.position.x, 
+                                    racer.body.position.y,
+                                    COLOR_TEXT_NEGATIVE
+                                )
                     
-                elif event.key == pygame.K_3:  # 3 = Test Helado (congela líder)
+                elif event.key == pygame.K_3:  # 3 = Test Vote/Helado (depends on mode)
+                    from .config import GAME_MODE
+                    
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
-                        self.game_state = 'RACING'
+                        self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    result = self.physics_world.apply_gift_effect("Helado", country)
-                    logger.info(f"TEST HELADO: freezing leader")
                     
-                    # Spawn floating text on the frozen target
-                    if result['effect'] == 'freeze':
-                        target = result['target']
-                        if target in self.physics_world.racers:
-                            racer = self.physics_world.racers[target]
-                            self.spawn_floating_text(
-                                "FREEZE!", 
-                                racer.body.position.x, 
-                                racer.body.position.y,
-                                COLOR_TEXT_FREEZE
-                            )
+                    if GAME_MODE == "COMMENT":
+                        # Test vote for country
+                        test_username = f"TestVoter{int(time.time() * 1000) % 1000}"
+                        
+                        vote_event = GameEvent(
+                            type=EventType.VOTE,
+                            username=test_username,
+                            content=country,
+                            extra={"shortcut": "3"}
+                        )
+                        
+                        try:
+                            self.queue.put_nowait(vote_event)
+                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                        except Exception as e:
+                            logger.error(f"Error adding test vote: {e}")
+                    else:
+                        # Test Helado effect (GIFT mode)
+                        result = self.physics_world.apply_gift_effect("Helado", country)
+                        logger.info(f"TEST HELADO: freezing leader")
+                        
+                        # Spawn floating text on the frozen target
+                        if result['effect'] == 'freeze':
+                            target = result['target']
+                            if target in self.physics_world.racers:
+                                racer = self.physics_world.racers[target]
+                                self.spawn_floating_text(
+                                    "FREEZE!", 
+                                    racer.body.position.x, 
+                                    racer.body.position.y,
+                                    COLOR_TEXT_FREEZE
+                                )
     
                 elif event.key == pygame.K_j:  # J = Test JoinEvent
                     # Generate random test join
-                    import time
-                    
                     # Random username with timestamp to make it unique
                     test_usernames = [
                         "TestUser", "Viewer", "Fan", "Supporter", "Player", 
@@ -1056,8 +1457,6 @@ class GameEngine:
 
                 elif event.key == pygame.K_k:  # K = Test Captain Points
                     # Add random points to random user in random country
-                    import time
-                    
                     countries = list(self.physics_world.racers.keys())
                     test_country = random.choice(countries)
                     
@@ -1066,6 +1465,61 @@ class GameEngine:
                     
                     self._update_captain_points(test_user, test_country, test_points)
                     logger.info(f"TEST CAPTAIN: {test_user} → {test_country} (+{test_points}💎)")
+                
+                elif event.key == pygame.K_f:  # F = Test FIRE (rapid combo)
+                    # Cooldown to avoid crash when spamming F (TTS/audio flood)
+                    now = time.time()
+                    if now - self._last_test_fire_time >= self._test_fire_cooldown:
+                        self._last_test_fire_time = now
+                        # CAMBIAR A RACING SI ESTÁ EN IDLE
+                        if self.game_state == 'IDLE':
+                            self._transition_to_racing()
+                            logger.info("🏁 Game state: RACING (test mode)")
+                        try:
+                            self._test_fire_active = True
+                            countries = list(self.physics_world.racers.keys())
+                            test_country = random.choice(countries)
+                            for _ in range(12):
+                                self.register_combo_event(test_country)
+                                self.physics_world.apply_gift_impulse(
+                                    country=test_country,
+                                    gift_name="ComboTest",
+                                    diamond_count=1
+                                )
+                            logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
+                        except Exception as e:
+                            logger.exception("🔥 TEST FIRE failed: %s", e)
+                        finally:
+                            self._test_fire_active = False
+                    else:
+                        logger.debug("🔥 TEST FIRE: cooldown %.1fs", self._test_fire_cooldown - (now - self._last_test_fire_time))
+                
+                elif event.key == pygame.K_g:  # G = Test Final Stretch
+                    # CAMBIAR A RACING SI ESTÁ EN IDLE
+                    if self.game_state == 'IDLE':
+                        self._transition_to_racing()
+                        logger.info("🏁 Game state: RACING (test mode)")
+                    
+                    # Force trigger final stretch
+                    if not self.final_stretch_triggered:
+                        self._trigger_final_stretch()
+                        logger.info("🏁 TEST: Final Stretch triggered!")
+                
+                elif event.key == pygame.K_v:  # V = Test Victory Sequence
+                    # CAMBIAR A RACING SI ESTÁ EN IDLE
+                    if self.game_state == 'IDLE':
+                        self._transition_to_racing()
+                        logger.info("🏆 Game state: RACING (test mode)")
+                    
+                    # Force trigger victory
+                    test_countries = list(self.physics_world.racers.keys())
+                    if test_countries:
+                        winner = random.choice(test_countries)
+                        self.physics_world.winner = winner
+                        self.physics_world.race_finished = True
+                        captain = self.current_captains.get(winner, "TestKing")
+                        self._trigger_victory_sequence(winner, captain)
+                        logger.info(f"🏆 TEST VICTORY: {winner} wins! Captain: {captain}")
 
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
@@ -1126,6 +1580,7 @@ class GameEngine:
     def _announce_new_captain(self, country: str, new_captain: str, old_captain: str) -> None:
         """
         Trigger visual effect when captain changes.
+        Creates a vibrant "dopamine" floating text that jumps upward.
         
         Args:
             country: Country that got a new captain
@@ -1137,21 +1592,59 @@ class GameEngine:
             return
         
         racer = self.physics_world.racers[country]
-        lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
+        x = racer.body.position.x
+        y = racer.body.position.y
         
-        # Golden floating text for new captain
-        self.spawn_floating_text(
-            f"NEW CAPTAIN: @{new_captain}!",
-            200,  # Mid-lane position
-            lane_y,
-            (255, 215, 0)  # Gold color
+        # 👑 GOLDEN CROWN floating text for new captain (larger, longer)
+        crown_text = f"👑 {new_captain}"
+        self.floating_texts.append(
+            FloatingText(
+                text=crown_text,
+                x=x,
+                y=y - 15,
+                color=(255, 215, 0),  # Gold
+                lifespan=80,
+                max_lifespan=80,
+                font_size=18,  # Larger for emphasis
+                dy=-2.5  # Faster upward movement
+            )
         )
+        
+        # Secondary "NEW CAPTAIN" text with neon effect
+        self.floating_texts.append(
+            FloatingText(
+                text="NEW CAPTAIN!",
+                x=x,
+                y=y - 35,
+                color=(255, 255, 100),  # Bright yellow
+                lifespan=60,
+                max_lifespan=60,
+                font_size=14,
+                dy=-2.0
+            )
+        )
+        
+        # 🎥 Trigger screen shake for impact
+        self.screen_shaker.micro_shake()
         
         # Set timer for captain highlight effect
         self.captain_change_timer[country] = 90  # 1.5 seconds at 60fps
 
     def update(self, dt: float) -> None:
         """Update physics and particles."""
+        # 🚪 Reset ESC “press again to quit” if window expired
+        if self._esc_quit_requested and (time.time() - self._esc_quit_time) >= self._esc_quit_window:
+            self._esc_quit_requested = False
+        
+        # 🎬 SLOW MOTION: Apply time dilation during victory sequence
+        original_dt = dt
+        if self.slow_motion_active:
+            dt *= self.slow_motion_factor
+        
+        # 🏆 Update victory sequence (uses original dt for timing)
+        if self.victory_sequence_active:
+            self._update_victory_sequence(original_dt)
+        
         # Update captain change timers
         for country in list(self.captain_change_timer.keys()):
             self.captain_change_timer[country] -= 1
@@ -1162,11 +1655,57 @@ class GameEngine:
         self.update_particles(dt)
         self.update_floating_texts()
         
+        # 🌌 Update parallax background
+        if self.background_manager:
+            self.background_manager.update(dt)
+        
+        # 🎥 Update screen shaker
+        self.screen_shaker.update(dt)
+        
+        # 🌟 Update leader glow animation
+        self.leader_glow_time += dt
+        
+        # 📜 Update ticker scroll
+        self.ticker_offset += self.ticker_speed * dt
+        
+        # 🌟 Update spotlight position with smooth interpolation
+        if self.game_state == 'RACING':
+            leader_info = self.physics_world.get_leader()
+            if leader_info and leader_info[0] in self.physics_world.racers:
+                leader_racer = self.physics_world.racers[leader_info[0]]
+                self.spotlight_target_pos = (
+                    float(leader_racer.body.position.x),
+                    float(leader_racer.body.position.y)
+                )
+            
+            # Lerp (smooth interpolation) towards target
+            lerp_factor = min(1.0, self.spotlight_lerp_speed * dt)
+            self.spotlight_current_pos = (
+                self.spotlight_current_pos[0] + (self.spotlight_target_pos[0] - self.spotlight_current_pos[0]) * lerp_factor,
+                self.spotlight_current_pos[1] + (self.spotlight_target_pos[1] - self.spotlight_current_pos[1]) * lerp_factor
+            )
+            
+            # 🌈 Update motion trails for ON FIRE countries
+            self._update_motion_trails(dt)
+            
+            # Update combo flashes
+            self._update_combo_flashes(dt)
+            
+            # 🏁 Check for final stretch
+            self._check_final_stretch()
+            
+            # Update final stretch animation timer
+            if self.final_stretch_triggered:
+                self.final_stretch_time += dt
+            
+            # 🎤 Check for overtakes and close races (TTS announcements)
+            self._check_race_events(dt)
+        
         # Update victory flash effect (fade out) - non-blocking, runs independently
         if self.victory_flash_alpha > 0:
             self.victory_flash_time += dt
             # Fade out over 0.3 seconds
-            fade_progress = self.victory_flash_time / self.victory_flash_duration
+            fade_progress = self.victory_flash_time / self.victory_flash_duration if self.victory_flash_duration > 0 else 1.0
             if fade_progress >= 1.0:
                 self.victory_flash_alpha = 0.0
                 self.victory_flash_time = 0.0
@@ -1216,9 +1755,16 @@ class GameEngine:
             # ☁️ CLOUD SYNC: Sync to Supabase on first detection (non-blocking)
             if not self.race_synced and self.winner_animation_time < dt * 2:
                 self.race_synced = True
+                
+                # 🎥 BIG VICTORY SHAKE!
+                self.screen_shaker.big_impact_shake()
+                
                 winner_country = self.physics_world.winner
                 winner_captain = self.current_captains.get(winner_country, "Unknown")
                 winner_points = self.session_points.get(winner_country, {}).get(winner_captain, 0)
+                
+                # 🏆 TRIGGER EPIC VICTORY SEQUENCE
+                self._trigger_victory_sequence(winner_country, winner_captain)
                 
                 # Async sync to cloud + update ranking (runs in background, won't block rendering)
                 asyncio.create_task(
@@ -1276,40 +1822,108 @@ class GameEngine:
         # Draw outer background (window margin)
         self.screen.blit(self.outer_background, (0, 0))
         
-        # Use pre-rendered gradient background in game area
-        self.render_surface.blit(self.gradient_background, (0, 0))
+        # 🌌 Render parallax background FIRST (behind everything)
+        if self.background_manager:
+            self.background_manager.render(self.render_surface)
+        else:
+            # Fallback to static gradient if no background manager
+            self.render_surface.blit(self.gradient_background, (0, 0))
         
         self._render_balls()
         self._render_trails()  # Render trails before particles (behind)
+        self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
         self._render_particles()
         self._render_floating_texts()
+        self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_header()
-        self._render_legend()
+        self._render_legend()  # Combat powers: fixed, faded (difuminado)
         self._render_leaderboard()
+        
+        # 🏁 Render FINAL STRETCH announcement
+        self._render_final_stretch_announcement()
+        
+        # Render shortcuts panel in COMMENT mode (solo durante RACING)
+        from .config import GAME_MODE
+        import time as time_module
+        
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+            # Always show ticker at bottom
+            self._render_shortcuts_panel()
+            
+            # Show fade-out HUD overlay for first 3 seconds
+            if self.race_start_time:
+                elapsed = time_module.time() - self.race_start_time
+                if elapsed < self.hud_fade_duration:
+                    # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
+                    fade_progress = elapsed / self.hud_fade_duration
+                    overlay_alpha = int(255 * (1.0 - fade_progress))
+                    if overlay_alpha > 20:  # Only render if visible
+                        self._render_race_start_hud(overlay_alpha)
         
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
             self._render_idle_screen()
         
-        # Render victory flash effect (white screen flash) - on top of everything
+        # Render victory flash effect (white screen flash)
         if self.victory_flash_alpha > 0:
             self._render_victory_flash()
+        
+        # 🏆 Render EPIC VICTORY SEQUENCE (on top of almost everything)
+        if self.victory_sequence_active:
+            self._render_victory_sequence()
     
-        # Blit game area into the window with margins
-        self.screen.blit(self.render_surface, (GAME_MARGIN, GAME_MARGIN))
+        # 🎥 Apply screen shake offset when blitting to window
+        shake_offset = self.screen_shaker.current_offset
+        blit_x = GAME_MARGIN + int(shake_offset[0])
+        blit_y = GAME_MARGIN + int(shake_offset[1])
+        
+        # 🎬 Apply subtle camera zoom during victory sequence
+        # Note: Instead of cropping (which can cut off content), we scale the whole
+        # surface slightly and center it, creating a subtle "push in" effect
+        if self.victory_sequence_active and self.victory_zoom_level > 1.01:
+            zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom to avoid cutting too much
+            
+            # Scale up the surface
+            scaled_width = int(SCREEN_WIDTH * zoom)
+            scaled_height = int(SCREEN_HEIGHT * zoom)
+            
+            scaled_surface = pygame.transform.smoothscale(
+                self.render_surface, 
+                (scaled_width, scaled_height)
+            )
+            
+            # Center the scaled surface (this creates a zoom-in effect)
+            offset_x = (scaled_width - SCREEN_WIDTH) // 2
+            offset_y = (scaled_height - SCREEN_HEIGHT) // 2
+            
+            # Blit with offset to center
+            self.screen.blit(scaled_surface, (blit_x - offset_x, blit_y - offset_y))
+        else:
+            self.screen.blit(self.render_surface, (blit_x, blit_y))
+        
         pygame.display.flip()
     
     def _render_balls(self) -> None:
-        """Render all flag racers with winner spotlight."""
+        """Render all flag racers with winner spotlight and leader glow."""
         # Draw lanes
         self._render_lanes()
+        
+        # Draw final stretch line (80% of track) – where stretch begins
+        self._render_final_stretch_line()
         
         # Draw finish line
         self._render_finish_line()
         
-        # Render non-winners first (back layer)
+        # Get winner and current leader
         winner = self.physics_world.winner if self.physics_world.race_finished else None
+        leader_info = self.physics_world.get_leader()
+        current_leader = leader_info[0] if leader_info else None
         
+        # 🌟 Render leader spotlight FIRST (behind the leader flag)
+        if current_leader and current_leader in self.physics_world.racers and not winner:
+            self._render_leader_spotlight(self.physics_world.racers[current_leader])
+        
+        # Render non-winners first (back layer)
         for country, racer in self.physics_world.get_racers().items():
             # Skip winner for now (render last = on top)
             if country == winner:
@@ -1323,8 +1937,70 @@ class GameEngine:
             self._render_winner_spotlight(winner_racer)
             self._render_racer(winner_racer, is_winner=True)
     
+    def _render_leader_spotlight(self, racer) -> None:
+        """
+        Render a pulsing golden glow with smooth interpolation.
+        The spotlight smoothly 'travels' when leadership changes.
+        
+        Args:
+            racer: The FlagRacer object of the current leader (used for fallback)
+        """
+        # Use interpolated spotlight position for smooth movement
+        x, y = self.spotlight_current_pos
+        
+        # Sanitize position values
+        if not math.isfinite(x) or not math.isfinite(y):
+            x = float(racer.body.position.x)
+            y = float(racer.body.position.y)
+        
+        ix = self._safe_int(x, self.physics_world.start_x)
+        iy = self._safe_int(y, SCREEN_HEIGHT // 2)
+        
+        # Pulsing effect using leader_glow_time
+        pulse = 0.5 + 0.5 * math.sin(self.leader_glow_time * 4.0)
+        
+        # Golden glow colors
+        glow_color = (255, 215, 0)  # Gold
+        
+        # Draw outer soft glow (larger, more transparent)
+        for i in range(5, 0, -1):
+            glow_radius = 40 + i * 10
+            glow_alpha = int((25 + 15 * pulse) / i)
+            
+            glow_surf = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                glow_surf,
+                (*glow_color, glow_alpha),
+                (glow_radius, glow_radius),
+                glow_radius
+            )
+            
+            self.render_surface.blit(
+                glow_surf,
+                (ix - glow_radius, iy - glow_radius)
+            )
+        
+        # Add subtle particle sparkles around the leader
+        if random.random() < 0.3:  # 30% chance per frame
+            offset_x = random.uniform(-30, 30)
+            offset_y = random.uniform(-30, 30)
+            sparkle_size = random.randint(2, 4)
+            sparkle_alpha = random.randint(100, 200)
+            
+            sparkle_surf = pygame.Surface((sparkle_size * 2, sparkle_size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                sparkle_surf,
+                (255, 255, 200, sparkle_alpha),
+                (sparkle_size, sparkle_size),
+                sparkle_size
+            )
+            self.render_surface.blit(
+                sparkle_surf,
+                (ix + int(offset_x) - sparkle_size, iy + int(offset_y) - sparkle_size)
+            )
+    
     def _render_racer(self, racer, is_winner: bool = False) -> None:
-        """Render a single racer flag."""
+        """Render a single racer flag with ON FIRE jitter effect."""
         x, y = racer.body.position
         radius = racer.shape.radius
         angle = racer.body.angle
@@ -1333,6 +2009,13 @@ class GameEngine:
         x = float(x) if math.isfinite(x) else self.physics_world.start_x
         y = float(y) if math.isfinite(y) else (racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2)
         radius = float(radius) if math.isfinite(radius) else 30
+        
+        # 🔥 ON FIRE jitter effect
+        if racer.country in self.on_fire_countries:
+            jitter_x = random.uniform(-2, 2)
+            jitter_y = random.uniform(-2, 2)
+            x += jitter_x
+            y += jitter_y
         
         # Winner gets scaled up
         if is_winner:
@@ -1355,23 +2038,43 @@ class GameEngine:
             pygame.draw.circle(self.render_surface, racer.color, (ix, iy), ir)
             pygame.draw.circle(self.render_surface, (0, 0, 0), (ix, iy), ir, 2)
         
-        # Draw country abbreviation (ARG, BRA, MEX, etc.) to the left of the flag
+        # Draw number on LEFT and abbreviation on RIGHT of the flag
         ix = self._safe_int(x, self.physics_world.start_x)
         iy = self._safe_int(y, SCREEN_HEIGHT // 2)
+        
+        # Get country number (1-12 based on lane position)
+        country_number = racer.lane + 1  # Lanes are 0-indexed
         
         # Get country abbreviation
         country_abbrev = self._get_country_abbrev(racer.country)
         
-        # Position abbreviation to the left of the flag
-        abbrev_x = ix - radius - 25  # 25px to the left of flag edge
+        # Font for labels
+        label_font = pygame.font.SysFont("Arial", 11, bold=True)
+        
+        # === NUMBER on LEFT side ===
+        number_x = ix - radius - 18  # To the left of flag edge
+        number_y = iy
+        
+        # Number with yellow color for visibility
+        number_surface = self._render_text_enhanced(
+            str(country_number),
+            label_font,
+            (255, 255, 100),  # Yellow for numbers
+            outline_color=(0, 0, 0),
+            outline_width=1
+        )
+        number_rect = number_surface.get_rect(center=(number_x, number_y))
+        self.render_surface.blit(number_surface, number_rect)
+        
+        # === ABBREVIATION on RIGHT side ===
+        abbrev_x = ix + radius + 20  # To the right of flag edge
         abbrev_y = iy
         
-        # Render abbreviation with enhanced text
-        abbrev_font = pygame.font.SysFont("Arial", 11, bold=True)
+        # Abbreviation with country color
         abbrev_surface = self._render_text_enhanced(
             country_abbrev,
-            abbrev_font,
-            (255, 255, 255),
+            label_font,
+            racer.color,  # Use country's color
             outline_color=(0, 0, 0),
             outline_width=1
         )
@@ -1397,9 +2100,7 @@ class GameEngine:
         label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
-            # Get points for display
-            points = self.session_points.get(country, {}).get(captain, 0)
-            captain_text = f"@{captain} - ({points})"
+            captain_text = f"@{captain}"
             
             # Special highlight if just became captain
             if country in self.captain_change_timer:
@@ -1497,41 +2198,32 @@ class GameEngine:
                          (self._safe_int(ix + size*0.7), self._safe_int(iy - size*0.7)), 1)
 
     def _render_header(self) -> None:
-        """Render header with connection status."""
+        """Render header with leader info and drop shadow for visibility."""
         header_surface = pygame.Surface((SCREEN_WIDTH, self.header_height), pygame.SRCALPHA)
-        header_surface.fill((20, 20, 20, 230))
+        header_surface.fill((20, 20, 20, 200))  # Slightly more transparent
         self.render_surface.blit(header_surface, (0, 0))
         
-        status_color = self._get_status_color()
-        circle_x = PADDING + 6
-        circle_y = self.header_height // 2
-        pygame.draw.circle(self.render_surface, status_color, (circle_x, circle_y), 7)
-        
-        title = f"@{self.streamer_name}"
-        title_surface = self.font.render(title, True, (255, 255, 255))
-        self.render_surface.blit(title_surface, (circle_x + 20, circle_y - 10))
-        
-        status_text = self._get_status_text()
-        status_surface = self.font_small.render(status_text, True, status_color)
-        self.render_surface.blit(status_surface, (circle_x + 20, circle_y + 4))
-        
-        # Leader info (solo posición y país)
+        # Leader info (centrado en el header)
         leader_info = self.physics_world.get_leader()
-        leader_text = f"1st: {leader_info[0]}" if leader_info else "1st: ---"
+        leader_text = f"🏆 1st: {leader_info[0]}" if leader_info else "🏆 1st: ---"
         
         # 🎯 EFECTO POP cuando cambia el líder
         if self.leader_pop_timer > 0:
             # Escala 1.1x durante el pop
             pop_scale = 1.1
             pop_font = pygame.font.SysFont("Arial", int(FONT_SIZE * pop_scale), bold=True)
-            count_surface = pop_font.render(leader_text, True, (255, 255, 0))  # Amarillo brillante
+            count_surface = self._render_text_with_shadow(
+                leader_text, pop_font, (255, 255, 0), shadow_offset=2
+            )
         else:
-            count_surface = self.font.render(leader_text, True, (255, 255, 255))
+            count_surface = self._render_text_with_shadow(
+                leader_text, self.font, (255, 255, 255), shadow_offset=2
+            )
         
-        # Centrar el texto (considerando el cambio de tamaño)
+        # Centrar el texto en el header
         text_rect = count_surface.get_rect()
         text_rect.right = SCREEN_WIDTH - 10
-        text_rect.centery = circle_y
+        text_rect.centery = self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
     
     def _get_status_color(self) -> tuple[int, int, int]:
@@ -1587,6 +2279,18 @@ class GameEngine:
             pygame.draw.line(lane_surf, COLOR_LANE_LINE, (0, y), (SCREEN_WIDTH, y), 1)
         
         self.render_surface.blit(lane_surf, (0, 0))
+    
+    def _render_final_stretch_line(self) -> None:
+        """Draw a vertical line at 80% of track marking where final stretch begins."""
+        start_x = self.physics_world.start_x
+        finish_x = self.physics_world.finish_line_x
+        track_len = finish_x - start_x
+        if track_len <= 0:
+            return
+        stretch_x = start_x + self.final_stretch_threshold * track_len
+        ix = self._safe_int(stretch_x, SCREEN_WIDTH // 2)
+        color = (255, 165, 0)  # Orange – distinct from finish line
+        pygame.draw.line(self.render_surface, color, (ix, 0), (ix, SCREEN_HEIGHT), 3)
     
     def _render_finish_line(self) -> None:
         """Draw the finish line with smaller checkered pattern."""
@@ -1788,101 +2492,89 @@ class GameEngine:
         self.render_surface.blit(surf, (table_x, table_y))
 
     def _render_legend(self) -> None:
-        """Render the combat legend at the bottom of the screen."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
-        
-        legend_height = 60
+        """Render combat powers table fixed at bottom. Clean, readable, functional."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_AREA_BOTTOM
+
+        legend_height = min(58, GAME_AREA_BOTTOM - 4)
         legend_y = SCREEN_HEIGHT - legend_height
-        padding = 10
-        
-        # Background MÁS OSCURO para mejor contraste
-        legend_surface = pygame.Surface((SCREEN_WIDTH, legend_height), pygame.SRCALPHA)
-        legend_surface.fill((0, 0, 0, 240))
-        pygame.draw.line(legend_surface, (255, 215, 0, 255), (0, 0), (SCREEN_WIDTH, 0), 3)
-        self.render_surface.blit(legend_surface, (0, legend_y))
-        
+        padding = 12
+        row1_y = legend_y + 6
+        row2_y = legend_y + 28
+
+        # Background: dark bar, clearly visible
+        legend_surf = pygame.Surface((SCREEN_WIDTH, legend_height), pygame.SRCALPHA)
+        legend_surf.fill((18, 18, 24, 220))
+        # Single thin gold separator line (no thick bar)
+        pygame.draw.line(legend_surf, (255, 215, 0, 200), (0, 0), (SCREEN_WIDTH, 0), 1)
+        self.render_surface.blit(legend_surf, (0, legend_y))
+
         # Title
-        title_font = pygame.font.SysFont("Arial", 15, bold=True)
-        title_enhanced = self._render_text_enhanced(
+        title_font = pygame.font.SysFont("Arial", 12, bold=True)
+        title_surf = self._render_text_enhanced(
             "COMBAT POWERS",
             title_font,
-            (255, 235, 50),
+            (255, 235, 90),
             outline_color=(0, 0, 0),
-            outline_width=3
+            outline_width=1,
         )
-        self.render_surface.blit(title_enhanced, (padding, legend_y + 2))
-        
-        # Combat items
+        self.render_surface.blit(title_surf, (padding, row1_y - 2))
+
+        # Three items: [icon] effect / gift name
         items = [
-            ("rosa", "+5m", "Rose", (255, 120, 180)),
-            ("pesa", "Stops Leader", "Weight", (180, 180, 180)),
-            ("hielo", "Freeze 3s", "Ice Cream", (120, 220, 255)),
+            ("rosa", "+5m", "Rosa", (255, 150, 180)),
+            ("pesa", "Stops leader", "Pesa", (190, 190, 200)),
+            ("hielo", "Freeze 3s", "Helado", (140, 200, 255)),
         ]
-        
-        item_width = (SCREEN_WIDTH - 2 * padding) // len(items)
-        text_font = pygame.font.SysFont("Arial", 12, bold=True)  # Un poco más pequeño
-        small_font = pygame.font.SysFont("Arial", 9)
-        
+        seg = (SCREEN_WIDTH - 2 * padding) // 3
+        eff_font = pygame.font.SysFont("Arial", 11, bold=True)
+        name_font = pygame.font.SysFont("Arial", 9)
+
         for i, (icon_type, effect, gift_name, color) in enumerate(items):
-            x = padding + i * item_width
-            y = legend_y + 28  # Bajado un poco más
-            
-            # Posición del icono (más a la izquierda)
-            icon_x = x + 12
-            icon_y = y + 5
-            
-            # Intentar cargar icono PNG
+            x0 = padding + i * seg
+            icon_x = x0 + 14
+            icon_y = row2_y + 6
+            text_x = x0 + 36
+
             icon = self.asset_manager.get_combat_icon(icon_type)
-            
             if icon:
-                # Renderizar PNG centrado
-                icon_rect = icon.get_rect(center=(icon_x, icon_y))
-                self.render_surface.blit(icon, icon_rect)
+                ir = icon.get_rect(center=(icon_x, icon_y))
+                self.render_surface.blit(icon, ir)
             else:
-                # Fallback: formas dibujadas
+                r = 7
                 if icon_type == "rosa":
-                    pygame.draw.circle(self.render_surface, color, (icon_x, icon_y), 8)
-                    pygame.draw.circle(self.render_surface, (255, 255, 255), (icon_x, icon_y), 8, 2)
+                    pygame.draw.circle(self.render_surface, color, (icon_x, icon_y), r)
                 elif icon_type == "pesa":
-                    pygame.draw.rect(self.render_surface, color, (icon_x - 7, icon_y - 7, 14, 14))
-                    pygame.draw.rect(self.render_surface, (255, 255, 255), (icon_x - 7, icon_y - 7, 14, 14), 2)
-                elif icon_type == "hielo":
-                    points = [(icon_x, icon_y - 8), (icon_x + 8, icon_y), (icon_x, icon_y + 8), (icon_x - 8, icon_y)]
-                    pygame.draw.polygon(self.render_surface, color, points)
-                    pygame.draw.polygon(self.render_surface, (255, 255, 255), points, 2)
-            
-            # Texto del efecto MÁS SEPARADO del icono
-            effect_enhanced = self._render_text_enhanced(
+                    pygame.draw.rect(self.render_surface, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
+                else:
+                    pts = [(icon_x, icon_y - r), (icon_x + r, icon_y), (icon_x, icon_y + r), (icon_x - r, icon_y)]
+                    pygame.draw.polygon(self.render_surface, color, pts)
+
+            eff_surf = self._render_text_enhanced(
                 effect,
-                text_font,
-                (255, 255, 255),  # Blanco puro
+                eff_font,
+                (240, 240, 240),
                 outline_color=(0, 0, 0),
-                outline_width=2
+                outline_width=1,
             )
-            # Aumentar separación: x + 30 (era 24)
-            self.render_surface.blit(effect_enhanced, (x + 32, y - 4))
-            
-            # Nombre del regalo
-            name_text = small_font.render(f"({gift_name})", True, (200, 200, 200))
-            self.render_surface.blit(name_text, (x + 32, y + 12))
-        
+            er = eff_surf.get_rect(midleft=(text_x, icon_y - 5))
+            self.render_surface.blit(eff_surf, er)
+            name_surf = name_font.render(gift_name, True, (160, 160, 170))
+            nr = name_surf.get_rect(midleft=(text_x, icon_y + 9))
+            self.render_surface.blit(name_surf, nr)
+
         # Frozen indicator
         if self.physics_world.frozen_countries:
-            frozen_parts = []
-            for c, t in self.physics_world.frozen_countries.items():
-                frozen_parts.append(f"{c}: {t:.1f}s")
-            frozen_text = " | ".join(frozen_parts)
-            
-            frozen_font = pygame.font.SysFont("Arial", 11, bold=True)
-            frozen_enhanced = self._render_text_enhanced(
-                f"FROZEN: {frozen_text}",
+            parts = [f"{c}: {t:.1f}s" for c, t in self.physics_world.frozen_countries.items()]
+            frozen_font = pygame.font.SysFont("Arial", 10, bold=True)
+            frozen_surf = self._render_text_enhanced(
+                f"FROZEN: {' | '.join(parts)}",
                 frozen_font,
-                (150, 230, 255),
+                (150, 220, 255),
                 outline_color=(0, 0, 0),
-                outline_width=2
+                outline_width=1,
             )
-            self.render_surface.blit(frozen_enhanced, (padding, legend_y + 45))
-    
+            self.render_surface.blit(frozen_surf, (padding, legend_y + legend_height - 14))
+
     def assign_country_to_user(self, username: str) -> tuple[str, str]:
         """
         Assign a country to a user using a smart 3-tier system.
@@ -2189,18 +2881,67 @@ class GameEngine:
         else:
             return main_text
     
+    def _render_text_with_shadow(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        shadow_offset: int = 2,
+        shadow_color: tuple[int, int, int] = (0, 0, 0),
+        shadow_alpha: int = 128
+    ) -> pygame.Surface:
+        """
+        Render text with a soft drop shadow for modern look.
+        More performant than full outline for general UI.
+        
+        Args:
+            text: Text to render
+            font: Pygame font to use
+            color: Main text color (RGB)
+            shadow_offset: Shadow offset in pixels
+            shadow_color: Shadow color (RGB)
+            shadow_alpha: Shadow transparency (0-255)
+        
+        Returns:
+            Surface with text and drop shadow
+        """
+        main_text = font.render(text, True, color)
+        shadow_text = font.render(text, True, shadow_color)
+        
+        # Create surface with room for shadow
+        width = main_text.get_width() + shadow_offset + 2
+        height = main_text.get_height() + shadow_offset + 2
+        
+        composite = pygame.Surface((width, height), pygame.SRCALPHA)
+        
+        # Draw shadow with alpha
+        shadow_surf = pygame.Surface(shadow_text.get_size(), pygame.SRCALPHA)
+        shadow_surf.blit(shadow_text, (0, 0))
+        shadow_surf.set_alpha(shadow_alpha)
+        composite.blit(shadow_surf, (shadow_offset, shadow_offset))
+        
+        # Draw main text on top
+        composite.blit(main_text, (0, 0))
+        
+        return composite
+    
     def _render_idle_screen(self) -> None:
         """Render the IDLE state screen with animated prompt."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_MODE, COUNTRY_ABBREV
         
         # 1️⃣ OVERLAY OSCURO (alpha=150 como solicitado)
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 150))  # ← Cambiado de 180 a 150
         self.render_surface.blit(overlay, (0, 0))
         
-        # Central message box
-        box_width = 380
-        box_height = 200
+        # Central message box - MÁS GRANDE en COMMENT mode para incluir lista
+        if GAME_MODE == "COMMENT":
+            box_width = 320
+            box_height = 420
+        else:
+            box_width = 380
+            box_height = 200
+        
         box_x = (SCREEN_WIDTH - box_width) // 2
         box_y = (SCREEN_HEIGHT - box_height) // 2
         
@@ -2226,9 +2967,13 @@ class GameEngine:
         breathe_scale = 1.0 + 0.05 * math.sin(ticks * 0.003)  # Oscila entre 1.0 y 1.05
         pulse_alpha = int(200 + 55 * math.sin(ticks * 0.0025))  # Alpha pulsante
 
-        # Main title - renderizar primero a tamaño base
-        title_font = pygame.font.SysFont("Arial", 24, bold=True)
-        title_text = "SEND A ROSE"
+        # Main title - different text depending on mode
+        title_font = pygame.font.SysFont("Arial", 22, bold=True)
+        if GAME_MODE == "COMMENT":
+            title_text = "VOTE IN CHAT!"
+        else:
+            title_text = "SEND A ROSE"
+        
         title_surface = self._render_text_enhanced(
             title_text,
             title_font,
@@ -2248,33 +2993,73 @@ class GameEngine:
         title_surface = title_surface.copy()
         title_surface.blit(title_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         
-        title_rect = title_surface.get_rect(center=(box_x + box_width // 2, box_y + 60))
+        title_rect = title_surface.get_rect(center=(box_x + box_width // 2, box_y + 40))
         self.render_surface.blit(title_surface, title_rect)
 
-        # Subtitle con mismo efecto de respiración
-        subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
-        subtitle_text = "TO START!"
-        subtitle_surface = self._render_text_enhanced(
-            subtitle_text,
-            subtitle_font,
-            (255, 255, 100),
-            outline_color=(0, 0, 0),
-            outline_width=3
-        )
+        # COMMENT MODE: Mostrar lista de opciones dentro del recuadro
+        if GAME_MODE == "COMMENT":
+            # Subtitle
+            subtitle_font = pygame.font.SysFont("Arial", 14, bold=True)
+            subtitle_text = "Type # or SIGLA to start:"
+            subtitle_surface = subtitle_font.render(subtitle_text, True, (200, 200, 200))
+            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
+            self.render_surface.blit(subtitle_surface, subtitle_rect)
+            
+            # Lista de países (2 columnas para compactar)
+            item_font = pygame.font.SysFont("Arial", 12, bold=True)
+            y_offset = box_y + 95
+            line_height = 24
+            col_width = box_width // 2
+            
+            for i, country in enumerate(self.physics_world.countries, start=1):
+                abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
+                color = self.physics_world.racers[country].color
+                
+                # Determinar columna (izquierda o derecha)
+                col = 0 if i <= 6 else 1
+                row = (i - 1) % 6
+                
+                x_base = box_x + 20 + (col * col_width)
+                y_pos = y_offset + (row * line_height)
+                
+                # Number
+                number_text = f"{i:2d}"
+                number_surface = item_font.render(number_text, True, (255, 255, 100))
+                self.render_surface.blit(number_surface, (x_base, y_pos))
+                
+                # Separator
+                sep_surface = item_font.render("→", True, (150, 150, 150))
+                self.render_surface.blit(sep_surface, (x_base + 25, y_pos))
+                
+                # Sigla (with country color)
+                sigla_surface = item_font.render(abbrev, True, color)
+                self.render_surface.blit(sigla_surface, (x_base + 45, y_pos))
         
-        # Aplicar escala de "respiración"
-        scaled_width = int(subtitle_surface.get_width() * breathe_scale)
-        scaled_height = int(subtitle_surface.get_height() * breathe_scale)
-        subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
-        
-        # Apply pulsating alpha
-        subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
-        subtitle_alpha_surface.fill((255, 255, 255, pulse_alpha))
-        subtitle_surface = subtitle_surface.copy()
-        subtitle_surface.blit(subtitle_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        
-        subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
-        self.render_surface.blit(subtitle_surface, subtitle_rect)
+        else:
+            # GIFT MODE: Subtitle con mismo efecto de respiración
+            subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
+            subtitle_text = "TO START!"
+            subtitle_surface = self._render_text_enhanced(
+                subtitle_text,
+                subtitle_font,
+                (255, 255, 100),
+                outline_color=(0, 0, 0),
+                outline_width=3
+            )
+            
+            # Aplicar escala de "respiración"
+            scaled_width = int(subtitle_surface.get_width() * breathe_scale)
+            scaled_height = int(subtitle_surface.get_height() * breathe_scale)
+            subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
+            
+            # Apply pulsating alpha
+            subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
+            subtitle_alpha_surface.fill((255, 255, 255, pulse_alpha))
+            subtitle_surface = subtitle_surface.copy()
+            subtitle_surface.blit(subtitle_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            
+            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
+            self.render_surface.blit(subtitle_surface, subtitle_rect)
 
         # Last winner info (if exists) - sin efecto de respiración
         if self.last_winner:
@@ -2300,6 +3085,135 @@ class GameEngine:
         # 🏆 Render Global Ranking Panel (futuristic style) only
         # 3D tracks visualization is reserved for post-race screens
         self._render_global_ranking_futuristic()
+    
+    def _render_shortcuts_panel(self) -> None:
+        """
+        Render shortcuts as a modern scrolling ticker at the TOP of screen.
+        Semi-transparent, non-intrusive, and always visible during racing.
+        Positioned above the race area to avoid interfering with combat powers.
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, COUNTRY_ABBREV
+        
+        # Ticker dimensions - positioned below header but above first lane
+        ticker_height = 20
+        ticker_y = 32  # Between leader score and first flag lane
+        
+        # Semi-transparent background
+        ticker_bg = pygame.Surface((SCREEN_WIDTH, ticker_height), pygame.SRCALPHA)
+        ticker_bg.fill((0, 0, 0, 180))  # Dark with 70% opacity
+        self.render_surface.blit(ticker_bg, (0, ticker_y))
+        
+        # Build ticker content string with colors
+        item_font = pygame.font.SysFont("Arial", 12, bold=True)
+        separator = "  •  "
+        
+        # Calculate total width of one complete cycle
+        items = []
+        for i, country in enumerate(self.physics_world.countries, start=1):
+            abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
+            color = self.physics_world.racers[country].color
+            items.append((f"{i}", (255, 255, 100), abbrev, color))
+        
+        # Render items and calculate positions
+        item_surfaces = []
+        total_width = 0
+        
+        for num, num_color, abbrev, abbrev_color in items:
+            # Number
+            num_surf = self._render_text_with_shadow(num, item_font, num_color, shadow_offset=1, shadow_alpha=100)
+            # Arrow
+            arrow_surf = item_font.render("→", True, (100, 100, 100))
+            # Sigla
+            sigla_surf = self._render_text_with_shadow(abbrev, item_font, abbrev_color, shadow_offset=1, shadow_alpha=100)
+            # Separator
+            sep_surf = item_font.render(separator, True, (80, 80, 80))
+            
+            item_surfaces.append((num_surf, arrow_surf, sigla_surf, sep_surf))
+            total_width += num_surf.get_width() + arrow_surf.get_width() + sigla_surf.get_width() + sep_surf.get_width() + 15
+        
+        # Wrap ticker offset
+        if total_width > 0:
+            self.ticker_offset = self.ticker_offset % total_width
+        
+        # Draw items with scroll offset (draw twice for seamless loop)
+        x_pos = -int(self.ticker_offset)
+        y_center = ticker_y + ticker_height // 2
+        
+        for _ in range(2):  # Draw twice for seamless scrolling
+            for num_surf, arrow_surf, sigla_surf, sep_surf in item_surfaces:
+                # Render each component
+                self.render_surface.blit(num_surf, (x_pos, y_center - num_surf.get_height() // 2))
+                x_pos += num_surf.get_width() + 3
+                
+                self.render_surface.blit(arrow_surf, (x_pos, y_center - arrow_surf.get_height() // 2))
+                x_pos += arrow_surf.get_width() + 3
+                
+                self.render_surface.blit(sigla_surf, (x_pos, y_center - sigla_surf.get_height() // 2))
+                x_pos += sigla_surf.get_width() + 3
+                
+                self.render_surface.blit(sep_surf, (x_pos, y_center - sep_surf.get_height() // 2))
+                x_pos += sep_surf.get_width() + 6
+        
+        # Optional: Add subtle gold borders at top and bottom
+        pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
+        pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
+    
+    def _render_race_start_hud(self, alpha: int) -> None:
+        """
+        Render a fade-out HUD overlay at race start.
+        Shows 'RACE STARTED!' message with fade effect.
+        
+        Args:
+            alpha: Transparency value (0-255)
+        """
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        # Create overlay surface
+        overlay = pygame.Surface((SCREEN_WIDTH, 80), pygame.SRCALPHA)
+        
+        # Center position
+        overlay_y = SCREEN_HEIGHT // 3
+        
+        # Semi-transparent dark background
+        bg_alpha = min(alpha, 180)
+        overlay.fill((0, 0, 0, bg_alpha))
+        
+        # "GO!" text with glow effect
+        title_font = pygame.font.SysFont("Arial", 48, bold=True)
+        subtitle_font = pygame.font.SysFont("Arial", 16, bold=True)
+        
+        # Main title
+        title_color = (255, 215, 0)  # Gold
+        title_text = "GO!"
+        
+        title_surf = self._render_text_enhanced(
+            title_text,
+            title_font,
+            title_color,
+            outline_color=(0, 0, 0),
+            outline_width=3
+        )
+        
+        # Apply alpha
+        title_surf.set_alpha(alpha)
+        
+        # Center text
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 40))
+        overlay.blit(title_surf, title_rect)
+        
+        # Subtitle
+        subtitle_text = "Type # or SIGLA to vote!"
+        subtitle_surf = self._render_text_with_shadow(
+            subtitle_text,
+            subtitle_font,
+            (200, 200, 200),
+            shadow_offset=1
+        )
+        subtitle_surf.set_alpha(alpha)
+        subtitle_rect = subtitle_surf.get_rect(center=(SCREEN_WIDTH // 2, 70))
+        overlay.blit(subtitle_surf, subtitle_rect)
+        
+        self.render_surface.blit(overlay, (0, overlay_y))
     
     def _render_global_ranking(self) -> None:
         """
@@ -2662,6 +3576,7 @@ class GameEngine:
             
             # Flag position on track (based on wins, animated)
             max_wins = max((e.get('total_wins', 0) for e in self.global_rank_data[:track_count]), default=1)
+            max_wins = max(max_wins, 1)  # Prevent division by zero
             progress = wins / max_wins
             progress = min(1.0, max(0.0, progress))
             
@@ -2810,8 +3725,7 @@ class GameEngine:
         
         # Change to IDLE state
         self.game_state = 'IDLE'
-        self.idle_animation_time = 0.0        
-        logger.info("🎮 Game state: IDLE (race reset complete)")
+        self.idle_animation_time = 0.0
 
         # 👑 Clear captain system
         self.session_points.clear()
@@ -2826,7 +3740,903 @@ class GameEngine:
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
         
+        # 📍 Reset shortcuts panel position for next race
+        self.shortcuts_panel_position = "right"
+        
+        # 📺 Reset HUD timing for next race
+        self.race_start_time = None
+        self.ticker_offset = 0.0
+        
+        # 🔥 Reset combo system
+        self.combo_tracker.clear()
+        self.combo_counts.clear()
+        self.on_fire_countries.clear()
+        self.motion_trails.clear()
+        self.motion_trail_history.clear()
+        self.combo_flashes.clear()
+        
+        # 🏁 Reset final stretch
+        self.final_stretch_triggered = False
+        self.final_stretch_time = 0.0
+        
+        # 🏆 Reset victory sequence
+        self._reset_victory_sequence()
+        
+        # Restore original parallax speed and deactivate warp
+        if self.background_manager:
+            self.background_manager.set_scroll_speed(self.original_parallax_speed)
+            self.background_manager.deactivate_warp_mode()
+        
         logger.info("🎮 Game state: IDLE (race reset complete)")
+    
+    def on_physics_race_reset(self) -> None:
+        """
+        Reset per-race game state when physics auto-resets (new race, stay RACING).
+        Fixes: total counter, victory zoom, final stretch not resetting between races.
+        """
+        self.floating_texts.clear()
+        self.particles.clear()
+        self.user_country_cache.clear()
+        self.country_player_count.clear()
+        self.user_assignments.clear()
+        self.users_notified.clear()
+        self.last_join_time.clear()
+        self.session_points.clear()
+        self.current_captains.clear()
+        self.captain_change_timer.clear()
+        self.race_synced = False
+        self.winner_animation_time = 0.0
+        self.winner_scale_pulse = 1.0
+        self.winner_glow_alpha = 0
+        self.combo_tracker.clear()
+        self.combo_counts.clear()
+        self.on_fire_countries.clear()
+        self.motion_trails.clear()
+        self.motion_trail_history.clear()
+        self.combo_flashes.clear()
+        self.final_stretch_triggered = False
+        self.final_stretch_time = 0.0
+        self._reset_victory_sequence()
+        if self.background_manager and getattr(self, "original_parallax_speed", None) is not None:
+            self.background_manager.set_scroll_speed(self.original_parallax_speed)
+            self.background_manager.deactivate_warp_mode()
+        logger.info("🔄 Game state reset for new race (physics auto-reset)")
+    
+    def _transition_to_racing(self) -> None:
+        """
+        Transition from IDLE to RACING state.
+        Sets up timing for HUD animations and spotlight.
+        """
+        import time
+        self.game_state = 'RACING'
+        self.race_start_time = time.time()
+        
+        # Initialize spotlight position to first racer
+        if self.physics_world.racers:
+            first_country = list(self.physics_world.racers.keys())[0]
+            racer = self.physics_world.racers[first_country]
+            self.spotlight_current_pos = (racer.body.position.x, racer.body.position.y)
+            self.spotlight_target_pos = self.spotlight_current_pos
+        
+        # Reset combo system
+        self.combo_tracker.clear()
+        self.combo_counts.clear()
+        self.on_fire_countries.clear()
+        self.motion_trails.clear()
+        self.motion_trail_history.clear()
+        self.combo_flashes.clear()
+        self.final_stretch_triggered = False
+        
+        # Store original parallax speed
+        if self.background_manager:
+            self.original_parallax_speed = self.background_manager.scroll_speed
+    
+    def register_combo_event(self, country: str) -> int:
+        """
+        Register a vote/gift for combo tracking.
+        
+        Args:
+            country: Country that received the event
+        
+        Returns:
+            Current combo count for this country
+        """
+        import time
+        current_time = time.time()
+        
+        # Initialize tracker if needed
+        if country not in self.combo_tracker:
+            self.combo_tracker[country] = []
+        
+        # Add new timestamp
+        self.combo_tracker[country].append(current_time)
+        
+        # Clean old timestamps (outside combo window)
+        cutoff = current_time - self.combo_window
+        self.combo_tracker[country] = [
+            t for t in self.combo_tracker[country] if t > cutoff
+        ]
+        
+        # Calculate current combo
+        combo_count = len(self.combo_tracker[country])
+        old_count = self.combo_counts.get(country, 0)
+        self.combo_counts[country] = combo_count
+        
+        # Check for combo milestone
+        if combo_count >= self.combo_threshold and combo_count > old_count:
+            self._show_combo_text(country, combo_count)
+            # 🔥 Play combo fire sound when combo increases (scaled by level)
+            combo_level = min(5, combo_count // 2)  # Scale to 0-5
+            self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
+            # 🎤 Announce combo (only for milestone combos to avoid spam)
+            # Skip TTS during TEST FIRE (F key) to prevent queue flood and crash
+            if combo_count % 5 == 0 and not getattr(self, "_test_fire_active", False):
+                self.audio_manager.announce_combo(country, combo_level)
+        
+        # Check for ON FIRE state
+        if combo_count >= self.on_fire_threshold:
+            if country not in self.on_fire_countries:
+                self.on_fire_countries.add(country)
+                self._trigger_on_fire(country)
+        else:
+            if country in self.on_fire_countries:
+                self.on_fire_countries.discard(country)
+        
+        return combo_count
+    
+    def _show_combo_text(self, country: str, count: int) -> None:
+        """
+        Display floating combo text above the country's flag.
+        Adds elastic pulse effect and flash on milestones.
+        
+        Args:
+            country: Country with combo
+            count: Current combo count
+        """
+        if country not in self.physics_world.racers:
+            return
+        
+        racer = self.physics_world.racers[country]
+        x = racer.body.position.x
+        y = racer.body.position.y
+        
+        # Color gradient based on combo level
+        if count >= 15:
+            color = (255, 50, 50)  # Red for extreme combos
+        elif count >= 10:
+            color = (255, 100, 0)  # Orange for ON FIRE
+        else:
+            color = (255, 200, 50)  # Yellow for regular combo
+        
+        combo_text = f"COMBO x{count}!"
+        
+        # Determine font size with elastic pulse effect (grows then shrinks)
+        # Larger size for milestone combos
+        if count % 5 == 0:  # Milestones: 5, 10, 15, 20...
+            base_font_size = 22
+        else:
+            base_font_size = 16
+        
+        self.floating_texts.append(
+            FloatingText(
+                text=combo_text,
+                x=x,
+                y=y - 40,
+                color=color,
+                lifespan=50,
+                max_lifespan=50,
+                font_size=base_font_size,
+                dy=-3.0  # Fast upward
+            )
+        )
+        
+        # ✨ Add flash effect on milestone combos (5, 10, 15, 20...)
+        if count % 5 == 0:
+            flash_intensity = min(1.0, 0.5 + (count / 20))  # Brighter for higher combos
+            self.combo_flashes.append(
+                ComboFlash(
+                    country=country,
+                    time=0.0,
+                    duration=0.3,
+                    intensity=flash_intensity
+                )
+            )
+        
+        # Shake based on combo level
+        if count >= 15:
+            self.screen_shaker.impact_shake()
+        elif count >= 10:
+            self.screen_shaker.micro_shake()
+    
+    def _trigger_on_fire(self, country: str) -> None:
+        """
+        Trigger the ON FIRE state for a country.
+        
+        Args:
+            country: Country entering ON FIRE state
+        """
+        if country not in self.physics_world.racers:
+            return
+        
+        racer = self.physics_world.racers[country]
+        x = racer.body.position.x
+        y = racer.body.position.y
+        
+        # Big announcement
+        self.floating_texts.append(
+            FloatingText(
+                text="🔥 ON FIRE! 🔥",
+                x=x,
+                y=y - 50,
+                color=(255, 100, 0),
+                lifespan=80,
+                max_lifespan=80,
+                font_size=20,
+                dy=-2.0
+            )
+        )
+        
+        # Initialize motion trail history
+        if country not in self.motion_trail_history:
+            self.motion_trail_history[country] = []
+        if country not in self.motion_trails:
+            self.motion_trails[country] = []
+        
+        # Impact shake
+        self.screen_shaker.impact_shake()
+        
+        # 🔥 Play combo fire sound with appropriate level
+        combo_level = min(5, self.combo_counts.get(country, 10) // 2)  # Scale to 0-5
+        self.audio_manager.play_combo_fire_sound(combo_level=combo_level)
+        
+        # 🎤 Announce combo achievement (skip during TEST FIRE to avoid TTS flood)
+        if not getattr(self, "_test_fire_active", False):
+            self.audio_manager.announce_combo(country, combo_level)
+        
+        logger.info(f"🔥 {country} is ON FIRE!")
+    
+    def _update_motion_trails(self, dt: float) -> None:
+        """
+        Update motion trails for all countries.
+        Creates neon streak effects using position history.
+        
+        Args:
+            dt: Delta time in seconds
+        """
+        # Update position history for all racers
+        for country, racer in self.physics_world.racers.items():
+            x = float(racer.body.position.x)
+            y = float(racer.body.position.y)
+            
+            if country not in self.motion_trail_history:
+                self.motion_trail_history[country] = []
+            
+            # Add current position to history
+            history = self.motion_trail_history[country]
+            history.append((x, y))
+            
+            # Limit history length based on ON FIRE status
+            max_history = 15 if country in self.on_fire_countries else 8
+            while len(history) > max_history:
+                history.pop(0)
+        
+        # Build trail segments from history for ON FIRE countries
+        for country in self.on_fire_countries:
+            if country not in self.motion_trail_history:
+                continue
+            if country not in self.physics_world.racers:
+                continue
+            
+            history = self.motion_trail_history[country]
+            if len(history) < 2:
+                continue
+            
+            racer = self.physics_world.racers[country]
+            base_color = racer.color
+            
+            # Clear old segments and rebuild
+            self.motion_trails[country] = []
+            
+            for i in range(len(history) - 1):
+                x1, y1 = history[i]
+                x2, y2 = history[i + 1]
+                
+                # Alpha fades towards the back
+                alpha = 255 * (i + 1) / len(history)
+                
+                # Thickness increases towards the flag (front)
+                thickness = 1 if i < len(history) // 2 else 2
+                if country in self.on_fire_countries:
+                    thickness += 1  # Thicker when ON FIRE
+                
+                # Apply jitter to older segments for vibration effect
+                if country in self.on_fire_countries and i < len(history) - 3:
+                    y1 += random.uniform(-1, 1)
+                    y2 += random.uniform(-1, 1)
+                
+                segment = MotionTrailSegment(
+                    x1=x1, y1=y1,
+                    x2=x2, y2=y2,
+                    color=base_color,
+                    alpha=alpha,
+                    thickness=thickness
+                )
+                self.motion_trails[country].append(segment)
+    
+    def _update_combo_flashes(self, dt: float) -> None:
+        """Update combo flash effects."""
+        alive_flashes = []
+        for flash in self.combo_flashes:
+            flash.time += dt
+            if flash.time < flash.duration:
+                alive_flashes.append(flash)
+        self.combo_flashes = alive_flashes
+    
+    def _render_motion_trails(self) -> None:
+        """
+        Render motion trails using pygame.draw.line for crisp edges.
+        Creates neon streak effect with country colors.
+        """
+        for country, segments in self.motion_trails.items():
+            is_on_fire = country in self.on_fire_countries
+            
+            for segment in segments:
+                # Calculate faded color based on alpha
+                alpha_ratio = segment.alpha / 255
+                
+                r = int(segment.color[0] * alpha_ratio)
+                g = int(segment.color[1] * alpha_ratio)
+                b = int(segment.color[2] * alpha_ratio)
+                
+                # Draw the main line (crisp)
+                pygame.draw.line(
+                    self.render_surface,
+                    (r, g, b),
+                    (int(segment.x1), int(segment.y1)),
+                    (int(segment.x2), int(segment.y2)),
+                    segment.thickness
+                )
+                
+                # Add glow effect for ON FIRE (draw slightly thicker underneath)
+                if is_on_fire and segment.alpha > 100:
+                    glow_r = min(255, int(r * 0.5))
+                    glow_g = min(255, int(g * 0.5))
+                    glow_b = min(255, int(b * 0.5))
+                    
+                    pygame.draw.line(
+                        self.render_surface,
+                        (glow_r, glow_g, glow_b),
+                        (int(segment.x1), int(segment.y1) - 1),
+                        (int(segment.x2), int(segment.y2) - 1),
+                        1
+                    )
+                    pygame.draw.line(
+                        self.render_surface,
+                        (glow_r, glow_g, glow_b),
+                        (int(segment.x1), int(segment.y1) + 1),
+                        (int(segment.x2), int(segment.y2) + 1),
+                        1
+                    )
+    
+    def _render_combo_flashes(self) -> None:
+        """Render flash effects on flags when combo levels up."""
+        for flash in self.combo_flashes:
+            if flash.country not in self.physics_world.racers:
+                continue
+            
+            racer = self.physics_world.racers[flash.country]
+            x = int(racer.body.position.x)
+            y = int(racer.body.position.y)
+            
+            # Flash fades out over duration
+            progress = flash.time / flash.duration
+            alpha = int(255 * (1.0 - progress) * flash.intensity)
+            
+            # Expanding ring effect
+            radius = int(20 + 30 * progress)
+            
+            # Create flash surface
+            flash_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                flash_surf,
+                (255, 255, 255, alpha),
+                (radius, radius),
+                radius,
+                3  # Ring, not filled
+            )
+            
+            self.render_surface.blit(
+                flash_surf,
+                (x - radius, y - radius)
+            )
+    
+    def _check_final_stretch(self) -> None:
+        """
+        Check if leader has reached final stretch (80% of track).
+        Triggers announcement and speed boost.
+        """
+        if self.final_stretch_triggered or self.game_state != 'RACING':
+            return
+        
+        leader_info = self.physics_world.get_leader()
+        if not leader_info:
+            return
+        
+        leader_country = leader_info[0]
+        if leader_country not in self.physics_world.racers:
+            return
+        
+        racer = self.physics_world.racers[leader_country]
+        track_length = self.physics_world.finish_line_x - self.physics_world.start_x
+        current_progress = racer.body.position.x - self.physics_world.start_x
+        progress_ratio = current_progress / track_length if track_length > 0 else 0
+        
+        if progress_ratio >= self.final_stretch_threshold:
+            self._trigger_final_stretch()
+    
+    def _trigger_final_stretch(self) -> None:
+        """Trigger final stretch announcement and effects."""
+        self.final_stretch_triggered = True
+        self.final_stretch_time = 0.0
+        
+        # Boost parallax speed by 50%
+        if self.background_manager:
+            self.background_manager.set_scroll_speed(self.original_parallax_speed * 1.5)
+            # 🚀 Activate WARP MODE for triple speed lines
+            self.background_manager.activate_warp_mode()
+        
+        # Impact shake
+        self.screen_shaker.big_impact_shake()
+        
+        # 🏁 Play final stretch sound
+        self.audio_manager.play_final_stretch_sound()
+        
+        # 🎤 Announce final stretch
+        leader_info = self.physics_world.get_leader()
+        if leader_info:
+            leader_country = leader_info[0]
+            self.audio_manager.announce_final_stretch(leader_country)
+        
+        logger.info("🏁 FINAL STRETCH triggered with WARP MODE!")
+    
+    def _check_race_events(self, dt: float) -> None:
+        """
+        Check for race events like overtakes and close races for TTS announcements.
+        
+        Args:
+            dt: Delta time since last frame
+        """
+        import time
+        current_time = time.time()
+        
+        if self.game_state != 'RACING' or self.physics_world.race_finished:
+            return
+        
+        # Get current leaderboard
+        leader_info = self.physics_world.get_leader()
+        if not leader_info:
+            return
+        
+        current_leader = leader_info[0]
+        
+        # Track current positions
+        current_positions = {}
+        for country, racer in self.physics_world.racers.items():
+            current_positions[country] = racer.body.position.x
+        
+        # Check for leader change
+        if self._last_leader and self._last_leader != current_leader:
+            # Leader changed - this is an overtake!
+            if (current_time - self._last_overtake_announcement) >= self._overtake_cooldown:
+                self.audio_manager.announce_overtake(current_leader, self._last_leader)
+                self._last_overtake_announcement = current_time
+                logger.debug(f"🎤 Overtake: {current_leader} overtook {self._last_leader}")
+        
+        # Check for overtakes (position changes)
+        if self._last_positions:
+            for country, current_pos in current_positions.items():
+                if country in self._last_positions:
+                    last_pos = self._last_positions[country]
+                    # Check if this country overtook someone
+                    for other_country, other_last_pos in self._last_positions.items():
+                        if (other_country != country and 
+                            other_country in current_positions and
+                            last_pos < other_last_pos and  # Was behind
+                            current_pos > current_positions[other_country]):  # Now ahead
+                            # Overtake detected!
+                            if (current_time - self._last_overtake_announcement) >= self._overtake_cooldown:
+                                self.audio_manager.announce_overtake(country, other_country)
+                                self._last_overtake_announcement = current_time
+                                logger.debug(f"🎤 Overtake: {country} overtook {other_country}")
+                                break
+        
+        # Check for close race (top 2 are very close)
+        sorted_racers = sorted(
+            current_positions.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        if len(sorted_racers) >= 2:
+            leader_pos = sorted_racers[0][1]
+            second_pos = sorted_racers[1][1]
+            gap = leader_pos - second_pos
+            
+            # Close race if gap is less than 5% of track length
+            track_length = self.physics_world.finish_line_x - self.physics_world.start_x
+            close_threshold = track_length * 0.05  # 5% of track
+            
+            if gap < close_threshold and gap > 0:
+                if (current_time - self._last_close_race_announcement) >= self._close_race_cooldown:
+                    leader_country = sorted_racers[0][0]
+                    chaser_country = sorted_racers[1][0]
+                    self.audio_manager.announce_close_race(leader_country, chaser_country)
+                    self._last_close_race_announcement = current_time
+                    logger.debug(f"🎤 Close race: {leader_country} vs {chaser_country}")
+        
+        # Update tracking
+        self._last_leader = current_leader
+        self._last_positions = current_positions.copy()
+    
+    def _render_final_stretch_announcement(self) -> None:
+        """Render the FINAL STRETCH announcement with pulsing glow."""
+        if not self.final_stretch_triggered:
+            return
+        
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        # Animation duration: 3 seconds
+        if self.final_stretch_time > 3.0:
+            return  # Stop showing after 3 seconds
+        
+        # Pulsing effect
+        pulse = 0.5 + 0.5 * math.sin(self.final_stretch_time * 8.0)
+        
+        # Calculate alpha (fade in then out)
+        if self.final_stretch_time < 0.3:
+            alpha = int(255 * (self.final_stretch_time / 0.3))
+        elif self.final_stretch_time > 2.5:
+            alpha = int(255 * (1.0 - (self.final_stretch_time - 2.5) / 0.5))
+        else:
+            alpha = 255
+        
+        # Create overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, 100), pygame.SRCALPHA)
+        
+        # Background with pulsing alpha
+        bg_alpha = int(150 * pulse)
+        overlay.fill((0, 0, 0, bg_alpha))
+        
+        # Main text with glow
+        font = pygame.font.SysFont("Arial", 36, bold=True)
+        
+        # Glow effect (multiple layers)
+        glow_color = (255, int(100 + 100 * pulse), 0)  # Orange pulsing
+        text = "🏁 FINAL STRETCH! 🏁"
+        
+        text_surf = self._render_text_enhanced(
+            text,
+            font,
+            glow_color,
+            outline_color=(0, 0, 0),
+            outline_width=4
+        )
+        text_surf.set_alpha(alpha)
+        
+        # Center text
+        text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
+        overlay.blit(text_surf, text_rect)
+        
+        # Position in upper third of screen
+        self.render_surface.blit(overlay, (0, SCREEN_HEIGHT // 4))
+    
+    # ==================== EPIC VICTORY SEQUENCE ====================
+    
+    def _trigger_victory_sequence(self, winner_country: str, winner_captain: str) -> None:
+        """
+        Trigger the epic victory sequence with all effects.
+        
+        Args:
+            winner_country: The winning country
+            winner_captain: Username of the captain
+        """
+        from .config import GAME_MODE
+        
+        self.victory_sequence_active = True
+        self.victory_sequence_time = 0.0
+        
+        # Set up zoom target (winner position)
+        if winner_country in self.physics_world.racers:
+            racer = self.physics_world.racers[winner_country]
+            self.victory_zoom_center = (racer.body.position.x, racer.body.position.y)
+        
+        self.victory_zoom_target = 1.12  # Zoom in 12% (subtle)
+        self.victory_zoom_level = 1.0
+        
+        # Store captain info for monetization message
+        self.victory_winner_captain = winner_captain
+        self.victory_was_gift_mode = (GAME_MODE == "GIFT")
+        
+        # Activate slow motion
+        self.slow_motion_active = True
+        
+        # Start confetti
+        self._spawn_victory_confetti()
+        
+        # Victory banner scale starts at 0 for entrance animation
+        self.victory_banner_scale = 0.0
+        
+        logger.info(f"🏆 Epic victory sequence triggered for {winner_country} - {winner_captain}")
+    
+    def _update_victory_sequence(self, dt: float) -> None:
+        """
+        Update all victory sequence effects.
+        
+        Args:
+            dt: Delta time (original, not slowed)
+        """
+        self.victory_sequence_time += dt
+        
+        # 1. ZOOM INTERPOLATION
+        zoom_speed = 2.0  # How fast to zoom
+        self.victory_zoom_level += (self.victory_zoom_target - self.victory_zoom_level) * zoom_speed * dt
+        
+        # 2. BANNER SCALE (elastic entrance)
+        if self.victory_banner_scale < 1.0:
+            t = min(1.0, self.victory_sequence_time / 0.5)  # 0.5s to full scale
+            # Elastic overshoot
+            self.victory_banner_scale = 1.0 + 0.3 * math.sin(t * math.pi) - 0.3 * t
+            if t >= 1.0:
+                self.victory_banner_scale = 1.0
+        
+        # 3. SLOW MOTION DURATION
+        if self.victory_sequence_time > self.slow_motion_duration:
+            self.slow_motion_active = False
+        
+        # 4. UPDATE CONFETTI
+        self._update_confetti(dt)
+        
+        # 5. SPAWN MORE CONFETTI (continuous during victory)
+        if len(self.confetti_particles) < self.max_confetti and self.victory_sequence_time < 5.0:
+            if random.random() < 0.3:  # 30% chance per frame
+                self._spawn_confetti_particle()
+    
+    def _spawn_victory_confetti(self) -> None:
+        """Spawn initial burst of confetti particles."""
+        from .config import SCREEN_WIDTH
+        
+        for _ in range(80):  # Initial burst
+            self._spawn_confetti_particle()
+    
+    def _spawn_confetti_particle(self) -> None:
+        """Spawn a single confetti particle from the top."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        if len(self.confetti_particles) >= self.max_confetti:
+            return
+        
+        # Festive colors
+        colors = [
+            (255, 215, 0),    # Gold
+            (255, 0, 100),    # Pink
+            (0, 200, 255),    # Cyan
+            (100, 255, 100),  # Green
+            (255, 100, 0),    # Orange
+            (200, 100, 255),  # Purple
+            (255, 255, 255),  # White
+        ]
+        
+        particle = ConfettiParticle(
+            x=random.uniform(0, SCREEN_WIDTH),
+            y=random.uniform(-50, -10),  # Start above screen
+            vx=random.uniform(-30, 30),
+            vy=random.uniform(100, 250),  # Fall speed
+            size=random.uniform(4, 10),
+            color=random.choice(colors),
+            rotation=random.uniform(0, 360),
+            rotation_speed=random.uniform(-300, 300),
+            lifetime=random.uniform(3.0, 6.0)
+        )
+        self.confetti_particles.append(particle)
+    
+    def _update_confetti(self, dt: float) -> None:
+        """Update confetti particles physics."""
+        from .config import SCREEN_HEIGHT
+        
+        alive = []
+        for p in self.confetti_particles:
+            # Update position
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            
+            # Add slight horizontal wobble
+            p.vx += random.uniform(-50, 50) * dt
+            p.vx *= 0.98  # Damping
+            
+            # Gravity effect
+            p.vy += 50 * dt  # Accelerate downward
+            
+            # Rotation
+            p.rotation += p.rotation_speed * dt
+            
+            # Lifetime
+            p.lifetime -= dt
+            
+            # Keep if still alive and on screen
+            if p.lifetime > 0 and p.y < SCREEN_HEIGHT + 50:
+                alive.append(p)
+        
+        self.confetti_particles = alive
+    
+    def _render_victory_sequence(self) -> None:
+        """Render the epic victory sequence overlay."""
+        if not self.victory_sequence_active:
+            return
+        
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, COUNTRY_ABBREV
+        
+        # 1. RENDER CONFETTI
+        self._render_confetti()
+        
+        # 2. DESATURATE / FADE NON-WINNERS (visual focus on winner)
+        if self.physics_world.winner:
+            winner = self.physics_world.winner
+            for country, racer in self.physics_world.racers.items():
+                if country != winner:
+                    # Draw dark overlay on non-winners
+                    x = int(racer.body.position.x)
+                    y = int(racer.body.position.y)
+                    fade_alpha = min(180, int(self.victory_sequence_time * 100))
+                    
+                    overlay_size = 40
+                    overlay = pygame.Surface((overlay_size, overlay_size), pygame.SRCALPHA)
+                    overlay.fill((0, 0, 0, fade_alpha))
+                    self.render_surface.blit(
+                        overlay,
+                        (x - overlay_size // 2, y - overlay_size // 2)
+                    )
+        
+        # 3. VICTORY BANNER
+        self._render_victory_banner()
+        
+        # 4. MONETIZATION MESSAGE (GIFT mode only)
+        if self.victory_was_gift_mode and self.victory_sequence_time > 1.5:
+            self._render_monetization_message()
+    
+    def _render_confetti(self) -> None:
+        """Render all confetti particles with rotation."""
+        for p in self.confetti_particles:
+            # Calculate alpha based on lifetime
+            alpha = min(255, int(255 * (p.lifetime / 3.0)))
+            
+            # Create rotated square
+            size = int(p.size)
+            if size < 1:
+                continue
+            
+            # Create square surface
+            square = pygame.Surface((size, size), pygame.SRCALPHA)
+            square.fill((*p.color, alpha))
+            
+            # Rotate
+            rotated = pygame.transform.rotate(square, p.rotation)
+            
+            # Get rect for proper positioning
+            rect = rotated.get_rect(center=(int(p.x), int(p.y)))
+            
+            self.render_surface.blit(rotated, rect)
+    
+    def _render_victory_banner(self) -> None:
+        """Render the main victory banner with winner name."""
+        if not self.physics_world.winner:
+            return
+        
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, COUNTRY_ABBREV
+        
+        winner = self.physics_world.winner
+        abbrev = COUNTRY_ABBREV.get(winner, winner[:3].upper())
+        
+        # Banner dimensions
+        banner_height = 120
+        banner_y = SCREEN_HEIGHT // 3 - 60
+        
+        # Create banner surface
+        banner = pygame.Surface((SCREEN_WIDTH, banner_height), pygame.SRCALPHA)
+        
+        # Semi-transparent dark background
+        bg_alpha = min(200, int(self.victory_sequence_time * 300))
+        banner.fill((0, 0, 0, bg_alpha))
+        
+        # Winner text with golden glow
+        title_font = pygame.font.SysFont("Arial", 42, bold=True)
+        subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
+        
+        # Pulsing gold color
+        pulse = 0.5 + 0.5 * math.sin(self.victory_sequence_time * 6.0)
+        gold_color = (255, int(200 + 55 * pulse), int(50 * pulse))
+        
+        # Main winner text
+        winner_text = f"🏆 {abbrev} WINS! 🏆"
+        
+        # Apply scale from entrance animation
+        scaled_size = int(42 * self.victory_banner_scale)
+        if scaled_size > 8:
+            title_font = pygame.font.SysFont("Arial", scaled_size, bold=True)
+        
+        title_surf = self._render_text_enhanced(
+            winner_text,
+            title_font,
+            gold_color,
+            outline_color=(0, 0, 0),
+            outline_width=4
+        )
+        
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 40))
+        banner.blit(title_surf, title_rect)
+        
+        # Captain name (if exists)
+        captain = self.victory_winner_captain
+        if captain and captain != "Unknown":
+            # Check if this is a "king" (gift mode captain)
+            if self.victory_was_gift_mode:
+                captain_text = f"👑 KING OF THE TRACK: {captain} 👑"
+                captain_color = (255, 215, 0)  # Gold
+            else:
+                captain_text = f"Top Voter: {captain}"
+                captain_color = (200, 200, 255)  # Light blue
+            
+            captain_surf = self._render_text_with_shadow(
+                captain_text,
+                subtitle_font,
+                captain_color,
+                shadow_offset=2
+            )
+            captain_rect = captain_surf.get_rect(center=(SCREEN_WIDTH // 2, 85))
+            banner.blit(captain_surf, captain_rect)
+        
+        # Blit banner to main surface
+        self.render_surface.blit(banner, (0, banner_y))
+    
+    def _render_monetization_message(self) -> None:
+        """Render the call-to-action for gifts (GIFT mode only)."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        
+        # Only show after banner has appeared
+        if self.victory_sequence_time < 2.0:
+            return
+        
+        # Fade in
+        fade_in = min(1.0, (self.victory_sequence_time - 2.0) / 0.5)
+        alpha = int(255 * fade_in)
+        
+        # CTA text
+        cta_font = pygame.font.SysFont("Arial", 16, bold=True)
+        cta_text = "🎁 Send a GIFT to claim YOUR crown next race! 🎁"
+        
+        cta_surf = self._render_text_with_shadow(
+            cta_text,
+            cta_font,
+            (255, 200, 100),
+            shadow_offset=2
+        )
+        cta_surf.set_alpha(alpha)
+        
+        # Position at bottom of victory banner area
+        cta_rect = cta_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3 + 80))
+        self.render_surface.blit(cta_surf, cta_rect)
+    
+    def _reset_victory_sequence(self) -> None:
+        """Reset all victory sequence state."""
+        self.victory_sequence_active = False
+        self.victory_sequence_time = 0.0
+        self.victory_zoom_level = 1.0
+        self.victory_zoom_target = 1.0
+        self.victory_zoom_center = (0.0, 0.0)
+        self.slow_motion_active = False
+        self.confetti_particles.clear()
+        self.victory_banner_scale = 0.0
+        self.victory_winner_captain = None
+        self.victory_was_gift_mode = False
     
     async def _sync_and_update_ranking(
         self,
