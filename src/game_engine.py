@@ -560,6 +560,7 @@ class GameEngine:
         self._esc_quit_requested = False
         self._esc_quit_time: float = 0.0
         self._esc_quit_window = 2.0  # Seconds to press ESC again to confirm
+        
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -1835,7 +1836,7 @@ class GameEngine:
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_header()
-        self._render_legend()
+        self._render_legend()  # Combat powers: fixed, faded (difuminado)
         self._render_leaderboard()
         
         # 🏁 Render FINAL STRETCH announcement
@@ -2491,101 +2492,89 @@ class GameEngine:
         self.render_surface.blit(surf, (table_x, table_y))
 
     def _render_legend(self) -> None:
-        """Render the combat legend at the bottom of the screen."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
-        
-        legend_height = 60
+        """Render combat powers table fixed at bottom. Clean, readable, functional."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_AREA_BOTTOM
+
+        legend_height = min(58, GAME_AREA_BOTTOM - 4)
         legend_y = SCREEN_HEIGHT - legend_height
-        padding = 10
-        
-        # Background MÁS OSCURO para mejor contraste
-        legend_surface = pygame.Surface((SCREEN_WIDTH, legend_height), pygame.SRCALPHA)
-        legend_surface.fill((0, 0, 0, 240))
-        pygame.draw.line(legend_surface, (255, 215, 0, 255), (0, 0), (SCREEN_WIDTH, 0), 3)
-        self.render_surface.blit(legend_surface, (0, legend_y))
-        
+        padding = 12
+        row1_y = legend_y + 6
+        row2_y = legend_y + 28
+
+        # Background: dark bar, clearly visible
+        legend_surf = pygame.Surface((SCREEN_WIDTH, legend_height), pygame.SRCALPHA)
+        legend_surf.fill((18, 18, 24, 220))
+        # Single thin gold separator line (no thick bar)
+        pygame.draw.line(legend_surf, (255, 215, 0, 200), (0, 0), (SCREEN_WIDTH, 0), 1)
+        self.render_surface.blit(legend_surf, (0, legend_y))
+
         # Title
-        title_font = pygame.font.SysFont("Arial", 15, bold=True)
-        title_enhanced = self._render_text_enhanced(
+        title_font = pygame.font.SysFont("Arial", 12, bold=True)
+        title_surf = self._render_text_enhanced(
             "COMBAT POWERS",
             title_font,
-            (255, 235, 50),
+            (255, 235, 90),
             outline_color=(0, 0, 0),
-            outline_width=3
+            outline_width=1,
         )
-        self.render_surface.blit(title_enhanced, (padding, legend_y + 2))
-        
-        # Combat items
+        self.render_surface.blit(title_surf, (padding, row1_y - 2))
+
+        # Three items: [icon] effect / gift name
         items = [
-            ("rosa", "+5m", "Rose", (255, 120, 180)),
-            ("pesa", "Stops Leader", "Weight", (180, 180, 180)),
-            ("hielo", "Freeze 3s", "Ice Cream", (120, 220, 255)),
+            ("rosa", "+5m", "Rosa", (255, 150, 180)),
+            ("pesa", "Stops leader", "Pesa", (190, 190, 200)),
+            ("hielo", "Freeze 3s", "Helado", (140, 200, 255)),
         ]
-        
-        item_width = (SCREEN_WIDTH - 2 * padding) // len(items)
-        text_font = pygame.font.SysFont("Arial", 12, bold=True)  # Un poco más pequeño
-        small_font = pygame.font.SysFont("Arial", 9)
-        
+        seg = (SCREEN_WIDTH - 2 * padding) // 3
+        eff_font = pygame.font.SysFont("Arial", 11, bold=True)
+        name_font = pygame.font.SysFont("Arial", 9)
+
         for i, (icon_type, effect, gift_name, color) in enumerate(items):
-            x = padding + i * item_width
-            y = legend_y + 28  # Bajado un poco más
-            
-            # Posición del icono (más a la izquierda)
-            icon_x = x + 12
-            icon_y = y + 5
-            
-            # Intentar cargar icono PNG
+            x0 = padding + i * seg
+            icon_x = x0 + 14
+            icon_y = row2_y + 6
+            text_x = x0 + 36
+
             icon = self.asset_manager.get_combat_icon(icon_type)
-            
             if icon:
-                # Renderizar PNG centrado
-                icon_rect = icon.get_rect(center=(icon_x, icon_y))
-                self.render_surface.blit(icon, icon_rect)
+                ir = icon.get_rect(center=(icon_x, icon_y))
+                self.render_surface.blit(icon, ir)
             else:
-                # Fallback: formas dibujadas
+                r = 7
                 if icon_type == "rosa":
-                    pygame.draw.circle(self.render_surface, color, (icon_x, icon_y), 8)
-                    pygame.draw.circle(self.render_surface, (255, 255, 255), (icon_x, icon_y), 8, 2)
+                    pygame.draw.circle(self.render_surface, color, (icon_x, icon_y), r)
                 elif icon_type == "pesa":
-                    pygame.draw.rect(self.render_surface, color, (icon_x - 7, icon_y - 7, 14, 14))
-                    pygame.draw.rect(self.render_surface, (255, 255, 255), (icon_x - 7, icon_y - 7, 14, 14), 2)
-                elif icon_type == "hielo":
-                    points = [(icon_x, icon_y - 8), (icon_x + 8, icon_y), (icon_x, icon_y + 8), (icon_x - 8, icon_y)]
-                    pygame.draw.polygon(self.render_surface, color, points)
-                    pygame.draw.polygon(self.render_surface, (255, 255, 255), points, 2)
-            
-            # Texto del efecto MÁS SEPARADO del icono
-            effect_enhanced = self._render_text_enhanced(
+                    pygame.draw.rect(self.render_surface, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
+                else:
+                    pts = [(icon_x, icon_y - r), (icon_x + r, icon_y), (icon_x, icon_y + r), (icon_x - r, icon_y)]
+                    pygame.draw.polygon(self.render_surface, color, pts)
+
+            eff_surf = self._render_text_enhanced(
                 effect,
-                text_font,
-                (255, 255, 255),  # Blanco puro
+                eff_font,
+                (240, 240, 240),
                 outline_color=(0, 0, 0),
-                outline_width=2
+                outline_width=1,
             )
-            # Aumentar separación: x + 30 (era 24)
-            self.render_surface.blit(effect_enhanced, (x + 32, y - 4))
-            
-            # Nombre del regalo
-            name_text = small_font.render(f"({gift_name})", True, (200, 200, 200))
-            self.render_surface.blit(name_text, (x + 32, y + 12))
-        
+            er = eff_surf.get_rect(midleft=(text_x, icon_y - 5))
+            self.render_surface.blit(eff_surf, er)
+            name_surf = name_font.render(gift_name, True, (160, 160, 170))
+            nr = name_surf.get_rect(midleft=(text_x, icon_y + 9))
+            self.render_surface.blit(name_surf, nr)
+
         # Frozen indicator
         if self.physics_world.frozen_countries:
-            frozen_parts = []
-            for c, t in self.physics_world.frozen_countries.items():
-                frozen_parts.append(f"{c}: {t:.1f}s")
-            frozen_text = " | ".join(frozen_parts)
-            
-            frozen_font = pygame.font.SysFont("Arial", 11, bold=True)
-            frozen_enhanced = self._render_text_enhanced(
-                f"FROZEN: {frozen_text}",
+            parts = [f"{c}: {t:.1f}s" for c, t in self.physics_world.frozen_countries.items()]
+            frozen_font = pygame.font.SysFont("Arial", 10, bold=True)
+            frozen_surf = self._render_text_enhanced(
+                f"FROZEN: {' | '.join(parts)}",
                 frozen_font,
-                (150, 230, 255),
+                (150, 220, 255),
                 outline_color=(0, 0, 0),
-                outline_width=2
+                outline_width=1,
             )
-            self.render_surface.blit(frozen_enhanced, (padding, legend_y + 45))
-    
+            self.render_surface.blit(frozen_surf, (padding, legend_y + legend_height - 14))
+
     def assign_country_to_user(self, username: str) -> tuple[str, str]:
         """
         Assign a country to a user using a smart 3-tier system.
