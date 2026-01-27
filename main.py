@@ -15,6 +15,8 @@ import traceback
 import os
 import ssl
 import certifi
+from datetime import datetime
+from pathlib import Path
 
 from typing import Optional
 
@@ -65,6 +67,110 @@ def _log_uncaught(exc_type, exc_value, exc_tb):
 
 
 sys.excepthook = _log_uncaught
+
+
+def _save_crash_report(error: Exception, traceback_str: str) -> str:
+    """
+    Save crash report to file.
+    
+    Args:
+        error: The exception that occurred
+        traceback_str: Formatted traceback string
+        
+    Returns:
+        Path to the crash report file
+    """
+    try:
+        # Determine crash report location
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Executable mode: save next to executable
+            crash_dir = Path(os.path.dirname(sys.executable))
+        else:
+            # Development mode: save in project root
+            crash_dir = Path(__file__).parent
+        
+        crash_file = crash_dir / "crash_report.log"
+        
+        # Write crash report
+        with open(crash_file, 'a', encoding='utf-8') as f:
+            f.write("\n" + "="*80 + "\n")
+            f.write(f"CRASH REPORT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*80 + "\n")
+            f.write(f"Error: {type(error).__name__}: {error}\n")
+            f.write(f"\nTraceback:\n{traceback_str}\n")
+            f.write("="*80 + "\n\n")
+        
+        logger.critical(f"💥 Crash report saved to: {crash_file}")
+        return str(crash_file)
+    except Exception as e:
+        logger.error(f"Failed to save crash report: {e}")
+        return ""
+
+
+def _show_error_dialog(error: Exception, crash_file: str = "") -> None:
+    """
+    Show error dialog to user if possible.
+    
+    Args:
+        error: The exception that occurred
+        crash_file: Path to crash report file (if saved)
+    """
+    error_msg = f"An error occurred:\n\n{type(error).__name__}: {error}"
+    if crash_file:
+        error_msg += f"\n\nCrash report saved to:\n{crash_file}"
+    
+    try:
+        # Try tkinter first
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        messagebox.showerror("Application Error", error_msg)
+        root.destroy()
+        return
+    except Exception:
+        pass
+    
+    try:
+        # Try pygame as fallback
+        import pygame
+        pygame.init()
+        screen = pygame.display.set_mode((600, 300))
+        pygame.display.set_caption("Application Error")
+        font = pygame.font.Font(None, 24)
+        clock = pygame.time.Clock()
+        
+        # Split message into lines
+        lines = error_msg.split('\n')
+        y_offset = 20
+        
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                    running = False
+            
+            screen.fill((40, 20, 20))
+            for i, line in enumerate(lines[:10]):  # Max 10 lines
+                text_surface = font.render(line[:60], True, (255, 200, 200))
+                screen.blit(text_surface, (20, y_offset + i * 25))
+            
+            pygame.display.flip()
+            clock.tick(30)
+        
+        pygame.quit()
+        return
+    except Exception:
+        pass
+    
+    # Last resort: print to stderr
+    print(f"\n{'='*80}", file=sys.stderr)
+    print("APPLICATION ERROR", file=sys.stderr)
+    print(f"{'='*80}", file=sys.stderr)
+    print(error_msg, file=sys.stderr)
+    print(f"{'='*80}\n", file=sys.stderr)
 
 
 class Application:
@@ -174,17 +280,34 @@ class Application:
             await self._game_loop()
             logger.info("Game loop ended")
             
+        except KeyboardInterrupt:
+            logger.info("Application interrupted by user")
         except Exception as e:
-            logger.critical(f"Application error: {e}")
-            logger.critical(f"Traceback:\n{traceback.format_exc()}")
+            error_traceback = traceback.format_exc()
+            logger.critical(f"💥 Fatal application error: {e}")
+            logger.critical(f"Traceback:\n{error_traceback}")
+            
+            # Save crash report
+            crash_file = _save_crash_report(e, error_traceback)
+            
+            # Show error dialog to user
+            _show_error_dialog(e, crash_file)
+            
+            # Re-raise to ensure cleanup happens
             raise
         finally:
             logger.info("Cleaning up...")
-            await self._cleanup()
+            try:
+                await self._cleanup()
+            except Exception as cleanup_error:
+                logger.error(f"Error during cleanup: {cleanup_error}")
             logger.info("Cleanup complete")
     
     async def _game_loop(self) -> None:
+        """Main game loop with bulletproof error handling."""
         dt = 1.0 / FPS
+        consecutive_errors = 0
+        max_consecutive_errors = 10
         
         while self.game_engine.running and not self._shutdown_event.is_set():
             try:
@@ -196,12 +319,32 @@ class Application:
                 await self.game_engine.process_events()
                 self.game_engine.update(dt)
                 self.game_engine.render()
+                
+                # Reset error counter on successful iteration
+                consecutive_errors = 0
+                
+            except KeyboardInterrupt:
+                logger.info("Game loop interrupted by user")
+                self.game_engine.running = False
+                break
             except Exception as e:
-                logger.exception("Error in game loop: %s", e)
-                # Continue running to avoid crash, but log the error
-                # If it's a critical error, set running=False
-                if "pygame" in str(e).lower() or "surface" in str(e).lower():
-                    logger.critical("Critical pygame error - shutting down")
+                consecutive_errors += 1
+                error_traceback = traceback.format_exc()
+                logger.exception("Error in game loop iteration: %s", e)
+                
+                # If too many consecutive errors, it's a fatal crash
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.critical(f"Fatal: {max_consecutive_errors} consecutive errors - shutting down")
+                    crash_file = _save_crash_report(e, error_traceback)
+                    _show_error_dialog(e, crash_file)
+                    self.game_engine.running = False
+                    break
+                
+                # Critical errors that should stop the game
+                if "pygame" in str(e).lower() or "surface" in str(e).lower() or "display" in str(e).lower():
+                    logger.critical("Critical pygame/display error - shutting down")
+                    crash_file = _save_crash_report(e, error_traceback)
+                    _show_error_dialog(e, crash_file)
                     self.game_engine.running = False
                     break
             
@@ -360,8 +503,23 @@ def main() -> None:
         app = Application(username, idle_mode)
         logger.info("Application initialized, starting main loop")
         
-        asyncio.run(app.run())
-        logger.info("Application exited normally")
+        try:
+            asyncio.run(app.run())
+            logger.info("Application exited normally")
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            logger.critical(f"💥 Fatal error in main: {e}")
+            logger.critical(f"Traceback:\n{error_traceback}")
+            
+            # Save crash report
+            crash_file = _save_crash_report(e, error_traceback)
+            
+            # Show error dialog
+            _show_error_dialog(e, crash_file)
+            
+            sys.exit(1)
         
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
