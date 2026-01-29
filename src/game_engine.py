@@ -6,11 +6,20 @@ from typing import Optional, Dict
 import math
 import random
 import time
+import sys
 from .cloud_manager import CloudManager
 from dataclasses import dataclass
 
 import pygame
 import pymunk
+
+# Try to import psutil for memory monitoring (optional)
+try:
+    import psutil
+    import os
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 from .config import (
     SCREEN_WIDTH,
@@ -556,10 +565,26 @@ class GameEngine:
         self._last_test_fire_time: float = 0.0
         self._test_fire_cooldown = 2.0  # Seconds before F can be pressed again
         
+        # 🧪 Manual stress test (key K): inject VOTE/GIFT at 20/sec
+        self._stress_test_active = False
+        self._stress_test_last_inject: float = 0.0
+        
         # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
         self._esc_quit_requested = False
         self._esc_quit_time: float = 0.0
         self._esc_quit_window = 2.0  # Seconds to press ESC again to confirm
+        
+        # 📊 PERFORMANCE MONITORING
+        self._fps_samples: list[float] = []  # FPS samples for averaging
+        self._fps_sample_times: list[float] = []  # Timestamps for each sample
+        self._perf_log_interval = 10.0  # Log performance every 10 seconds
+        self._last_perf_log_time: float = time.time()
+        self._low_fps_start_time: Optional[float] = None  # When low FPS started
+        self._low_fps_threshold = 40.0  # FPS threshold for lag warning
+        self._low_fps_duration_threshold = 2.0  # Seconds of low FPS before warning
+        self._frame_count = 0
+        self._last_fps_check_time = time.time()
+        self._last_frame_time = time.time()
         
     
     def init_pygame(self) -> None:
@@ -1474,16 +1499,16 @@ class GameEngine:
                     except Exception as e:
                         logger.error(f"Error adding test join to queue: {e}")
 
-                elif event.key == pygame.K_k:  # K = Test Captain Points
-                    # Add random points to random user in random country
-                    countries = list(self.physics_world.racers.keys())
-                    test_country = random.choice(countries)
-                    
-                    test_user = f"User{int(time.time() * 1000) % 100}"
-                    test_points = random.randint(50, 500)
-                    
-                    self._update_captain_points(test_user, test_country, test_points)
-                    logger.info(f"TEST CAPTAIN: {test_user} → {test_country} (+{test_points}💎)")
+                elif event.key == pygame.K_k:  # K = Toggle stress test (VOTE/GIFT @ 20/sec)
+                    self._stress_test_active = not self._stress_test_active
+                    if self._stress_test_active:
+                        self._stress_test_last_inject = time.time()
+                        if self.game_state == 'IDLE':
+                            self._transition_to_racing()
+                            logger.info("🏁 Game state: RACING (stress test)")
+                        logger.info("🧪 STRESS TEST ACTIVE – VOTE/GIFT @ 20/s. Press K again to stop.")
+                    else:
+                        logger.info("🧪 STRESS TEST OFF")
                 
                 elif event.key == pygame.K_f:  # F = Test FIRE (rapid combo)
                     # Cooldown to avoid crash when spamming F (TTS/audio flood)
@@ -1765,8 +1790,12 @@ class GameEngine:
         if AUTO_STRESS_TEST:
             self._auto_stress_test(dt)
         
-        # FPS monitoring (if stress test enabled)
-        if AUTO_STRESS_TEST:
+        # Manual stress test (key K): inject VOTE/GIFT @ 20/sec
+        if self._stress_test_active:
+            self._manual_stress_test_inject()
+        
+        # FPS monitoring (if any stress test enabled)
+        if AUTO_STRESS_TEST or self._stress_test_active:
             self._monitor_performance(dt)
         
         # Update winner celebration animation
@@ -1836,6 +1865,18 @@ class GameEngine:
     
     def render(self) -> None:
         """Render all visual elements."""
+        # Track frame for FPS calculation
+        self._frame_count += 1
+        current_time = time.time()
+        if self._frame_count > 0:
+            elapsed = current_time - self._last_fps_check_time
+            if elapsed >= 1.0:  # Calculate FPS every second
+                fps = self._frame_count / elapsed
+                self._fps_samples.append(fps)
+                self._fps_sample_times.append(current_time)
+                self._frame_count = 0
+                self._last_fps_check_time = current_time
+        
         from .config import GAME_MARGIN
         
         # Draw outer background (window margin)
@@ -1865,6 +1906,10 @@ class GameEngine:
         
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
+        
+        # 🧪 Stress test indicator (key K)
+        if self._stress_test_active:
+            self._render_stress_test_banner()
         
         # Render shortcuts panel in COMMENT mode (solo durante RACING)
         from .config import GAME_MODE
@@ -2733,6 +2778,57 @@ class GameEngine:
                     power=power,
                     diamond_count=diamond_count
                 )
+
+    def _manual_stress_test_inject(self) -> None:
+        """
+        Inject random VOTE and GIFT events at 20/sec for stress testing.
+        Rotates through the 12 countries. Used to test TTS queue, motion trails,
+        and FPS stability under load. Toggle with key K.
+        """
+        from .config import RACE_COUNTRIES, GIFT_DIAMOND_VALUES
+
+        now = time.time()
+        if now - self._stress_test_last_inject < 0.05:
+            return
+        self._stress_test_last_inject = now
+
+        if self.physics_world.race_finished:
+            return
+
+        countries = list(RACE_COUNTRIES)
+        if not countries:
+            return
+
+        country = random.choice(countries)
+        stress_gifts = ["Rosa", "Dona", "Galaxia", "TikTok", "León"]
+        gift_name = random.choice(stress_gifts)
+        diamond_count = GIFT_DIAMOND_VALUES.get(gift_name, 1)
+
+        use_vote = random.choice([True, False])
+        ts = int(now * 1000)
+
+        try:
+            if use_vote:
+                username = f"stress_{ts}"
+                ev = GameEvent(
+                    type=EventType.VOTE,
+                    username=username,
+                    content=country,
+                    extra={"shortcut": "1"},
+                )
+                self.queue.put_nowait(ev)
+            else:
+                username = f"stress_{country}_{ts}"
+                self.user_country_cache[username] = country
+                ev = GameEvent(
+                    type=EventType.GIFT,
+                    username=username,
+                    content=gift_name,
+                    extra={"count": 1, "diamond_count": diamond_count},
+                )
+                self.queue.put_nowait(ev)
+        except Exception as e:
+            logger.debug("Stress test inject skipped (queue full?): %s", e)
 
     def _monitor_performance(self, dt: float) -> None:
         """
@@ -4397,6 +4493,18 @@ class GameEngine:
         # Position in upper third of screen
         self.render_surface.blit(overlay, (0, SCREEN_HEIGHT // 4))
     
+    def _render_stress_test_banner(self) -> None:
+        """Draw 'STRESS TEST ACTIVE' banner when manual stress test (K) is running."""
+        from .config import SCREEN_WIDTH
+        
+        overlay = pygame.Surface((SCREEN_WIDTH, 36), pygame.SRCALPHA)
+        overlay.fill((180, 0, 0, 200))
+        font = pygame.font.SysFont("Arial", 20, bold=True)
+        text = font.render("STRESS TEST ACTIVE", True, (255, 255, 255))
+        r = text.get_rect(center=(SCREEN_WIDTH // 2, 18))
+        overlay.blit(text, r)
+        self.render_surface.blit(overlay, (0, 0))
+    
     # ==================== EPIC VICTORY SEQUENCE ====================
     
     def _trigger_victory_sequence(self, winner_country: str, winner_captain: str) -> None:
@@ -4762,6 +4870,42 @@ class GameEngine:
         """
         if not self.global_rank_loading:
             asyncio.create_task(self._fetch_global_ranking())
+    
+    def _log_performance_metrics(self) -> None:
+        """
+        Log performance metrics every 10 seconds.
+        Includes: FPS average, entity count, memory usage.
+        """
+        if not self._fps_samples:
+            return
+        
+        # Calculate average FPS from samples
+        avg_fps = sum(self._fps_samples) / len(self._fps_samples)
+        
+        # Count entities
+        entity_count = (
+            len(self.particles) +
+            len(self.floating_texts) +
+            len(self.combo_flashes) +
+            sum(len(trails) for trails in self.motion_trails.values()) +
+            len(self.confetti_particles) +
+            (len(self.physics_world.racers) if self.physics_world else 0)
+        )
+        
+        # Get memory usage
+        memory_mb = 0.0
+        if PSUTIL_AVAILABLE:
+            try:
+                process = psutil.Process(os.getpid())
+                memory_mb = process.memory_info().rss / (1024 * 1024)  # Convert to MB
+            except Exception:
+                pass
+        
+        # Log performance metrics
+        if memory_mb > 0:
+            logger.info(f"[PERF] FPS Promedio: {avg_fps:.1f} | Entidades: {entity_count} | Uso de Memoria: {memory_mb:.1f} MB")
+        else:
+            logger.info(f"[PERF] FPS Promedio: {avg_fps:.1f} | Entidades: {entity_count} | Uso de Memoria: N/A")
     
     def _get_user_country_with_autojoin(self, username: str, gift_name: str) -> tuple[str, str]:
         """
