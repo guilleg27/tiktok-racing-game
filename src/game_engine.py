@@ -2254,7 +2254,7 @@ class GameEngine:
         
         # Leader info (centrado en el header)
         leader_info = self.physics_world.get_leader()
-        leader_text = f"🏆 1st: {leader_info[0]}" if leader_info else "🏆 1st: ---"
+        leader_text = f"1st: {leader_info[0]}" if leader_info else "1st: ---"
         
         # 🎯 EFECTO POP cuando cambia el líder
         if self.leader_pop_timer > 0:
@@ -4736,7 +4736,7 @@ class GameEngine:
         gold_color = (255, int(200 + 55 * pulse), int(50 * pulse))
         
         # Main winner text
-        winner_text = f"🏆 {abbrev} WINS! 🏆"
+        winner_text = f"{abbrev} WINS!"
         
         # Apply scale from entrance animation
         scaled_size = int(42 * self.victory_banner_scale)
@@ -4759,7 +4759,7 @@ class GameEngine:
         if captain and captain != "Unknown":
             # Check if this is a "king" (gift mode captain)
             if self.victory_was_gift_mode:
-                captain_text = f"👑 KING OF THE TRACK: {captain} 👑"
+                captain_text = f"KING OF THE TRACK: {captain}"
                 captain_color = (255, 215, 0)  # Gold
             else:
                 captain_text = f"Top Voter: {captain}"
@@ -4791,7 +4791,7 @@ class GameEngine:
         
         # CTA text
         cta_font = pygame.font.SysFont("Arial", 16, bold=True)
-        cta_text = "🎁 Send a GIFT to claim YOUR crown next race! 🎁"
+        cta_text = "Send a GIFT to claim YOUR crown next race!"
         
         cta_surf = self._render_text_with_shadow(
             cta_text,
