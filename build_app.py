@@ -85,7 +85,7 @@ def build():
     # Construir comando PyInstaller
     cmd = [
         "pyinstaller",
-        "--name", "TikTokLiveBot",
+        "--name", "TikTokRacingGoLive",
         "--windowed",  # No mostrar consola
         "--onedir",    # Carpeta en lugar de archivo único (más confiable)
         "--clean",     # Limpiar caché
@@ -124,13 +124,13 @@ def build():
         print("\n✅ Build completado exitosamente!")
         
         if system == "Darwin":
-            print(f"📍 Ejecutable en: dist/TikTokLiveBot.app")
+            print(f"📍 Ejecutable en: dist/TikTokRacingGoLive.app")
             print("\n💡 Para ejecutar desde terminal:")
-            print("   open dist/TikTokLiveBot.app")
+            print("   open dist/TikTokRacingGoLive.app")
             print("\n💡 O directamente:")
-            print("   dist/TikTokLiveBot.app/Contents/MacOS/TikTokLiveBot")
+            print("   dist/TikTokRacingGoLive.app/Contents/MacOS/TikTokRacingGoLive")
         else:
-            print(f"📍 Ejecutable en: dist\\TikTokLiveBot\\TikTokLiveBot.exe")
+            print(f"📍 Ejecutable en: dist\\TikTokRacingGoLive\\TikTokRacingGoLive.exe")
             
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Error durante el build:")
@@ -142,7 +142,7 @@ def build():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  TikTok Live Bot - Builder")
+    print("  TikTok Racing Go Live - Builder")
     print("=" * 60)
     print()
     build()
