@@ -62,18 +62,18 @@ class PhysicsWorld:
         self.racers: dict[str, FlagRacer] = {}
         
         # Race configuration - Using optimized constants from config
-        self.num_lanes = 12  # Increased from 8 to accommodate new countries
-        
+        self.num_lanes = 8  # Reduced to 8 countries for better gameplay
+
         # Game area (excluding header and footer)
         self.game_area_top = GAME_AREA_TOP       # 35px below header
         self.game_area_bottom = GAME_AREA_BOTTOM # 65px for legend
         self.game_area_height = SCREEN_HEIGHT - self.game_area_top - self.game_area_bottom
-        
+
         self.lane_height = self.game_area_height // self.num_lanes
         self.start_x = RACE_START_X
         self.finish_line_x = RACE_FINISH_X
-        
-        # Countries/teams (12 countries total)
+
+        # Countries/teams (8 countries total)
         self.countries = list(RACE_COUNTRIES)
         
         # Winner tracking
@@ -224,10 +224,12 @@ class PhysicsWorld:
         self.winner = country
         self.race_finished = True
         self.win_time = 0.0
-        
+
         # Notify game engine about victory for audio effects
         if hasattr(self, 'game_engine') and self.game_engine:
             if hasattr(self.game_engine, 'audio_manager'):
+                # Stop final stretch sound and play victory sound
+                self.game_engine.audio_manager.stop_final_stretch_sound()
                 self.game_engine.audio_manager.play_victory_sound(winner_country=country)
 
         # Stop all racers and sync target_x to current position
