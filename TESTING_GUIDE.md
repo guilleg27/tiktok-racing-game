@@ -125,6 +125,62 @@ python test_resources.py
 
 ---
 
+## 🎮 Testing Before Going LIVE (Modo Manual)
+
+Prueba el juego **sin conectar a TikTok** antes de ir en vivo.
+
+### Arrancar en modo IDLE
+
+```bash
+python main.py --idle
+# o
+python main.py -i
+```
+
+### Controles de prueba
+
+| Tecla | Acción | Qué prueba |
+|-------|--------|------------|
+| **T** | Regalo pequeño aleatorio | SFX pequeño, movimiento, partículas |
+| **Y** | Regalo grande aleatorio | SFX grande, movimiento, partículas |
+| **1** | Voto país 1 (COMMENT) / Rosa (GIFT) | Votos, combo, SFX vote |
+| **2** | Voto país 2 (COMMENT) / Pesa (GIFT) | Votos, combo, efecto Pesa |
+| **3** | Voto país 3 (COMMENT) / Helado (GIFT) | Votos, combo, efecto Helado |
+| **J** | Usuario se une a equipo | Join, asignación de país |
+| **K** | Puntos de capitán aleatorios | Sistema de capitanes |
+| **F** | Combo rápido → ON FIRE | Combo fire SFX, TTS "X is on fire!" |
+| **G** | Activar Final Stretch | Sirena, warp mode, TTS final stretch |
+| **V** | Secuencia de victoria | Victory SFX, TTS ganador, confetti |
+| **C** o **R** | Reset carrera → IDLE | Volver a pantalla inicial |
+| **L** | Conectar a TikTok | Pedir username y conectar |
+| **ESC** | Salir | Cerrar juego |
+
+### Flujo recomendado (simular carrera)
+
+1. Arrancar: `python main.py --idle`
+2. Iniciar carrera: Pulsa **T** o **Y** → pasa de IDLE a RACING
+3. Votar: Pulsa **1**, **2**, **3** muchas veces → votos, combos, SFX
+4. Combo ON FIRE: Pulsa **F** → combo rápido, SFX fuego, TTS
+5. Final stretch: Pulsa **G** → sirena, fondo warp, TTS
+6. Victoria: Pulsa **V** → ganador, fanfarria, confetti
+7. Reset: Pulsa **C** → vuelve a IDLE
+
+---
+
+## 💬 Testing en Comment Mode
+
+Para probar el modo COMMENT (votos por chat):
+
+1. Edita `src/config.py`: `GAME_MODE = "COMMENT"`
+2. Ejecuta: `python main.py @test` o `python main.py --idle`
+3. Presiona **1, 2, 3** repetidamente para simular votos
+4. Verifica: Panel de shortcuts, feed de mensajes, banderas avanzando
+5. Ajusta velocidad en config: `COMMENT_POINTS_PER_MESSAGE`, `COMMENT_COOLDOWN`
+
+Ver [COMMENT_MODE.md](COMMENT_MODE.md) para más detalles.
+
+---
+
 ## 🔄 Workflow de Testing
 
 ### Testing Rápido (Pre-Stream)
@@ -262,7 +318,7 @@ Si un test falla:
 1. Lee el mensaje de error completo
 2. Verifica que `.env` esté configurado
 3. Verifica conexión a internet (para tests de Supabase)
-4. Consulta `SYNC_FIX_SUMMARY.md` para fixes conocidos
+4. Consulta [CLOUD_INTEGRATION.md](CLOUD_INTEGRATION.md) para fixes conocidos
 5. Consulta `CLOUD_INTEGRATION.md` para detalles técnicos
 
 Para más información:

@@ -57,15 +57,15 @@ Después de una victoria, revisa:
 
 ## 🧪 Tests Disponibles
 
-### Test Rápido de Conexión
+### Verificar Políticas Supabase
 ```bash
-python test_supabase_connection.py
+python check_policies.py
 ```
-**Salida esperada:** ✅ Conexión exitosa! 📊 Países encontrados: 8
+**Salida esperada:** ✅ SELECT, INSERT, UPDATE funcionando
 
 ### Tests Unitarios
 ```bash
-python test_cloud_manager.py
+python -m pytest test_cloud_manager.py -v
 ```
 **Cubre:** Singleton, inicialización, sync, queries, error handling
 
@@ -74,6 +74,8 @@ python test_cloud_manager.py
 python test_e2e_cloud_sync.py
 ```
 **Cubre:** Flujo completo de sincronización + verificación
+
+Ver **[TESTING_GUIDE.md](TESTING_GUIDE.md)** para guía completa.
 
 ## 📊 Queries Útiles en Supabase
 
@@ -120,8 +122,8 @@ SUPABASE_KEY=tu-anon-key
 
 **Solución:**
 ```bash
-# Probar conexión directa
-python test_supabase_connection.py
+# Verificar políticas
+python check_policies.py
 
 # Si falla, verificar:
 # 1. Internet conectado
@@ -143,8 +145,10 @@ python test_supabase_connection.py
 
 ## 📚 Documentación Completa
 
+- **`DOCS_INDEX.md`** - Índice de toda la documentación
 - **`SUPABASE_SETUP_COMPLETE.md`** - Resumen ejecutivo
 - **`CLOUD_INTEGRATION.md`** - Documentación técnica detallada
+- **`TESTING_GUIDE.md`** - Guía de testing completa
 - **`README.md`** - Documentación general del proyecto
 
 ## 🎯 Próximos Pasos Sugeridos

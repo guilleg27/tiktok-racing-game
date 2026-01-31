@@ -50,6 +50,24 @@
 
 ---
 
+**[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Guía de testing completa
+- 🧪 Scripts de test disponibles
+- 🎮 Testing manual (modo IDLE, controles)
+- 💬 Testing en Comment Mode
+- 🔄 Workflow pre-stream y pre-release
+- **Tiempo de lectura:** 15 minutos
+
+**[COMMENT_MODE.md](COMMENT_MODE.md)** - Modo votación por chat
+- 📝 Sistema de shortcuts (1-12, siglas)
+- 🎨 UI del panel de votación
+- **Tiempo de lectura:** 5 minutos
+
+**[GLOBAL_RANKING_IMPLEMENTATION.md](GLOBAL_RANKING_IMPLEMENTATION.md)** - Panel ranking global
+- 🏆 Top 3 países por victorias
+- **Tiempo de lectura:** 10 minutos
+
+---
+
 ## 📁 Estructura de Archivos
 
 ```
@@ -60,7 +78,8 @@ racing_go/
 │   ├── CLOUD_INTEGRATION.md        📖 Doc técnica completa
 │   ├── ARCHITECTURE_DIAGRAM.md     🎨 Diagramas visuales
 │   ├── IMPLEMENTATION_SUMMARY.md   📝 Resumen implementación
-│   ├── DOCS_INDEX.md              📚 Este índice
+│   ├── TESTING_GUIDE.md            🧪 Guía de testing
+│   ├── DOCS_INDEX.md               📚 Este índice
 │   └── README.md                   ℹ️ Documentación general
 │
 ├── 💻 CÓDIGO FUENTE
@@ -74,10 +93,12 @@ racing_go/
 │   └── main.py                     🚀 Entry point
 │
 ├── 🧪 TESTS
-│   ├── test_cloud_manager.py      ✅ Tests unitarios (11 tests)
-│   ├── test_e2e_cloud_sync.py     ✅ Tests E2E (6 tests)
-│   ├── test_supabase_connection.py ✅ Test de conexión
-│   └── test_audio.py              🔊 Tests de audio
+│   ├── check_policies.py          ✅ Verificación RLS Supabase
+│   ├── test_cloud_manager.py      ✅ Tests unitarios CloudManager
+│   ├── test_e2e_cloud_sync.py     ✅ Test E2E sincronización
+│   ├── test_audio.py              🔊 Test manual de audio
+│   ├── test_resources.py          📦 Test de recursos (CI)
+│   └── tests/test_audio_manager.py ✅ Tests unitarios AudioManager
 │
 ├── ⚙️ CONFIGURACIÓN
 │   ├── .env                        🔐 Credenciales (no commitear)
@@ -97,27 +118,15 @@ racing_go/
 
 ### Tests Disponibles
 
-| Test | Archivo | Propósito | Duración |
-|------|---------|-----------|----------|
-| **Conexión Básica** | `test_supabase_connection.py` | Verifica conectividad | ~12s |
-| **Tests Unitarios** | `test_cloud_manager.py` | Cubre CloudManager completo | ~5s |
-| **E2E Completo** | `test_e2e_cloud_sync.py` | Flujo completo de sincronización | ~42s |
+| Test | Archivo | Propósito |
+|------|---------|-----------|
+| **Políticas RLS** | `check_policies.py` | Verifica permisos Supabase |
+| **Tests Unitarios** | `test_cloud_manager.py` | Cubre CloudManager completo |
+| **E2E Completo** | `test_e2e_cloud_sync.py` | Flujo de sincronización |
+| **Recursos** | `test_resources.py` | Verifica carga de assets |
+| **Audio** | `test_audio.py` | Test manual de audio |
 
-### Comandos de Testing
-
-```bash
-# Test rápido de conexión
-python test_supabase_connection.py
-
-# Tests unitarios
-python test_cloud_manager.py
-
-# Test end-to-end completo
-python test_e2e_cloud_sync.py
-
-# Todos los tests (pytest)
-pytest -v
-```
+Ver [TESTING_GUIDE.md](TESTING_GUIDE.md) para comandos y workflow completo.
 
 ---
 
@@ -246,8 +255,8 @@ python main.py --idle
 # Ver logs del juego
 python main.py @username 2>&1 | tee game.log
 
-# Verificar estado de Supabase
-python test_supabase_connection.py
+# Verificar políticas Supabase
+python check_policies.py
 
 # Limpiar caché de Python
 find . -type d -name "__pycache__" -exec rm -r {} +
