@@ -1222,8 +1222,8 @@ class GameEngine:
         
         # 🏆 CAPTAIN SYSTEM: Track points
         self._update_captain_points(username, country, COMMENT_POINTS_PER_MESSAGE)
-        
-        logger.info(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
+
+        logger.debug(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
         
         # Apply movement to country's flag
         success = self.physics_world.apply_gift_impulse(

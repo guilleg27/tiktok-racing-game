@@ -209,8 +209,8 @@ class PhysicsWorld:
         
         # Increment target position (NOT actual position)
         racer.target_x += distance
-        
-        logger.info(
+
+        logger.debug(
             f"🚀 {country} received {gift_name} ({diamond_count}💎) - "
             f"Target: +{distance:.1f}px → {racer.target_x:.0f}"
         )
