@@ -56,50 +56,37 @@ RACE_START_X = 50        # Inicio de los carriles
 RACE_FINISH_X = 400      # Línea de meta
 FLAG_RADIUS = 12         # Flag radius (reduced to 12 for better fit in lanes)
 
-# Race countries (used for flag sprites)
+# Race countries (used for flag sprites) - Reduced to 8 for better gameplay
 RACE_COUNTRIES = [
-    "Argentina", "Brasil", "Mexico", "España",
-    "Colombia", "Chile", "Peru", "Venezuela",
-    "USA", "Indonesia", "Russia", "Italy",
+    "Argentina", "Brasil", "Mexico", "Colombia",
+    "Chile", "Peru", "Venezuela", "USA",
 ]
 
 # Country shortcuts for COMMENT mode (siglas + números)
 COUNTRY_SHORTCUTS = {
     # Argentina
     "1": "Argentina", "arg": "Argentina", "argentina": "Argentina",
-    
+
     # Brasil
     "2": "Brasil", "bra": "Brasil", "brasil": "Brasil", "brazil": "Brasil",
-    
+
     # Mexico
     "3": "Mexico", "mex": "Mexico", "mexico": "Mexico", "méxico": "Mexico",
-    
-    # España
-    "4": "España", "esp": "España", "españa": "España", "spain": "España",
-    
+
     # Colombia
-    "5": "Colombia", "col": "Colombia", "colombia": "Colombia",
-    
+    "4": "Colombia", "col": "Colombia", "colombia": "Colombia",
+
     # Chile
-    "6": "Chile", "chi": "Chile", "chile": "Chile",
-    
+    "5": "Chile", "chi": "Chile", "chile": "Chile",
+
     # Peru
-    "7": "Peru", "per": "Peru", "peru": "Peru", "perú": "Peru",
-    
+    "6": "Peru", "per": "Peru", "peru": "Peru", "perú": "Peru",
+
     # Venezuela
-    "8": "Venezuela", "ven": "Venezuela", "venezuela": "Venezuela", "vzla": "Venezuela",
-    
+    "7": "Venezuela", "ven": "Venezuela", "venezuela": "Venezuela", "vzla": "Venezuela",
+
     # USA
-    "9": "USA", "usa": "USA", "us": "USA", "america": "USA",
-    
-    # Indonesia
-    "10": "Indonesia", "idn": "Indonesia", "indonesia": "Indonesia", "indo": "Indonesia",
-    
-    # Russia
-    "11": "Russia", "rus": "Russia", "russia": "Russia", "ru": "Russia",
-    
-    # Italy
-    "12": "Italy", "ita": "Italy", "italy": "Italy", "italia": "Italy",
+    "8": "USA", "usa": "USA", "us": "USA", "america": "USA",
 }
 
 # Country abbreviations for display (3 letters)
@@ -107,15 +94,11 @@ COUNTRY_ABBREV = {
     "Argentina": "ARG",
     "Brasil": "BRA",
     "Mexico": "MEX",
-    "España": "ESP",
     "Colombia": "COL",
     "Chile": "CHI",
     "Peru": "PER",
     "Venezuela": "VEN",
     "USA": "USA",
-    "Indonesia": "IDN",
-    "Russia": "RUS",
-    "Italy": "ITA",
 }
 
 # Comment mode settings
@@ -205,15 +188,11 @@ GIFT_COLORS = {
     "Argentina": (116, 172, 223),       # Light blue
     "Brasil": (0, 156, 59),             # Green
     "Mexico": (0, 102, 51),             # Dark green
-    "España": (200, 20, 20),           # Red
     "Colombia": (255, 205, 0),         # Yellow
     "Chile": (0, 57, 166),             # Blue
     "Peru": (212, 0, 0),               # Red
     "Venezuela": (255, 221, 0),        # Yellow
     "USA": (0, 50, 150),               # Blue (USA flag)
-    "Indonesia": (200, 0, 0),          # Red (Indonesia flag)
-    "Russia": (0, 50, 150),            # Blue (Russia flag)
-    "Italy": (0, 150, 0),              # Green (Italy flag)
     
     # Default fallback
     "default": (255, 255, 255),
@@ -343,50 +322,34 @@ COUNTRY_KEYWORDS = {
     # Argentina
     'arg': 'Argentina', 'argentina': 'Argentina', 'arge': 'Argentina',
     'messi': 'Argentina', '🇦🇷': 'Argentina',
-    
+
     # Brasil
     'bra': 'Brasil', 'brasil': 'Brasil', 'brazil': 'Brasil',
     'br': 'Brasil', 'neymar': 'Brasil', '🇧🇷': 'Brasil',
-    
+
     # México
     'mex': 'Mexico', 'mexico': 'Mexico', 'mx': 'Mexico',
     'méx': 'Mexico', 'méxico': 'Mexico', '🇲🇽': 'Mexico',
-    
-    # España
-    'esp': 'España', 'españa': 'España', 'spain': 'España',
-    'es': 'España', '🇪🇸': 'España',
-    
+
     # Colombia
     'col': 'Colombia', 'colombia': 'Colombia', 'co': 'Colombia',
     '🇨🇴': 'Colombia',
-    
+
     # Chile
     'chi': 'Chile', 'chile': 'Chile', 'cl': 'Chile',
     '🇨🇱': 'Chile',
-    
+
     # Perú
     'per': 'Peru', 'peru': 'Peru', 'perú': 'Peru',
     'pe': 'Peru', '🇵🇪': 'Peru',
-    
+
     # Venezuela
     'ven': 'Venezuela', 'venezuela': 'Venezuela', 've': 'Venezuela',
     'vzla': 'Venezuela', '🇻🇪': 'Venezuela',
-    
+
     # USA
     'usa': 'USA', 'united states': 'USA', 'us': 'USA',
     'america': 'USA', '🇺🇸': 'USA',
-    
-    # Indonesia
-    'ind': 'Indonesia', 'indonesia': 'Indonesia', 'id': 'Indonesia',
-    '🇮🇩': 'Indonesia',
-    
-    # Russia
-    'rus': 'Russia', 'russia': 'Russia', 'ru': 'Russia',
-    'russian': 'Russia', '🇷🇺': 'Russia',
-    
-    # Italy
-    'ita': 'Italy', 'italy': 'Italy', 'it': 'Italy',
-    'italia': 'Italy', '🇮🇹': 'Italy',
 }
 
 # Anti-spam para joins

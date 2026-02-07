@@ -44,12 +44,18 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
             logging.StreamHandler()  # Also try to log to stderr if available
         ]
     )
+
+    # Silence noisy loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 else:
     # Development mode: log to console
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+
+    # Silence noisy loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

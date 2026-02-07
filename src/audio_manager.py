@@ -615,18 +615,18 @@ class AudioManager:
     def play_victory_sound(self, winner_country: Optional[str] = None) -> None:
         """
         Play victory celebration sound (trumpets, applause, confetti).
-        
+
         Includes TTS announcement if callback is set and country is provided.
-        
+
         Args:
             winner_country: Name of the winning country for TTS announcement
         """
-        # Duck BGM for victory fanfare
-        self.duck_bgm(duration=5.0, duck_volume=0.2)
-        
+        # Stop BGM completely to prevent tension music overlap with victory
+        self.stop_bgm(fade_out_ms=500)
+
         # Play victory sound
         self.play_sfx(SoundType.VICTORY)
-        
+
         # Trigger TTS if available
         if winner_country:
             if self._tts_callback:
@@ -634,7 +634,7 @@ class AudioManager:
                 logger.info(f"🎤 TTS announcement triggered for: {winner_country}")
             else:
                 logger.debug(f"🎤 TTS not available (callback not set) for: {winner_country}")
-        
+
         logger.info(f"🏆 Victory sound played for: {winner_country or 'unknown'}")
     
     def play_gift_sound(
@@ -892,8 +892,28 @@ class AudioManager:
                     channel.stop()
             except Exception:
                 pass
-        
+
         self._active_sounds.clear()
+
+    def stop_final_stretch_sound(self) -> None:
+        """Stop the final stretch sound if it's currently playing."""
+        if SoundType.FINAL_STRETCH in self._active_sounds:
+            with self._lock:
+                for channel in self._active_sounds[SoundType.FINAL_STRETCH]:
+                    if channel.get_busy():
+                        channel.fadeout(300)  # Fade out over 300ms for smooth transition
+                self._active_sounds[SoundType.FINAL_STRETCH].clear()
+                logger.debug("🔇 Final stretch sound stopped")
+
+    def stop_victory_sound(self) -> None:
+        """Stop the victory sound if it's currently playing."""
+        if SoundType.VICTORY in self._active_sounds:
+            with self._lock:
+                for channel in self._active_sounds[SoundType.VICTORY]:
+                    if channel.get_busy():
+                        channel.fadeout(500)  # Fade out over 500ms for smooth transition
+                self._active_sounds[SoundType.VICTORY].clear()
+                logger.debug("🔇 Victory sound stopped")
     
     def set_master_volume(self, volume: float) -> None:
         """

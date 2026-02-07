@@ -128,7 +128,7 @@ class TikTokManager:
         
         # Método 4: Fallback con ID único temporal (solo si todo falla)
         fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
-        logger.warning(f"⚠️ Could not extract username from event, using fallback: {fallback_name}")
+        logger.debug(f"⚠️ Could not extract username from event, using fallback: {fallback_name}")
         return fallback_name
     
     def _extract_diamond_count(self, event, gift_name: str) -> int:
@@ -256,16 +256,16 @@ class TikTokManager:
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
             """Handle chat comments for keyword binding and votes."""
-            logger.info("📨 CommentEvent received!")
+            logger.debug("📨 CommentEvent received!")
             try:
                 from .config import GAME_MODE, COUNTRY_SHORTCUTS
-                
-                logger.info(f"   GAME_MODE: {GAME_MODE}")
+
+                logger.debug(f"   GAME_MODE: {GAME_MODE}")
                 username = self._extract_username(event)
-                logger.info(f"   Username extracted: {username}")
-                
+                logger.debug(f"   Username extracted: {username}")
+
                 # Debug: log event attributes
-                logger.info(f"   Event attributes: {[attr for attr in dir(event) if not attr.startswith('_')]}")
+                logger.debug(f"   Event attributes: {[attr for attr in dir(event) if not attr.startswith('_')]}")
                 
                 # Get message content - try all possible methods
                 message = ""
@@ -287,7 +287,7 @@ class TikTokManager:
                 
                 # TEMPORARY: Log all comments that look like votes for debugging
                 if clean_message.isdigit() or (len(clean_message) <= 4 and clean_message.isalpha()):
-                    logger.info(f"🔍 Potential vote from {username}: '{message}' -> cleaned: '{clean_message}'")
+                    logger.debug(f"🔍 Potential vote from {username}: '{message}' -> cleaned: '{clean_message}'")
                 
                 # COMMENT MODE: Check for country shortcuts (siglas/números)
                 if GAME_MODE == "COMMENT":

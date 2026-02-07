@@ -1222,8 +1222,8 @@ class GameEngine:
         
         # 🏆 CAPTAIN SYSTEM: Track points
         self._update_captain_points(username, country, COMMENT_POINTS_PER_MESSAGE)
-        
-        logger.info(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
+
+        logger.debug(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
         
         # Apply movement to country's flag
         success = self.physics_world.apply_gift_impulse(
@@ -2169,18 +2169,18 @@ class GameEngine:
         label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
-            captain_text = f"@{captain}"
-            
+            captain_text = f"★ {captain}"  # Added star symbol for visual appeal
+
             # Special highlight if just became captain
             if country in self.captain_change_timer:
-                color = (255, 255, 0)  # Bright yellow for new captain
+                color = (255, 223, 0)  # Golden yellow for new captain
                 font_size = 15
             else:
-                # Improved legibility: light gray/off-white for better contrast
-                color = (204, 204, 204)  # #CCCCCC - Light gray for better readability
+                # Improved: Golden/white color for better visibility
+                color = (255, 245, 200)  # Soft golden-white for better readability
                 font_size = 12
-            
-            # Render with enhanced text (outline) - 1px outline for better legibility
+
+            # Render with enhanced text (outline) - stronger outline for cross-platform visibility
             try:
                 captain_font = pygame.font.SysFont("Arial", font_size, bold=True)
                 captain_surface = self._render_text_enhanced(
@@ -2188,35 +2188,15 @@ class GameEngine:
                     captain_font,
                     color,
                     outline_color=(0, 0, 0),
-                    outline_width=1  # 1px outline as requested
+                    outline_width=2  # Thicker outline for better visibility on Mac and Windows
                 )
-                
+
                 captain_rect = captain_surface.get_rect(center=(flag_x, label_y))
                 self.render_surface.blit(captain_surface, captain_rect)
-                
+
             except Exception as e:
                 logger.debug(f"Error rendering captain label: {e}")
-        else:
-            # No captain yet - optional "No Captain" text
-            if self.game_state == 'RACING':  # Only show during active race
-                try:
-                    no_captain_font = pygame.font.SysFont("Arial", 9, bold=True)
-                    # Improved legibility: brighter color and better position
-                    no_captain_surface = self._render_text_enhanced(
-                        "No Captain",
-                        no_captain_font,
-                        (220, 220, 220),  # Brighter gray for better visibility
-                        outline_color=(0, 0, 0),
-                        outline_width=2  # Thicker outline for better visibility
-                    )
-                    
-                    # Position to the right of the flag, aligned with captain text position
-                    no_captain_x = flag_x + 30  # To the right of flag
-                    no_captain_rect = no_captain_surface.get_rect(center=(no_captain_x, label_y))
-                    self.render_surface.blit(no_captain_surface, no_captain_rect)
-                    
-                except Exception:
-                    pass  # Skip if font fails
+        # No "No Captain" text displayed - cleaner look when no captain assigned
 
     def _render_sprite(
         self, 
@@ -2274,7 +2254,7 @@ class GameEngine:
         
         # Leader info (centrado en el header)
         leader_info = self.physics_world.get_leader()
-        leader_text = f"🏆 1st: {leader_info[0]}" if leader_info else "🏆 1st: ---"
+        leader_text = f"1st: {leader_info[0]}" if leader_info else "1st: ---"
         
         # 🎯 EFECTO POP cuando cambia el líder
         if self.leader_pop_timer > 0:
@@ -2591,77 +2571,92 @@ class GameEngine:
         self.render_surface.blit(surf, (table_x, table_y))
 
     def _render_legend(self) -> None:
-        """Render combat powers table fixed at bottom. Clean, readable, functional."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT, GAME_AREA_BOTTOM
+        """Render combat powers panel in bottom-right corner with transparent background."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
 
-        legend_height = min(58, GAME_AREA_BOTTOM - 4)
-        legend_y = SCREEN_HEIGHT - legend_height
-        padding = 12
-        row1_y = legend_y + 6
-        row2_y = legend_y + 28
+        # Panel dimensions - compact vertical layout
+        panel_width = 140
+        panel_height = 110
+        margin = 10
+        panel_x = SCREEN_WIDTH - panel_width - margin
+        panel_y = SCREEN_HEIGHT - panel_height - margin
+        padding = 8
 
-        # Background: dark bar, clearly visible
-        legend_surf = pygame.Surface((SCREEN_WIDTH, legend_height), pygame.SRCALPHA)
-        legend_surf.fill((18, 18, 24, 220))
-        # Single thin gold separator line (no thick bar)
-        pygame.draw.line(legend_surf, (255, 215, 0, 200), (0, 0), (SCREEN_WIDTH, 0), 1)
-        self.render_surface.blit(legend_surf, (0, legend_y))
+        # Transparent background panel
+        legend_surf = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        legend_surf.fill((15, 15, 20, 140))  # Very transparent dark background
+        # Subtle golden border
+        pygame.draw.rect(legend_surf, (255, 215, 0, 180), (0, 0, panel_width, panel_height), 2, border_radius=8)
 
         # Title
-        title_font = pygame.font.SysFont("Arial", 12, bold=True)
+        title_font = pygame.font.SysFont("Arial", 10, bold=True)
         title_surf = self._render_text_enhanced(
             "COMBAT POWERS",
             title_font,
             (255, 235, 90),
             outline_color=(0, 0, 0),
-            outline_width=1,
+            outline_width=2,  # Thicker outline for Mac/Windows visibility
         )
-        self.render_surface.blit(title_surf, (padding, row1_y - 2))
+        title_rect = title_surf.get_rect(center=(panel_width // 2, padding + 6))
+        legend_surf.blit(title_surf, title_rect)
 
-        # Three items: [icon] effect / gift name
+        # Three items: [icon] effect / gift name (vertical layout)
         items = [
             ("rosa", "+5m", "Rosa", (255, 150, 180)),
-            ("pesa", "Stops leader", "Pesa", (190, 190, 200)),
-            ("hielo", "Freeze 3s", "Helado", (140, 200, 255)),
+            ("pesa", "-10m", "Pesa", (190, 190, 200)),
+            ("hielo", "Freeze", "Helado", (140, 200, 255)),
         ]
-        seg = (SCREEN_WIDTH - 2 * padding) // 3
-        eff_font = pygame.font.SysFont("Arial", 11, bold=True)
-        name_font = pygame.font.SysFont("Arial", 9)
+
+        row_height = 22
+        start_y = padding + 20
+        icon_size = 16
+        eff_font = pygame.font.SysFont("Arial", 10, bold=True)
+        name_font = pygame.font.SysFont("Arial", 8)
 
         for i, (icon_type, effect, gift_name, color) in enumerate(items):
-            x0 = padding + i * seg
-            icon_x = x0 + 14
-            icon_y = row2_y + 6
-            text_x = x0 + 36
+            y = start_y + i * row_height
+            icon_x = padding + 10
+            icon_y = y + 8
+            text_x = icon_x + icon_size + 6
 
+            # Draw icon (with fallback shapes)
             icon = self.asset_manager.get_combat_icon(icon_type)
             if icon:
-                ir = icon.get_rect(center=(icon_x, icon_y))
-                self.render_surface.blit(icon, ir)
+                # Scale icon to fit
+                scaled_icon = pygame.transform.smoothscale(icon, (icon_size, icon_size))
+                icon_rect = scaled_icon.get_rect(center=(icon_x, icon_y))
+                legend_surf.blit(scaled_icon, icon_rect)
             else:
-                r = 7
+                # Fallback: simple colored shapes
+                r = icon_size // 2
                 if icon_type == "rosa":
-                    pygame.draw.circle(self.render_surface, color, (icon_x, icon_y), r)
+                    pygame.draw.circle(legend_surf, color, (icon_x, icon_y), r)
                 elif icon_type == "pesa":
-                    pygame.draw.rect(self.render_surface, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
-                else:
+                    pygame.draw.rect(legend_surf, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
+                else:  # hielo
                     pts = [(icon_x, icon_y - r), (icon_x + r, icon_y), (icon_x, icon_y + r), (icon_x - r, icon_y)]
-                    pygame.draw.polygon(self.render_surface, color, pts)
+                    pygame.draw.polygon(legend_surf, color, pts)
 
+            # Effect text
             eff_surf = self._render_text_enhanced(
                 effect,
                 eff_font,
                 (240, 240, 240),
                 outline_color=(0, 0, 0),
-                outline_width=1,
+                outline_width=2,  # Strong outline for cross-platform visibility
             )
-            er = eff_surf.get_rect(midleft=(text_x, icon_y - 5))
-            self.render_surface.blit(eff_surf, er)
-            name_surf = name_font.render(gift_name, True, (160, 160, 170))
-            nr = name_surf.get_rect(midleft=(text_x, icon_y + 9))
-            self.render_surface.blit(name_surf, nr)
+            eff_rect = eff_surf.get_rect(midleft=(text_x, icon_y - 4))
+            legend_surf.blit(eff_surf, eff_rect)
 
-        # Frozen indicator
+            # Gift name (smaller, below effect)
+            name_surf = name_font.render(gift_name, True, (180, 180, 190))
+            name_rect = name_surf.get_rect(midleft=(text_x, icon_y + 7))
+            legend_surf.blit(name_surf, name_rect)
+
+        # Blit panel to screen
+        self.render_surface.blit(legend_surf, (panel_x, panel_y))
+
+        # Frozen indicator (if active, show above the panel)
         if self.physics_world.frozen_countries:
             parts = [f"{c}: {t:.1f}s" for c, t in self.physics_world.frozen_countries.items()]
             frozen_font = pygame.font.SysFont("Arial", 10, bold=True)
@@ -2670,9 +2665,10 @@ class GameEngine:
                 frozen_font,
                 (150, 220, 255),
                 outline_color=(0, 0, 0),
-                outline_width=1,
+                outline_width=2,
             )
-            self.render_surface.blit(frozen_surf, (padding, legend_y + legend_height - 14))
+            frozen_rect = frozen_surf.get_rect(bottomright=(SCREEN_WIDTH - margin, panel_y - 5))
+            self.render_surface.blit(frozen_surf, frozen_rect)
 
     def assign_country_to_user(self, username: str) -> tuple[str, str]:
         """
@@ -3849,18 +3845,21 @@ class GameEngine:
     
     def _return_to_idle(self) -> None:
         """Return to IDLE state and save winner info."""
+        # Stop victory sound when returning to IDLE
+        self.audio_manager.stop_victory_sound()
+
         # Save winner info before reset
         if self.physics_world.winner:
             self.last_winner = self.physics_world.winner
             winner_racer = self.physics_world.racers[self.physics_world.winner]
             self.last_winner_distance = winner_racer.body.position.x - self.physics_world.start_x
-        
+
         # 3️⃣ RESET AUTOMÁTICO: Llamar reset_race() y limpiar textos flotantes
         self.physics_world.reset_race()  # Ya resetea banderas a RACE_START_X
-    
+
         # Limpiar textos flotantes
         self.floating_texts.clear()
-    
+
         # Limpiar partículas también para un reset limpio
         self.particles.clear()
     
@@ -3928,6 +3927,9 @@ class GameEngine:
         Reset per-race game state when physics auto-resets (new race, stay RACING).
         Fixes: total counter, victory zoom, final stretch not resetting between races.
         """
+        # Stop victory sound when starting a new race
+        self.audio_manager.stop_victory_sound()
+
         self.floating_texts.clear()
         self.particles.clear()
         self.user_country_cache.clear()
@@ -3955,7 +3957,7 @@ class GameEngine:
             self.background_manager.set_scroll_speed(self.original_parallax_speed)
             self.background_manager.deactivate_warp_mode()
             self.background_manager.deactivate_tension_mode()
-        
+
         # 🎵 Restore normal background music
         self.audio_manager.play_bgm_normal(fade_in_ms=1500)
         logger.info("🔄 Game state reset for new race (physics auto-reset)")
@@ -3966,16 +3968,19 @@ class GameEngine:
         Sets up timing for HUD animations and spotlight.
         """
         import time
+        # Stop victory sound when starting a new race from IDLE
+        self.audio_manager.stop_victory_sound()
+
         self.game_state = 'RACING'
         self.race_start_time = time.time()
-        
+
         # Initialize spotlight position to first racer
         if self.physics_world.racers:
             first_country = list(self.physics_world.racers.keys())[0]
             racer = self.physics_world.racers[first_country]
             self.spotlight_current_pos = (racer.body.position.x, racer.body.position.y)
             self.spotlight_target_pos = self.spotlight_current_pos
-        
+
         # Reset combo system
         self.combo_tracker.clear()
         self.combo_counts.clear()
@@ -4731,7 +4736,7 @@ class GameEngine:
         gold_color = (255, int(200 + 55 * pulse), int(50 * pulse))
         
         # Main winner text
-        winner_text = f"🏆 {abbrev} WINS! 🏆"
+        winner_text = f"{abbrev} WINS!"
         
         # Apply scale from entrance animation
         scaled_size = int(42 * self.victory_banner_scale)
@@ -4754,7 +4759,7 @@ class GameEngine:
         if captain and captain != "Unknown":
             # Check if this is a "king" (gift mode captain)
             if self.victory_was_gift_mode:
-                captain_text = f"👑 KING OF THE TRACK: {captain} 👑"
+                captain_text = f"KING OF THE TRACK: {captain}"
                 captain_color = (255, 215, 0)  # Gold
             else:
                 captain_text = f"Top Voter: {captain}"
@@ -4786,7 +4791,7 @@ class GameEngine:
         
         # CTA text
         cta_font = pygame.font.SysFont("Arial", 16, bold=True)
-        cta_text = "🎁 Send a GIFT to claim YOUR crown next race! 🎁"
+        cta_text = "Send a GIFT to claim YOUR crown next race!"
         
         cta_surf = self._render_text_with_shadow(
             cta_text,
