@@ -12,6 +12,7 @@ from .config import (
     SCREEN_WIDTH,
     SCREEN_HEIGHT,
     PHYSICS_STEPS,
+    PHYSICS_FIXED_HZ,
     WALL_THICKNESS,
     WALL_FRICTION,
     WALL_ELASTICITY,
@@ -317,13 +318,11 @@ class PhysicsWorld:
             
                 # Only interpolate if there's a difference (reduced threshold for smoother motion)
                 if abs(target_x - current_x) > 0.05:  # Reduced from 0.1 for more responsive movement
-                    # Smooth Lerp with adaptive factor based on distance
+                    # Smooth Lerp with adaptive factor; scale by dt so motion is identical at 60Hz and 120Hz
                     distance = abs(target_x - current_x)
-                    # Use slightly higher factor for larger distances (faster catch-up)
                     adaptive_factor = min(self.smoothing_factor * (1.0 + distance / 100.0), 0.25)
-                    # Lerp formula: current += (target - current) * factor
-                    new_x = current_x + (target_x - current_x) * adaptive_factor
-                
+                    step = adaptive_factor * min(1.0, dt * PHYSICS_FIXED_HZ)
+                    new_x = current_x + (target_x - current_x) * step
                     # Update body position (visual position)
                     racer.body.position = (new_x, racer.body.position.y)
             

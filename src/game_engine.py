@@ -38,6 +38,7 @@ from .config import (
     COLOR_STATUS_RECONNECTING,
     AUTO_STRESS_TEST,
     STRESS_TEST_INTERVAL,
+    PHYSICS_FIXED_HZ,
     # Floating Text (NEW)
     COLOR_TEXT_POSITIVE,
     COLOR_TEXT_NEGATIVE,
@@ -531,6 +532,7 @@ class GameEngine:
         self.slow_motion_factor = 0.5  # dt multiplier (0.5 = half speed)
         self.confetti_particles: list = []  # Confetti system
         self.max_confetti = 150
+        self._confetti_pool: list[ConfettiParticle] = []  # Object pool to reduce GC pressure
         self.victory_banner_scale = 0.0  # For entrance animation
         self.victory_winner_captain: Optional[str] = None  # Captain who won
         self.victory_was_gift_mode = False  # Track if gift mode for monetization message
@@ -582,6 +584,7 @@ class GameEngine:
         self.motion_trail_history: dict[str, list[tuple[float, float]]] = {}  # Position history
         self.max_trail_segments = 20  # Max segments per country
         self.trail_segment_lifetime = 0.3  # Seconds before fade
+        self._motion_trail_segment_pool: list[MotionTrailSegment] = []  # Object pool to avoid GC spikes
         
         # ✨ COMBO FLASHES (flash effect on combo level up)
         self.combo_flashes: list[ComboFlash] = []
@@ -631,6 +634,11 @@ class GameEngine:
         self._last_fps_check_time = time.time()
         self._last_frame_time = time.time()
         
+        # Fixed timestep for physics (independent of render FPS)
+        self._fixed_dt = 1.0 / PHYSICS_FIXED_HZ
+        self._physics_accumulator = 0.0
+        self._max_physics_catchup = self._fixed_dt * 5  # Cap to avoid spiral of death
+        
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -638,7 +646,9 @@ class GameEngine:
         
         try:
             logger.info("🔧 Starting pygame init...")
-            
+            # Windows: high-DPI display before any SDL init to avoid blurry window
+            if sys.platform == "win32":
+                os.environ.setdefault("SDL_VIDEO_HIGHDPI_DISPLAY", "1")
             # Center the window on screen
             os.environ['SDL_VIDEO_WINDOW_POS'] = 'center'
             logger.info("🔧 SDL_VIDEO_WINDOW_POS set")
@@ -655,8 +665,11 @@ class GameEngine:
             pygame.display.set_caption("TikTokGameWindow")
             logger.info("🔧 Caption set")
             
-            # Use fixed window size
-            self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT))
+            # Display flags: double buffer + hardware surface for smooth 60 FPS; SCALED for high-DPI
+            flags = pygame.DOUBLEBUF | pygame.HWSURFACE
+            if hasattr(pygame, "SCALED"):
+                flags |= pygame.SCALED
+            self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT), flags)
             logger.info("🔧 Display mode set")
             
             # Render to inner game surface, then blit with margin
@@ -1044,17 +1057,31 @@ class GameEngine:
                 GHOST_VOTE_INTERVAL_MIN, GHOST_VOTE_INTERVAL_MAX
             )
     
+    # Max events to process per frame to avoid backlog causing a single frame to stall
+    MAX_EVENTS_PER_FRAME = 200
+    LAG_WARNING_THRESHOLD_SEC = 0.5
+
     async def process_events(self) -> None:
-        """Process all available events from the queue."""
-        while True:
+        """Drain the event queue in one frame (burst handling) to avoid backlog on vote spam."""
+        processed = 0
+        while processed < self.MAX_EVENTS_PER_FRAME:
             try:
                 event = self.queue.get_nowait()
                 await self._handle_event(event)
+                processed += 1
             except asyncio.QueueEmpty:
                 break
-    
+
     async def _handle_event(self, event: GameEvent) -> None:
-        """Handle a single event from the queue."""
+        """Handle a single event from the queue. Logs input latency when above threshold."""
+        if event.created_at_sec is not None:
+            latency_sec = time.perf_counter() - event.created_at_sec
+            if latency_sec > self.LAG_WARNING_THRESHOLD_SEC:
+                logger.warning(
+                    "[LAG] Event latency detected: %.0fms (type=%s)",
+                    latency_sec * 1000,
+                    event.type.name,
+                )
         if event.type == EventType.QUIT:
             logger.info("🚪 Exiting: EventType.QUIT (e.g. TikTok disconnect)")
             self.running = False
@@ -1886,7 +1913,13 @@ class GameEngine:
             if self.captain_change_timer[country] <= 0:
                 del self.captain_change_timer[country]
 
-        self.physics_world.update(dt)
+        # Fixed timestep physics: run at PHYSICS_FIXED_HZ regardless of render FPS
+        self._physics_accumulator += dt
+        if self._physics_accumulator > self._max_physics_catchup:
+            self._physics_accumulator = self._max_physics_catchup
+        while self._physics_accumulator >= self._fixed_dt:
+            self.physics_world.update(self._fixed_dt)
+            self._physics_accumulator -= self._fixed_dt
         self.update_particles(dt)
         self.update_floating_texts()
         
@@ -2152,26 +2185,16 @@ class GameEngine:
         blit_x = GAME_MARGIN + int(shake_offset[0])
         blit_y = GAME_MARGIN + int(shake_offset[1])
         
-        # 🎬 Apply subtle camera zoom during victory sequence
-        # Note: Instead of cropping (which can cut off content), we scale the whole
-        # surface slightly and center it, creating a subtle "push in" effect
+        # 🎬 Apply subtle camera zoom during victory sequence (scale() not smoothscale for 60 FPS)
         if self.victory_sequence_active and self.victory_zoom_level > 1.01:
-            zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom to avoid cutting too much
-            
-            # Scale up the surface
+            zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom
             scaled_width = int(SCREEN_WIDTH * zoom)
             scaled_height = int(SCREEN_HEIGHT * zoom)
-            
-            scaled_surface = pygame.transform.smoothscale(
-                self.render_surface, 
-                (scaled_width, scaled_height)
+            scaled_surface = pygame.transform.scale(
+                self.render_surface, (scaled_width, scaled_height)
             )
-            
-            # Center the scaled surface (this creates a zoom-in effect)
             offset_x = (scaled_width - SCREEN_WIDTH) // 2
             offset_y = (scaled_height - SCREEN_HEIGHT) // 2
-            
-            # Blit with offset to center
             self.screen.blit(scaled_surface, (blit_x - offset_x, blit_y - offset_y))
         else:
             self.screen.blit(self.render_surface, (blit_x, blit_y))
@@ -3334,10 +3357,10 @@ class GameEngine:
             outline_width=3
         )
         
-        # Aplicar escala de "respiración" a la superficie
+        # Apply breathe scale (scale() not smoothscale to avoid stutter in render loop)
         scaled_width = int(title_surface.get_width() * breathe_scale)
         scaled_height = int(title_surface.get_height() * breathe_scale)
-        title_surface = pygame.transform.smoothscale(title_surface, (scaled_width, scaled_height))
+        title_surface = pygame.transform.scale(title_surface, (scaled_width, scaled_height))
         
         # Apply pulsating alpha
         title_alpha_surface = pygame.Surface(title_surface.get_size(), pygame.SRCALPHA)
@@ -3399,10 +3422,10 @@ class GameEngine:
                 outline_width=3
             )
             
-            # Aplicar escala de "respiración"
+            # Apply breathe scale (scale() not smoothscale for performance)
             scaled_width = int(subtitle_surface.get_width() * breathe_scale)
             scaled_height = int(subtitle_surface.get_height() * breathe_scale)
-            subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
+            subtitle_surface = pygame.transform.scale(subtitle_surface, (scaled_width, scaled_height))
             
             # Apply pulsating alpha
             subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
@@ -4682,33 +4705,34 @@ class GameEngine:
             racer = self.physics_world.racers[country]
             base_color = racer.color
             
-            # Clear old segments and rebuild
+            # Return old segments to pool, then rebuild
+            for seg in self.motion_trails.get(country, []):
+                self._motion_trail_segment_pool.append(seg)
             self.motion_trails[country] = []
             
             for i in range(len(history) - 1):
                 x1, y1 = history[i]
                 x2, y2 = history[i + 1]
-                
-                # Alpha fades towards the back
                 alpha = 255 * (i + 1) / len(history)
-                
-                # Thickness increases towards the flag (front)
                 thickness = 1 if i < len(history) // 2 else 2
                 if country in self.on_fire_countries:
-                    thickness += 1  # Thicker when ON FIRE
-                
-                # Apply jitter to older segments for vibration effect
+                    thickness += 1
                 if country in self.on_fire_countries and i < len(history) - 3:
                     y1 += random.uniform(-1, 1)
                     y2 += random.uniform(-1, 1)
                 
-                segment = MotionTrailSegment(
-                    x1=x1, y1=y1,
-                    x2=x2, y2=y2,
-                    color=base_color,
-                    alpha=alpha,
-                    thickness=thickness
-                )
+                if self._motion_trail_segment_pool:
+                    segment = self._motion_trail_segment_pool.pop()
+                    segment.x1, segment.y1 = x1, y1
+                    segment.x2, segment.y2 = x2, y2
+                    segment.color = base_color
+                    segment.alpha = alpha
+                    segment.thickness = thickness
+                else:
+                    segment = MotionTrailSegment(
+                        x1=x1, y1=y1, x2=x2, y2=y2,
+                        color=base_color, alpha=alpha, thickness=thickness
+                    )
                 self.motion_trails[country].append(segment)
     
     def _update_combo_flashes(self, dt: float) -> None:
@@ -5080,28 +5104,33 @@ class GameEngine:
         if len(self.confetti_particles) >= self.max_confetti:
             return
         
-        # Festive colors
         colors = [
-            (255, 215, 0),    # Gold
-            (255, 0, 100),    # Pink
-            (0, 200, 255),    # Cyan
-            (100, 255, 100),  # Green
-            (255, 100, 0),    # Orange
-            (200, 100, 255),  # Purple
-            (255, 255, 255),  # White
+            (255, 215, 0), (255, 0, 100), (0, 200, 255), (100, 255, 100),
+            (255, 100, 0), (200, 100, 255), (255, 255, 255),
         ]
-        
-        particle = ConfettiParticle(
-            x=random.uniform(0, SCREEN_WIDTH),
-            y=random.uniform(-50, -10),  # Start above screen
-            vx=random.uniform(-30, 30),
-            vy=random.uniform(100, 250),  # Fall speed
-            size=random.uniform(4, 10),
-            color=random.choice(colors),
-            rotation=random.uniform(0, 360),
-            rotation_speed=random.uniform(-300, 300),
-            lifetime=random.uniform(3.0, 6.0)
-        )
+        if self._confetti_pool:
+            particle = self._confetti_pool.pop()
+            particle.x = random.uniform(0, SCREEN_WIDTH)
+            particle.y = random.uniform(-50, -10)
+            particle.vx = random.uniform(-30, 30)
+            particle.vy = random.uniform(100, 250)
+            particle.size = random.uniform(4, 10)
+            particle.color = random.choice(colors)
+            particle.rotation = random.uniform(0, 360)
+            particle.rotation_speed = random.uniform(-300, 300)
+            particle.lifetime = random.uniform(3.0, 6.0)
+        else:
+            particle = ConfettiParticle(
+                x=random.uniform(0, SCREEN_WIDTH),
+                y=random.uniform(-50, -10),
+                vx=random.uniform(-30, 30),
+                vy=random.uniform(100, 250),
+                size=random.uniform(4, 10),
+                color=random.choice(colors),
+                rotation=random.uniform(0, 360),
+                rotation_speed=random.uniform(-300, 300),
+                lifetime=random.uniform(3.0, 6.0)
+            )
         self.confetti_particles.append(particle)
     
     def _update_confetti(self, dt: float) -> None:
@@ -5127,10 +5156,10 @@ class GameEngine:
             # Lifetime
             p.lifetime -= dt
             
-            # Keep if still alive and on screen
             if p.lifetime > 0 and p.y < SCREEN_HEIGHT + 50:
                 alive.append(p)
-        
+            else:
+                self._confetti_pool.append(p)
         self.confetti_particles = alive
     
     def _render_victory_sequence(self) -> None:

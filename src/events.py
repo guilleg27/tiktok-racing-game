@@ -35,13 +35,15 @@ class GameEvent:
         username: The TikTok username who triggered the event
         content: The message content or gift name
         extra: Additional data (gift count, diamond value, etc.)
-        timestamp: When the event was created
+        timestamp: When the event was created (datetime, for display).
+        created_at_sec: High-precision creation time (time.perf_counter()) for latency audit.
     """
     type: EventType
     username: str = ""
     content: str = ""
     extra: Optional[dict[str, Any]] = None
     timestamp: datetime = field(default_factory=datetime.now)
+    created_at_sec: Optional[float] = None  # For latency monitoring (set by producer)
     
     def format_message(self) -> str:
         """Format the event as a display string."""

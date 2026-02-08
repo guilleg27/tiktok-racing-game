@@ -4,7 +4,7 @@ import os
 import pygame
 import logging
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 from .config import GIFT_NAME_MAPPING, RACE_COUNTRIES
 from .resources import resource_path
@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class AssetManager:
     """
     Gestiona la carga y cache de assets (imágenes de regalos).
+    All surfaces are converted at load time for zero per-frame conversion cost.
+    Scaled sprites are cached by (name, size) to avoid scaling in the render loop.
     """
     
     def __init__(self, assets_path: str = "assets/gifts"):
@@ -22,18 +24,19 @@ class AssetManager:
         resolved_path = resource_path(assets_path)
         self.assets_path = Path(resolved_path)
         self._cache: Dict[str, pygame.Surface] = {}
+        self._scale_cache: Dict[Tuple[str, int], pygame.Surface] = {}
         self._missing_assets: set = set()
         
         # Ensure assets directory exists (solo en desarrollo)
         try:
             self.assets_path.mkdir(parents=True, exist_ok=True)
-        except:
+        except Exception:
             pass  # En ejecutable empaquetado, la carpeta ya existe
         
         self._preload_assets()
     
     def _preload_assets(self) -> None:
-        """Precarga todas las imágenes PNG encontradas en assets/gifts/."""
+        """Preload all PNG images; convert to display format immediately to avoid per-frame conversion."""
         if not self.assets_path.exists():
             logger.warning(f"Assets directory not found: {self.assets_path}")
             return
@@ -41,16 +44,13 @@ class AssetManager:
         loaded_count = 0
         for img_path in self.assets_path.glob("*.png"):
             try:
-                # Load image WITHOUT convert_alpha (no requiere display)
                 surface = pygame.image.load(str(img_path))
-                
-                # Use filename (without extension) as key
                 gift_name = img_path.stem
+                # Store raw loaded surface. Conversion happens in _scale_sprite (after display
+                # is initialized) so we avoid "cannot convert without pygame.display" at import time.
                 self._cache[gift_name] = surface
                 loaded_count += 1
-                
                 logger.debug(f"Loaded asset: {gift_name}")
-                
             except Exception as e:
                 logger.error(f"Failed to load {img_path}: {e}")
         
@@ -58,55 +58,55 @@ class AssetManager:
     
     def get_sprite(self, gift_name: str, size: int) -> Optional[pygame.Surface]:
         """
-        Obtiene el sprite de un regalo escalado al tamaño especificado.
+        Returns a sprite scaled to the given size. Uses a cache keyed by (name, size)
+        so scaling is done once per (gift_name, size), not in the render loop.
         
         Args:
-            gift_name: Nombre del regalo (puede estar en inglés o español)
-            size: Diámetro deseado en píxeles
+            gift_name: Gift or country name (English or Spanish).
+            size: Desired diameter in pixels.
             
         Returns:
-            Surface escalado o None si no existe
+            Scaled surface or None if not found.
         """
-        # ← NUEVO: Traducir nombre si viene en inglés
         translated_name = GIFT_NAME_MAPPING.get(gift_name, gift_name)
+        cache_key: Optional[Tuple[str, int]] = None
+        source: Optional[pygame.Surface] = None
+        apply_bg = False
         
-        # Try translated name first
         if translated_name in self._cache:
-            return self._scale_sprite(
-                self._cache[translated_name],
-                size,
-                apply_bg_remove=self._is_country_name(translated_name)
-            )
+            cache_key = (translated_name, size)
+            source = self._cache[translated_name]
+            apply_bg = self._is_country_name(translated_name)
+        elif gift_name in self._cache:
+            cache_key = (gift_name, size)
+            source = self._cache[gift_name]
+            apply_bg = self._is_country_name(gift_name)
+        else:
+            for cached_name in self._cache:
+                if cached_name.lower() == gift_name.lower():
+                    cache_key = (cached_name, size)
+                    source = self._cache[cached_name]
+                    apply_bg = self._is_country_name(cached_name)
+                    break
+                if cached_name.lower() == translated_name.lower():
+                    cache_key = (cached_name, size)
+                    source = self._cache[cached_name]
+                    apply_bg = self._is_country_name(cached_name)
+                    break
         
-        # Try original name
-        if gift_name in self._cache:
-            return self._scale_sprite(
-                self._cache[gift_name],
-                size,
-                apply_bg_remove=self._is_country_name(gift_name)
-            )
+        if source is None or cache_key is None:
+            if gift_name not in self._missing_assets:
+                self._missing_assets.add(gift_name)
+                logger.debug(f"Asset not found: {gift_name} (translated: {translated_name})")
+            return None
         
-        # Try case-insensitive search
-        for cached_name in self._cache.keys():
-            if cached_name.lower() == gift_name.lower():
-                return self._scale_sprite(
-                    self._cache[cached_name],
-                    size,
-                    apply_bg_remove=self._is_country_name(cached_name)
-                )
-            if cached_name.lower() == translated_name.lower():
-                return self._scale_sprite(
-                    self._cache[cached_name],
-                    size,
-                    apply_bg_remove=self._is_country_name(cached_name)
-                )
+        if cache_key in self._scale_cache:
+            return self._scale_cache[cache_key]
         
-        # Log missing asset only once
-        if gift_name not in self._missing_assets:
-            self._missing_assets.add(gift_name)
-            logger.debug(f"Asset not found: {gift_name} (translated: {translated_name})")
-        
-        return None
+        scaled = self._scale_sprite(source, size, apply_bg_remove=apply_bg)
+        if scaled is not None:
+            self._scale_cache[cache_key] = scaled
+        return scaled
     
     def _normalize_name(self, name: str) -> str:
         """Normaliza el nombre para búsqueda."""
@@ -120,18 +120,15 @@ class AssetManager:
         size: int,
         apply_bg_remove: bool = False,
     ) -> pygame.Surface:
-        """Escala un sprite manteniendo aspect ratio."""
-        # Create square canvas
-        scaled = pygame.transform.smoothscale(surface, (size * 2, size * 2))
-        # Ahora sí convert_alpha (después de que display esté inicializado)
+        """Scale sprite to (size*2, size*2). Uses scale() not smoothscale() for performance (no scaling in render loop)."""
+        w = size * 2
+        scaled = pygame.transform.scale(surface, (w, w))
         try:
             scaled = scaled.convert_alpha()
-        except:
-            pass  # Fallback si aún no hay display
-
+        except Exception:
+            pass
         if apply_bg_remove:
             return self._remove_background_color(scaled)
-
         return scaled
 
     def _is_country_name(self, name: str) -> bool:
@@ -215,8 +212,9 @@ class AssetManager:
         return cleaned
     
     def reload(self) -> None:
-        """Recarga todos los assets (útil para hot-reload durante desarrollo)."""
+        """Reload all assets and clear scale cache (for hot-reload during development)."""
         self._cache.clear()
+        self._scale_cache.clear()
         self._missing_assets.clear()
         self._preload_assets()
     

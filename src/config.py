@@ -43,6 +43,8 @@ ACTUAL_HEIGHT = SCREEN_HEIGHT + (GAME_MARGIN * 2)
 # Physics settings (Pymunk)
 GRAVITY = (0, 900)
 PHYSICS_STEPS = 10
+# Fixed timestep for physics (Hz). Independent of render FPS for consistent simulation.
+PHYSICS_FIXED_HZ = 60
 
 # Ball physics - more organic movement
 BALL_FRICTION = 0.4
