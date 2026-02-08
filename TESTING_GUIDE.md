@@ -147,6 +147,7 @@ python main.py -i
 | **2** | Voto país 2 (COMMENT) / Pesa (GIFT) | Votos, combo, efecto Pesa |
 | **3** | Voto país 3 (COMMENT) / Helado (GIFT) | Votos, combo, efecto Helado |
 | **J** | Usuario se une a equipo | Join, asignación de país |
+| **W** | Simular entrada a la sala | Bienvenida visual (JoinEvent) |
 | **K** | Puntos de capitán aleatorios | Sistema de capitanes |
 | **F** | Combo rápido → ON FIRE | Combo fire SFX, TTS "X is on fire!" |
 | **G** | Activar Final Stretch | Sirena, warp mode, TTS final stretch |

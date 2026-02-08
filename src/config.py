@@ -109,6 +109,12 @@ COUNTRY_ABBREV = {
 COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
 COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
+# Ghost Participation System (keeps race alive during inactivity)
+GHOST_INACTIVITY_THRESHOLD = 12.0  # Seconds without real activity before ghosts activate
+GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
+GHOST_VOTE_INTERVAL_MAX = 7.0  # Max seconds between ghost votes
+GHOST_DISABLE_AFTER_REAL_ACTIVITY = 20.0  # Seconds to disable ghosts after real event
+
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
 GRADIENT_BOTTOM = (10, 10, 20)   # Casi negro con toque azul
@@ -321,6 +327,7 @@ VOL_VICTORY = 0.65       # Victory fanfare volume
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante
 COLOR_TEXT_NEGATIVE = (255, 0, 0)      # Rojo brillante
 COLOR_TEXT_FREEZE = (0, 200, 255)      # Celeste hielo
+COLOR_NEON_CYAN = (0, 255, 255)        # Neon cyan for welcome messages
 
 # Floating Text Settings - Displayed towards center for better visibility
 FLOATING_TEXT_TOP_Y = 180              # Y position (towards vertical center)
@@ -375,6 +382,13 @@ COUNTRY_KEYWORDS = {
 
 # Anti-spam para joins
 JOIN_NOTIFICATION_COOLDOWN = 5.0  # segundos entre notificaciones del mismo user
+
+# Visual Welcome (room join) - retention mechanic
+WELCOME_COOLDOWN = 1.5           # seconds between welcome messages
+MAX_SIMULTANEOUS_WELCOMES = 2    # max welcome messages on screen at once
+WELCOME_TEXT_Y = 380             # Y position: vertical center (SCREEN_HEIGHT/2 ≈ 410)
+WELCOME_TEXT_LIFESPAN = 120      # frames (~2s at 60 FPS)
+WELCOME_FONT_SIZE = 16           # Compact, non-intrusive
 
 # Likes goal bar (retention mechanic - Meteor Shower event)
 LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower

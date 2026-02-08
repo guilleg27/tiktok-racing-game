@@ -11,6 +11,7 @@ from TikTokLive.events import (
     GiftEvent,
     CommentEvent,
     LikeEvent,
+    JoinEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -276,6 +277,21 @@ class TikTokManager:
                 logger.debug(f"👍 Like event: count={count}")
             except Exception as e:
                 logger.error(f"Error processing like: {e}")
+
+        @client.on(JoinEvent)
+        async def on_join(event: JoinEvent) -> None:
+            """Handle viewer entering the livestream (Visual Welcome retention mechanic)."""
+            try:
+                username = self._extract_username(event)
+                await self.queue.put(GameEvent(
+                    type=EventType.JOIN,
+                    username=username,
+                    content="",
+                    extra={"room_join": True},
+                ))
+                logger.debug(f"👋 {username} entered the stream")
+            except Exception as e:
+                logger.error(f"Error processing join: {e}")
 
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:

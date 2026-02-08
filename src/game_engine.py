@@ -275,6 +275,8 @@ class FloatingText:
     lifespan: int = 60         # Frames restantes
     max_lifespan: int = 60     # Para calcular alpha
     font_size: int = 16
+    is_welcome: bool = False   # Tag for welcome messages (cooldown counting)
+    pulse_ratio: float = 0.15  # Fraction of life for elastic pulse (welcome uses 0.4)
     
     def update(self) -> None:
         """Update position and lifespan."""
@@ -290,12 +292,13 @@ class FloatingText:
         alpha = int(255 * (self.lifespan / self.max_lifespan)) if self.max_lifespan > 0 else 0
         alpha = max(0, min(255, alpha))
         
-        # 🎯 ELASTIC PULSE: Scale up then down in first 10 frames
+        # 🎯 ELASTIC PULSE: Scale up then down (configurable ratio)
         life_progress = 1.0 - (self.lifespan / self.max_lifespan) if self.max_lifespan > 0 else 1.0
+        ratio = getattr(self, "pulse_ratio", 0.15)
         
-        if life_progress < 0.15:  # First 15% of life
+        if life_progress < ratio and ratio > 0:  # Configurable pulse duration
             # Elastic overshoot: grows to 1.3x then settles to 1.0x
-            t = life_progress / 0.15  # Normalize to 0-1
+            t = life_progress / ratio  # Normalize to 0-1
             # Elastic formula: overshoot then bounce back
             scale = 1.0 + 0.4 * math.sin(t * math.pi) * (1 - t * 0.5)
         else:
@@ -605,6 +608,11 @@ class GameEngine:
         # 🧪 Manual stress test (key K): inject VOTE/GIFT at 20/sec
         self._stress_test_active = False
         self._stress_test_last_inject: float = 0.0
+        
+        # 👻 Ghost Participation System (keeps race alive during inactivity)
+        self.last_activity_time: float = time.time()
+        self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
+        self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
         
         # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
         self._esc_quit_requested = False
@@ -988,6 +996,54 @@ class GameEngine:
         for text in self.floating_texts:
             text.draw(self.render_surface)
     
+    def _on_real_activity(self) -> None:
+        """
+        Reset ghost participation timers when real user activity occurs.
+        Called on GIFT, VOTE, LIKE, COMMENT, JOIN events.
+        """
+        from .config import GHOST_DISABLE_AFTER_REAL_ACTIVITY
+        now = time.time()
+        self.last_activity_time = now
+        self.ghost_bots_disabled_until = now + GHOST_DISABLE_AFTER_REAL_ACTIVITY
+    
+    def _update_ghost_participation(self) -> None:
+        """
+        Generate ghost votes when inactive to keep the race alive.
+        Ghost votes apply impulse only (no FloatingText, no username).
+        Disabled for GHOST_DISABLE_AFTER_REAL_ACTIVITY seconds after real events.
+        """
+        from .config import (
+            RACE_COUNTRIES,
+            COMMENT_POINTS_PER_MESSAGE,
+            GHOST_INACTIVITY_THRESHOLD,
+            GHOST_VOTE_INTERVAL_MIN,
+            GHOST_VOTE_INTERVAL_MAX,
+        )
+        if self.game_state != 'RACING':
+            return
+        if self.physics_world.race_finished:
+            return
+        now = time.time()
+        if now < self.ghost_bots_disabled_until:
+            return
+        if now - self.last_activity_time < GHOST_INACTIVITY_THRESHOLD:
+            return
+        if now < self.ghost_next_vote_time:
+            return
+        countries = [c for c in RACE_COUNTRIES if c in self.physics_world.racers]
+        if not countries:
+            return
+        country = random.choice(countries)
+        success = self.physics_world.apply_gift_impulse(
+            country=country,
+            gift_name="Ghost",
+            diamond_count=COMMENT_POINTS_PER_MESSAGE
+        )
+        if success:
+            self.ghost_next_vote_time = now + random.uniform(
+                GHOST_VOTE_INTERVAL_MIN, GHOST_VOTE_INTERVAL_MAX
+            )
+    
     async def process_events(self) -> None:
         """Process all available events from the queue."""
         while True:
@@ -1014,6 +1070,7 @@ class GameEngine:
                 self.messages = self.messages[-MAX_MESSAGES:]
         
         elif event.type == EventType.GIFT:
+            self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer regalo
             if self.game_state == 'IDLE':
                 self._transition_to_racing()
@@ -1159,6 +1216,7 @@ class GameEngine:
             await self._handle_vote_event(event)
         
         elif event.type == EventType.LIKE:
+            self._on_real_activity()
             count = (event.extra or {}).get("count", 1)
             self.add_likes(max(1, int(count)))
             msg = event.format_message()
@@ -1167,6 +1225,7 @@ class GameEngine:
                 self.messages = self.messages[-MAX_MESSAGES:]
         
         elif event.type == EventType.COMMENT:
+            self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
             if self.game_state == 'IDLE':
                 logger.info(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
@@ -1180,7 +1239,13 @@ class GameEngine:
                 self.messages = self.messages[-MAX_MESSAGES:]
     
     async def _handle_join_event(self, event: GameEvent) -> None:
-        """Handle user joining a team via keyword."""
+        """Handle user joining: either room join (welcome) or team join (keyword)."""
+        # Room join: viewer entered the livestream → Visual Welcome
+        if event.extra and event.extra.get("room_join"):
+            self._handle_user_join(event.username)
+            return
+
+        # Team join: user joins a country via keyword
         username = event.username
         requested_country = event.content
         keyword = event.extra.get("keyword", "") if event.extra else ""
@@ -1212,6 +1277,7 @@ class GameEngine:
         # Assign user to team
         self.user_assignments[username] = requested_country
         self.last_join_time[username] = current_time
+        self._on_real_activity()
         
         # Visual feedback: floating text on the country's lane
         racer = self.physics_world.racers[requested_country]
@@ -1225,6 +1291,65 @@ class GameEngine:
         )
         
         logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
+
+    def _handle_user_join(self, username: str) -> None:
+        """
+        Handle viewer entering the livestream with Visual Welcome effect.
+        Spawns a welcome FloatingText with Neon Cyan, Elastic Pulse, centered above flags.
+        Cooldown: max 2 simultaneous welcomes, 1.5s between spawns.
+        """
+        import time
+        from .config import (
+            SCREEN_WIDTH,
+            WELCOME_COOLDOWN,
+            MAX_SIMULTANEOUS_WELCOMES,
+            WELCOME_TEXT_Y,
+            WELCOME_TEXT_LIFESPAN,
+            WELCOME_FONT_SIZE,
+            COLOR_NEON_CYAN,
+        )
+
+        current_time = time.time()
+
+        # Count active welcome messages
+        active_welcomes = sum(
+            1 for t in self.floating_texts
+            if getattr(t, "is_welcome", False) and t.is_alive
+        )
+
+        # Cooldown: max 2 simultaneous OR 1.5s between spawns
+        last_welcome = getattr(self, "_last_welcome_spawn_time", 0.0)
+        if active_welcomes >= MAX_SIMULTANEOUS_WELCOMES:
+            return
+        if current_time - last_welcome < WELCOME_COOLDOWN:
+            return
+
+        self._last_welcome_spawn_time = current_time
+
+        # Spawn welcome FloatingText: center, above flags, Neon Cyan, Elastic Pulse
+        welcome_text = FloatingText(
+            text=f"WELCOME @{username}!",
+            x=SCREEN_WIDTH / 2,
+            y=WELCOME_TEXT_Y,
+            color=COLOR_NEON_CYAN,
+            dy=0.0,  # Stay in place (no float up)
+            lifespan=WELCOME_TEXT_LIFESPAN,
+            max_lifespan=WELCOME_TEXT_LIFESPAN,
+            font_size=WELCOME_FONT_SIZE,
+            is_welcome=True,
+            pulse_ratio=0.4,  # Longer elastic pulse for welcome (40% of life)
+        )
+        self.floating_texts.append(welcome_text)
+
+        if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+            # Remove oldest non-welcome first to preserve welcomes
+            non_welcome = [t for t in self.floating_texts if not getattr(t, "is_welcome", False)]
+            if len(non_welcome) > 0:
+                self.floating_texts.remove(non_welcome[0])
+            else:
+                self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
+        logger.debug(f"👋 Welcome displayed for @{username}")
     
     async def _handle_vote_event(self, event: GameEvent) -> None:
         """
@@ -1254,6 +1379,7 @@ class GameEngine:
             if time_since_last < COMMENT_COOLDOWN:
                 return  # Too soon, ignore
         
+        self._on_real_activity()
         # Update last vote time
         if not hasattr(self, '_last_vote_time'):
             self._last_vote_time = {}
@@ -1510,7 +1636,25 @@ class GameEngine:
                                     COLOR_TEXT_FREEZE
                                 )
     
-                elif event.key == pygame.K_j:  # J = Test JoinEvent
+                elif event.key == pygame.K_w:  # W = Test Room Join (Visual Welcome)
+                    test_usernames = [
+                        "NewViewer", "StreamFan", "Lurker", "Curious", "JustJoined"
+                    ]
+                    base_username = random.choice(test_usernames)
+                    unique_username = f"{base_username}{int(time.time() * 1000) % 1000}"
+                    room_join_event = GameEvent(
+                        type=EventType.JOIN,
+                        username=unique_username,
+                        content="",
+                        extra={"room_join": True},
+                    )
+                    try:
+                        self.queue.put_nowait(room_join_event)
+                        logger.info(f"TEST ROOM JOIN (Welcome): @{unique_username}")
+                    except Exception as e:
+                        logger.error(f"Error adding test room join: {e}")
+
+                elif event.key == pygame.K_j:  # J = Test JoinEvent (team join)
                     # Generate random test join
                     # Random username with timestamp to make it unique
                     test_usernames = [
@@ -1745,6 +1889,9 @@ class GameEngine:
         self.physics_world.update(dt)
         self.update_particles(dt)
         self.update_floating_texts()
+        
+        # 👻 Ghost Participation: generate ghost votes when inactive
+        self._update_ghost_participation()
         
         # 🌌 Update parallax background
         if self.background_manager:
