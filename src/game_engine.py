@@ -8,7 +8,7 @@ import random
 import time
 import sys
 from .cloud_manager import CloudManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pygame
 import pymunk
@@ -45,6 +45,8 @@ from .config import (
     FLOATING_TEXT_SPEED,
     FLOATING_TEXT_LIFESPAN,
     FLOATING_TEXT_FONT_SIZE,
+    LIKES_GOAL_INITIAL,
+    LIKES_SIMULATED_PER_KEY,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -150,6 +152,30 @@ class ConfettiParticle:
     rotation: float
     rotation_speed: float
     lifetime: float
+
+
+@dataclass
+class Meteor:
+    """
+    Meteor for the Meteor Shower event. Crosses the screen with a trail.
+    When it touches a flag, applies a random speed boost to that country.
+    
+    Attributes:
+        x, y: Current position
+        vx, vy: Velocity (pixels per second)
+        radius: Visual radius
+        trail: List of (x, y, alpha) for trail segments
+        max_trail: Max trail segments to keep
+        hit_countries: Set of countries already boosted by this meteor (avoid double hit)
+    """
+    x: float
+    y: float
+    vx: float
+    vy: float
+    radius: float
+    trail: list = field(default_factory=list)
+    max_trail: int = 12
+    hit_countries: set = field(default_factory=set)
 
 
 class ParticleManager:
@@ -528,6 +554,12 @@ class GameEngine:
         # 📜 Ticker system for shortcuts (bottom scrolling bar)
         self.ticker_offset = 0.0
         self.ticker_speed = 40.0  # pixels per second
+
+        # 👍 Likes goal bar (retention - Meteor Shower event)
+        self.current_likes = 0
+        self.likes_goal = LIKES_GOAL_INITIAL
+        self.meteors: list[Meteor] = []
+        self._likes_charge_played = False  # Play charge sound once when bar fills
         
         # 📢 CTA Banner - Smart rotation every 10 seconds
         self.cta_last_rotation_time: float = 0.0
@@ -1126,6 +1158,14 @@ class GameEngine:
         elif event.type == EventType.VOTE:
             await self._handle_vote_event(event)
         
+        elif event.type == EventType.LIKE:
+            count = (event.extra or {}).get("count", 1)
+            self.add_likes(max(1, int(count)))
+            msg = event.format_message()
+            self.messages.append((msg, event.type))
+            if len(self.messages) > MAX_MESSAGES:
+                self.messages = self.messages[-MAX_MESSAGES:]
+        
         elif event.type == EventType.COMMENT:
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
             if self.game_state == 'IDLE':
@@ -1574,6 +1614,9 @@ class GameEngine:
                         self._trigger_victory_sequence(winner, captain)
                         logger.info(f"🏆 TEST VICTORY: {winner} wins! Captain: {captain}")
 
+                elif event.key == pygame.K_l:  # L = Simulate likes (retention bar; production uses real LIKE events)
+                    self.add_likes(LIKES_SIMULATED_PER_KEY)
+
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
         Update session points and check for new captain.
@@ -1709,6 +1752,9 @@ class GameEngine:
         
         # 🎥 Update screen shaker
         self.screen_shaker.update(dt)
+
+        # 🌠 Update Meteor Shower meteors (position, trail, flag collisions)
+        self._update_meteors(dt)
         
         # 🌟 Update leader glow animation
         self.leader_glow_time += dt
@@ -1909,9 +1955,15 @@ class GameEngine:
         self._render_trails()  # Render trails before particles (behind)
         self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
         self._render_particles()
+        self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_header()
+        # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
+        from .config import GAME_MODE
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+            self._draw_permanent_cta(self.render_surface)
+        self._render_likes_bar()
         self._render_leaderboard()
         
         # 🏁 Render FINAL STRETCH announcement
@@ -1922,12 +1974,9 @@ class GameEngine:
             self._render_stress_test_banner()
         
         # Render shortcuts panel in COMMENT mode (solo durante RACING)
-        from .config import GAME_MODE
         import time as time_module
         
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
-            # Permanent CTA banner at bottom center (above TikTok comments area)
-            self._draw_permanent_cta(self.render_surface)
+        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
             
             # Show fade-out HUD overlay for first 3 seconds
             if self.race_start_time:
@@ -3313,7 +3362,182 @@ class GameEngine:
         # Optional: Add subtle gold borders at top and bottom
         pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
         pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
-    
+
+    def _render_likes_bar(self) -> None:
+        """
+        Render the likes goal bar below the CTA banner and above the first lane.
+        TikTok-style gradient (orange to pink), thin and elegant.
+        Text: 'PRÓXIMO EVENTO: LLUVIA DE METEORITOS (actual/meta)'.
+        """
+        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT, LIKES_BAR_TOP_GAP
+        bar_height = LIKES_BAR_HEIGHT
+        bar_margin_x = 20
+        bar_width = SCREEN_WIDTH - 2 * bar_margin_x
+        progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
+
+        hint_font = pygame.font.SysFont("Arial", 10)
+        hint = "Dale like o tap en vivo para llenar la barra"
+        hint_surf = hint_font.render(hint, True, (240, 240, 240))
+        label_font = pygame.font.SysFont("Arial", 10, bold=True)
+        label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
+        label_surf = label_font.render(label, True, (255, 255, 255))
+
+        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
+            # Hint strictly below CTA so it is never covered. Order: hint → label → bar.
+            hint_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
+            label_y = hint_y + hint_surf.get_height() + 2
+            bar_y = label_y + label_surf.get_height() + 2
+        else:
+            bar_y = self.header_height + 2
+            label_y = bar_y - 2 - label_surf.get_height()
+            hint_y = label_y - 1 - hint_surf.get_height()
+            if hint_y < self.header_height:
+                hint_y = bar_y + bar_height + 2
+
+        # Background track (dark)
+        track_rect = pygame.Rect(bar_margin_x, bar_y, bar_width, bar_height)
+        track_surf = pygame.Surface((bar_width, bar_height), pygame.SRCALPHA)
+        track_surf.fill((30, 30, 40, 220))
+        self.render_surface.blit(track_surf, (bar_margin_x, bar_y))
+        if progress > 0.001:
+            fill_w = max(2, int(bar_width * progress))
+            fill_surf = pygame.Surface((fill_w, bar_height), pygame.SRCALPHA)
+            for i in range(fill_w):
+                t = i / fill_w
+                r, g, b = 255, int(120 * (1 - t) + 105 * t), int(50 * (1 - t) + 180 * t)
+                pygame.draw.line(fill_surf, (r, g, b, 255), (i, 0), (i, bar_height))
+            self.render_surface.blit(fill_surf, (bar_margin_x, bar_y))
+        pygame.draw.rect(self.render_surface, (255, 180, 180, 120), track_rect, 1)
+
+        self.render_surface.blit(hint_surf, (int(bar_margin_x), int(hint_y)))
+        self.render_surface.blit(label_surf, (int(bar_margin_x), int(label_y)))
+
+    def _trigger_meteor_shower(self) -> None:
+        """
+        Trigger Meteor Shower event: intense screen shake, 5 meteors with trails,
+        each meteor that touches a flag gives a random boost. Then double goal and reset likes.
+        """
+        # Audio: charge when bar is full, then explosion
+        if SoundType.LIKES_CHARGE in getattr(self.audio_manager, '_sound_cache', {}):
+            self.audio_manager.play_sfx(SoundType.LIKES_CHARGE)
+        if SoundType.METEOR_EXPLOSION in getattr(self.audio_manager, '_sound_cache', {}):
+            self.audio_manager.play_sfx(SoundType.METEOR_EXPLOSION)
+        self.screen_shaker.meteor_shake()
+        self.current_likes = 0
+        self.likes_goal = min(self.likes_goal * 2, 10000)
+        self._likes_charge_played = False
+
+        # Spawn 15 meteors: cross screen quickly with trail
+        self.meteors.clear()
+        for _ in range(15):
+            # Start from random edge, move across screen
+            side = random.choice(["left", "right", "top"])
+            if side == "left":
+                x = -20
+                y = random.uniform(80, SCREEN_HEIGHT - 80)
+                vx = random.uniform(350, 550)
+                vy = random.uniform(-80, 80)
+            elif side == "right":
+                x = SCREEN_WIDTH + 20
+                y = random.uniform(80, SCREEN_HEIGHT - 80)
+                vx = random.uniform(-550, -350)
+                vy = random.uniform(-80, 80)
+            else:
+                x = random.uniform(0, SCREEN_WIDTH)
+                y = -20
+                vx = random.uniform(-100, 100)
+                vy = random.uniform(350, 550)
+            self.meteors.append(Meteor(
+                x=x, y=y, vx=vx, vy=vy,
+                radius=random.uniform(6, 10),
+                trail=[], max_trail=12, hit_countries=set()
+            ))
+        logger.info("🌠 Meteor Shower triggered! Goal now %s", self.likes_goal)
+
+    def add_likes(self, count: int) -> None:
+        """
+        Add likes to the retention bar (Meteor Shower goal).
+        Call this from real LIKE events (TikTok) or from simulation (e.g. key L).
+        When current_likes >= likes_goal, triggers Meteor Shower and resets.
+
+        Args:
+            count: Number of likes to add (positive integer).
+        """
+        if count <= 0:
+            return
+        cap = max(self.likes_goal * 2, self.likes_goal + 500)
+        self.current_likes = min(self.current_likes + count, cap)
+        logger.debug(f"👍 Likes +{count} → {self.current_likes}/{self.likes_goal}")
+        if self.current_likes >= self.likes_goal:
+            self._trigger_meteor_shower()
+
+    def _update_meteors(self, dt: float) -> None:
+        """Update meteor positions, trails, and flag collisions (boost on touch)."""
+        from .config import FLAG_RADIUS
+        to_remove = []
+        for m in self.meteors:
+            m.x += m.vx * dt
+            m.y += m.vy * dt
+            m.trail.append((m.x, m.y, 255))
+            if len(m.trail) > m.max_trail:
+                m.trail.pop(0)
+            for i, (_, _, a) in enumerate(m.trail):
+                m.trail[i] = (m.trail[i][0], m.trail[i][1], max(0, a - 22))
+            m.trail = [(tx, ty, aa) for (tx, ty, aa) in m.trail if aa > 10]
+
+            # Collision with flags: boost country with random diamonds
+            for country, racer in self.physics_world.get_racers().items():
+                if country in m.hit_countries:
+                    continue
+                fx = float(racer.body.position.x)
+                fy = float(racer.body.position.y)
+                dist = math.hypot(m.x - fx, m.y - fy)
+                if dist < (FLAG_RADIUS + m.radius + 8):
+                    m.hit_countries.add(country)
+                    boost = random.randint(15, 45)
+                    self.physics_world.apply_gift_impulse(
+                        country=country, gift_name="Meteor", diamond_count=boost
+                    )
+                    self.emit_explosion(
+                        pos=(fx, fy), color=racer.color, count=6, power=0.6
+                    )
+                    self.spawn_floating_text(
+                        f"+{boost}", fx, fy, COLOR_TEXT_POSITIVE
+                    )
+            # Remove when off screen
+            if m.x < -50 or m.x > SCREEN_WIDTH + 50 or m.y < -50 or m.y > SCREEN_HEIGHT + 50:
+                to_remove.append(m)
+        for m in to_remove:
+            self.meteors.remove(m)
+
+    def _render_meteors(self) -> None:
+        """Draw meteors and their trails (bright head, fading trail)."""
+        for m in self.meteors:
+            for (tx, ty, alpha) in m.trail:
+                if alpha < 20:
+                    continue
+                k = alpha / 255.0
+                r, g, b = int(255 * k), int(200 * k), int(150 * k)
+                pygame.draw.circle(
+                    self.render_surface,
+                    (r, g, b),
+                    (int(tx), int(ty)),
+                    max(1, int(m.radius * 0.6)),
+                )
+            pygame.draw.circle(
+                self.render_surface,
+                (255, 220, 180),
+                (int(m.x), int(m.y)),
+                int(m.radius),
+            )
+            pygame.draw.circle(
+                self.render_surface,
+                (255, 255, 255),
+                (int(m.x), int(m.y)),
+                int(m.radius),
+                1,
+            )
+
     def _draw_permanent_cta(self, surface: pygame.Surface) -> None:
         """
         Draw permanent CTA banner at bottom center.
@@ -3328,6 +3552,9 @@ class GameEngine:
             SCREEN_HEIGHT,
             COUNTRY_SHORTCUTS,
             GAME_MODE,
+            CTA_BANNER_Y,
+            CTA_BANNER_HEIGHT,
+            CTA_BANNER_WIDTH,
         )
         
         if GAME_MODE != "COMMENT":
@@ -3351,35 +3578,35 @@ class GameEngine:
         ]
         text = messages[self.cta_message_index % len(messages)]
         
-        # Banner dimensions - top center, below "1st" header
-        banner_height = 62
-        banner_y = self.header_height + 4  # Right below 1st/leader display
-        banner_width = min(SCREEN_WIDTH - 20, 420)  # Max 420px, with margins
+        # Compact banner: higher and smaller (no overlap with likes bar or first lane)
+        banner_height = CTA_BANNER_HEIGHT
+        banner_y = CTA_BANNER_Y
+        banner_width = min(SCREEN_WIDTH - 20, CTA_BANNER_WIDTH)
         banner_x = (SCREEN_WIDTH - banner_width) // 2
         
         # Semi-transparent dark background (Alpha 150 per spec)
         banner = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
         banner.fill((0, 0, 0, 150))
-        pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=8)
+        pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
         
-        # Display font (Impact when available), neon yellow #FFFF00
+        # Display font: larger size (17) for legibility, black outline for contrast
         from .config import DISPLAY_FONT_NAMES
         font = None
         for fn in DISPLAY_FONT_NAMES:
             try:
-                font = pygame.font.SysFont(fn, 20, bold=True)
+                font = pygame.font.SysFont(fn, 17, bold=True)
                 break
             except Exception:
                 continue
         if font is None:
-            font = pygame.font.Font(None, 18)
+            font = pygame.font.Font(None, 16)
         neon_yellow = (255, 255, 0)  # #FFFF00
         words = text.split()
         lines = []
         current = ""
         for w in words:
             test = f"{current} {w}".strip() if current else w
-            if font.size(test)[0] <= banner_width - 16:
+            if font.size(test)[0] <= banner_width - 14:
                 current = test
             else:
                 if current:
@@ -3389,8 +3616,8 @@ class GameEngine:
             lines.append(current)
         lines = lines[:2]  # Max 2 lines
         
-        line_height = 22
-        y_offset = (banner_height - len(lines) * line_height) // 2 + 4
+        line_height = 20
+        y_offset = (banner_height - len(lines) * line_height) // 2 + 1
         for line in lines:
             text_surf = self._render_text_enhanced(
                 line,

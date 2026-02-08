@@ -328,9 +328,15 @@ FLOATING_TEXT_SPEED = 1.0              # Slow upward drift (pixels/frame)
 FLOATING_TEXT_LIFESPAN = 90            # Duration in frames (~1.5s at 60 FPS)
 FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
-# Game area margins (below CTA banner, above bottom legend)
-GAME_AREA_TOP = 100      # Below _draw_permanent_cta (header 30 + CTA 56 + gap)
-GAME_AREA_BOTTOM = 65    # Encima de la leyenda de combate
+# CTA banner and likes bar layout (no overlap with first lane)
+CTA_BANNER_Y = 30          # Right below header (header_height 30)
+CTA_BANNER_HEIGHT = 40     # Compact CTA box
+CTA_BANNER_WIDTH = 420     # Wide banner (max SCREEN_WIDTH - 20)
+LIKES_BAR_HEIGHT = 12      # Likes goal bar height
+LIKES_BAR_TOP_GAP = 20     # Used only when not COMMENT+RACING
+# Game area: below hint+label+bar (COMMENT+RACING: hint at CTA+42, label, bar; bar ends ~98)
+GAME_AREA_TOP = 114        # First lane starts here (bar ends ~98 + 4 gap)
+GAME_AREA_BOTTOM = 65      # Encima de la leyenda de combate
 
 # Keyword Binding para equipos
 COUNTRY_KEYWORDS = {
@@ -369,3 +375,7 @@ COUNTRY_KEYWORDS = {
 
 # Anti-spam para joins
 JOIN_NOTIFICATION_COOLDOWN = 5.0  # segundos entre notificaciones del mismo user
+
+# Likes goal bar (retention mechanic - Meteor Shower event)
+LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower
+LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)

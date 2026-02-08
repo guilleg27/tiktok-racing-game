@@ -13,6 +13,7 @@ class EventType(Enum):
     CONNECTION_STATUS = auto()
     JOIN = auto()          # User joins a team
     VOTE = auto()          # User votes for a country (COMMENT mode)
+    LIKE = auto()          # Stream like (retention / Meteor Shower bar)
     QUIT = auto()
 
 
@@ -58,6 +59,10 @@ class GameEvent:
         elif self.type == EventType.VOTE:
             country = self.content
             return f"[{time_str}] 🗳️ {self.username} votó por {country}"
+        
+        elif self.type == EventType.LIKE:
+            count = self.extra.get("count", 1) if self.extra else 1
+            return f"[{time_str}] 👍 {count} like(s) en el stream"
         
         elif self.type == EventType.CONNECTION_STATUS:
             return f"[{time_str}] ⚡ {self.content}"

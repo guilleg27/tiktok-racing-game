@@ -6,10 +6,11 @@ from typing import Optional
 
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import (
-    ConnectEvent, 
-    DisconnectEvent, 
+    ConnectEvent,
+    DisconnectEvent,
     GiftEvent,
     CommentEvent,
+    LikeEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -252,7 +253,30 @@ class TikTokManager:
                     
             except Exception as e:
                 logger.error(f"Error processing gift: {e}")
-        
+
+        @client.on(LikeEvent)
+        async def on_like(event: LikeEvent) -> None:
+            """Handle stream likes (retention bar / Meteor Shower goal). One event = likes received."""
+            try:
+                # Each LikeEvent typically means one or more likes; extract count if available
+                count = 1
+                if hasattr(event, "count") and event.count is not None:
+                    count = max(1, int(event.count))
+                elif hasattr(event, "_proto") and event._proto:
+                    count = getattr(event._proto, "count", None) or getattr(
+                        event._proto, "likeCount", 1
+                    )
+                    count = max(1, int(count))
+                await self.queue.put(GameEvent(
+                    type=EventType.LIKE,
+                    username="",
+                    content="",
+                    extra={"count": count},
+                ))
+                logger.debug(f"👍 Like event: count={count}")
+            except Exception as e:
+                logger.error(f"Error processing like: {e}")
+
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
             """Handle chat comments for keyword binding and votes."""
