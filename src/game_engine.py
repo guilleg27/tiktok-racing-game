@@ -529,6 +529,11 @@ class GameEngine:
         self.ticker_offset = 0.0
         self.ticker_speed = 40.0  # pixels per second
         
+        # 📢 CTA Banner - Smart rotation every 10 seconds
+        self.cta_last_rotation_time: float = 0.0
+        self.cta_message_index: int = 0
+        self.cta_rotation_interval = 8.0  # seconds (Smart CTA rotation)
+        
         # 🔥 COMBO SYSTEM
         self.combo_tracker: dict[str, list[float]] = {}  # {country: [timestamps]}
         self.combo_counts: dict[str, int] = {}  # {country: current_combo_count}
@@ -620,8 +625,9 @@ class GameEngine:
             self.clock = pygame.time.Clock()
             logger.info("🔧 Clock created")
             
-            # Try to load better fonts with fallback chain
-            font_names = ["Verdana", "Arial Black", "Arial"]
+            # Try to load display font with fallback chain (Impact = bold, distinctive)
+            from .config import DISPLAY_FONT_NAMES
+            font_names = DISPLAY_FONT_NAMES
             font_loaded = False
             
             for font_name in font_names:
@@ -1035,16 +1041,18 @@ class GameEngine:
                     diamond_count=diamond_count
                 )
                 
-                # Emit floating text feedback (respect global limit)
+                # Emit floating text feedback at top (respect global limit)
+                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
                 self.floating_texts.append(
                     FloatingText(
                         text=f"{gift_name} x{gift_count}",
-                        x=pos[0],
-                        y=pos[1] - 30,
+                        x=SCREEN_WIDTH / 2,
+                        y=FLOATING_TEXT_TOP_Y,
                         color=(255, 255, 255),
                         lifespan=40,
                         max_lifespan=40,
-                        font_size=20
+                        font_size=20,
+                        dy=-1.0
                     )
                 )
                 if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
@@ -1245,18 +1253,19 @@ class GameEngine:
                 diamond_count=COMMENT_POINTS_PER_MESSAGE
             )
             
-            # Optional: floating text feedback (limited)
+            # Optional: floating text feedback at top (limited)
             if len(self.floating_texts) < self.MAX_FLOATING_TEXTS // 2:
+                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
                 self.floating_texts.append(
                     FloatingText(
                         text=f"+{COMMENT_POINTS_PER_MESSAGE}",
-                        x=pos[0],
-                        y=pos[1] - 20,
+                        x=SCREEN_WIDTH / 2,
+                        y=FLOATING_TEXT_TOP_Y,
                         color=(0, 200, 255),  # Neon blue for votes
                         lifespan=30,
                         max_lifespan=30,
                         font_size=14,
-                        dy=-2.5  # Faster jump
+                        dy=-1.0
                     )
                 )
         
@@ -1635,36 +1644,31 @@ class GameEngine:
         if country not in self.physics_world.racers:
             return
         
-        racer = self.physics_world.racers[country]
-        x = racer.body.position.x
-        y = racer.body.position.y
-        
-        # 👑 GOLDEN CROWN floating text for new captain (larger, longer)
-        crown_text = f"👑 {new_captain}"
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
+        # Floating text for new captain at top
+        crown_text = f"@{new_captain}"
         self.floating_texts.append(
             FloatingText(
                 text=crown_text,
-                x=x,
-                y=y - 15,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=(255, 215, 0),  # Gold
                 lifespan=80,
                 max_lifespan=80,
-                font_size=18,  # Larger for emphasis
-                dy=-2.5  # Faster upward movement
+                font_size=18,
+                dy=-1.0
             )
         )
-        
-        # Secondary "NEW CAPTAIN" text with neon effect
         self.floating_texts.append(
             FloatingText(
                 text="NEW CAPTAIN!",
-                x=x,
-                y=y - 35,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y + 20,
                 color=(255, 255, 100),  # Bright yellow
                 lifespan=60,
                 max_lifespan=60,
                 font_size=14,
-                dy=-2.0
+                dy=-1.0
             )
         )
         
@@ -1709,8 +1713,15 @@ class GameEngine:
         # 🌟 Update leader glow animation
         self.leader_glow_time += dt
         
-        # 📜 Update ticker scroll
-        self.ticker_offset += self.ticker_speed * dt
+        # 📢 Rotate CTA banner every 8 seconds (COMMENT mode, RACING)
+        from .config import GAME_MODE
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+            now = time.time()
+            if self.cta_last_rotation_time == 0:
+                self.cta_last_rotation_time = now
+            elif now - self.cta_last_rotation_time >= self.cta_rotation_interval:
+                self.cta_last_rotation_time = now
+                self.cta_message_index = (self.cta_message_index + 1) % 4  # 4 message variants
         
         # 🌟 Update spotlight position with smooth interpolation
         if self.game_state == 'RACING':
@@ -1901,7 +1912,6 @@ class GameEngine:
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_header()
-        self._render_legend()  # Combat powers: fixed, faded (difuminado)
         self._render_leaderboard()
         
         # 🏁 Render FINAL STRETCH announcement
@@ -1916,8 +1926,8 @@ class GameEngine:
         import time as time_module
         
         if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
-            # Always show ticker at bottom
-            self._render_shortcuts_panel()
+            # Permanent CTA banner at bottom center (above TikTok comments area)
+            self._draw_permanent_cta(self.render_surface)
             
             # Show fade-out HUD overlay for first 3 seconds
             if self.race_start_time:
@@ -2169,7 +2179,7 @@ class GameEngine:
         label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
-            captain_text = f"★ {captain}"  # Added star symbol for visual appeal
+            captain_text = f"@{captain}"
 
             # Special highlight if just became captain
             if country in self.captain_change_timer:
@@ -2323,9 +2333,11 @@ class GameEngine:
         # Create surface with alpha for subtle lines
         lane_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         
+        start_x = self.physics_world.start_x
+        finish_x = self.physics_world.finish_line_x
         for i in range(1, self.physics_world.num_lanes):
             y = game_area_top + (i * lane_height)
-            pygame.draw.line(lane_surf, COLOR_LANE_LINE, (0, y), (SCREEN_WIDTH, y), 1)
+            pygame.draw.line(lane_surf, COLOR_LANE_LINE, (start_x, y), (finish_x, y), 1)
         
         self.render_surface.blit(lane_surf, (0, 0))
     
@@ -2600,7 +2612,7 @@ class GameEngine:
         title_rect = title_surf.get_rect(center=(panel_width // 2, padding + 6))
         legend_surf.blit(title_surf, title_rect)
 
-        # Three items: [icon] effect / gift name (vertical layout)
+        # Three items: [shape] effect / gift name (vertical layout) - no icons, shapes only
         items = [
             ("rosa", "+5m", "Rosa", (255, 150, 180)),
             ("pesa", "-10m", "Pesa", (190, 190, 200)),
@@ -2609,33 +2621,25 @@ class GameEngine:
 
         row_height = 22
         start_y = padding + 20
-        icon_size = 16
+        shape_size = 16
         eff_font = pygame.font.SysFont("Arial", 10, bold=True)
         name_font = pygame.font.SysFont("Arial", 8)
 
-        for i, (icon_type, effect, gift_name, color) in enumerate(items):
+        for i, (shape_type, effect, gift_name, color) in enumerate(items):
             y = start_y + i * row_height
-            icon_x = padding + 10
-            icon_y = y + 8
-            text_x = icon_x + icon_size + 6
+            shape_x = padding + 10
+            shape_y = y + 8
+            text_x = shape_x + shape_size + 6
+            r = shape_size // 2
 
-            # Draw icon (with fallback shapes)
-            icon = self.asset_manager.get_combat_icon(icon_type)
-            if icon:
-                # Scale icon to fit
-                scaled_icon = pygame.transform.smoothscale(icon, (icon_size, icon_size))
-                icon_rect = scaled_icon.get_rect(center=(icon_x, icon_y))
-                legend_surf.blit(scaled_icon, icon_rect)
-            else:
-                # Fallback: simple colored shapes
-                r = icon_size // 2
-                if icon_type == "rosa":
-                    pygame.draw.circle(legend_surf, color, (icon_x, icon_y), r)
-                elif icon_type == "pesa":
-                    pygame.draw.rect(legend_surf, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
-                else:  # hielo
-                    pts = [(icon_x, icon_y - r), (icon_x + r, icon_y), (icon_x, icon_y + r), (icon_x - r, icon_y)]
-                    pygame.draw.polygon(legend_surf, color, pts)
+            # Draw colored shape (no icons)
+            if shape_type == "rosa":
+                pygame.draw.circle(legend_surf, color, (shape_x, shape_y), r)
+            elif shape_type == "pesa":
+                pygame.draw.rect(legend_surf, color, (shape_x - r, shape_y - r, 2 * r, 2 * r))
+            else:  # hielo
+                pts = [(shape_x, shape_y - r), (shape_x + r, shape_y), (shape_x, shape_y + r), (shape_x - r, shape_y)]
+                pygame.draw.polygon(legend_surf, color, pts)
 
             # Effect text
             eff_surf = self._render_text_enhanced(
@@ -2645,12 +2649,12 @@ class GameEngine:
                 outline_color=(0, 0, 0),
                 outline_width=2,  # Strong outline for cross-platform visibility
             )
-            eff_rect = eff_surf.get_rect(midleft=(text_x, icon_y - 4))
+            eff_rect = eff_surf.get_rect(midleft=(text_x, shape_y - 4))
             legend_surf.blit(eff_surf, eff_rect)
 
             # Gift name (smaller, below effect)
             name_surf = name_font.render(gift_name, True, (180, 180, 190))
-            name_rect = name_surf.get_rect(midleft=(text_x, icon_y + 7))
+            name_rect = name_surf.get_rect(midleft=(text_x, shape_y + 7))
             legend_surf.blit(name_surf, name_rect)
 
         # Blit panel to screen
@@ -2938,13 +2942,19 @@ class GameEngine:
         y: float, 
         color: tuple[int, int, int]
     ) -> None:
-        """Spawn a floating text effect at the given position."""
-        from .config import FLOATING_TEXT_SPEED, FLOATING_TEXT_LIFESPAN, FLOATING_TEXT_FONT_SIZE
+        """Spawn a floating text effect at the top of the screen for better visibility."""
+        from .config import (
+            SCREEN_WIDTH,
+            FLOATING_TEXT_TOP_Y,
+            FLOATING_TEXT_SPEED,
+            FLOATING_TEXT_LIFESPAN,
+            FLOATING_TEXT_FONT_SIZE,
+        )
     
         floating_text = FloatingText(
             text=text,
-            x=x,
-            y=y,
+            x=SCREEN_WIDTH / 2,  # Center at top
+            y=FLOATING_TEXT_TOP_Y,
             color=color,
             dy=-FLOATING_TEXT_SPEED,
             lifespan=FLOATING_TEXT_LIFESPAN,
@@ -3303,6 +3313,97 @@ class GameEngine:
         # Optional: Add subtle gold borders at top and bottom
         pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
         pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
+    
+    def _draw_permanent_cta(self, surface: pygame.Surface) -> None:
+        """
+        Draw permanent CTA banner at bottom center.
+        Semi-transparent rect (Alpha 150), neon yellow text, rotates every 8 seconds.
+        Positioned above TikTok comments area for maximum visibility.
+        
+        Args:
+            surface: Target surface to draw on (typically render_surface).
+        """
+        from .config import (
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            COUNTRY_SHORTCUTS,
+            GAME_MODE,
+        )
+        
+        if GAME_MODE != "COMMENT":
+            return
+        
+        # Country to number mapping (inverse of COUNTRY_SHORTCUTS)
+        country_to_num = {v: k for k, v in COUNTRY_SHORTCUTS.items() if k.isdigit()}
+        
+        # Build Smart CTA message based on current index and race state
+        leader = self.physics_world.get_leader_country()
+        lb = self.physics_world.get_leaderboard()
+        second = lb[1][1] if len(lb) >= 2 else None
+        second_num = country_to_num.get(second, "?") if second else "?"
+        
+        messages = [
+            "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            f"¿Dónde están los de {second or '?'}? ¡Escribe {second_num} para remontar!" if second else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            f"¡{leader or '?'} está ganando! ¡Detenlo enviando un helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            "¡Escribe el número de tu país para sumar puntos!",
+            "Con regalos avanzas más rápido!",
+        ]
+        text = messages[self.cta_message_index % len(messages)]
+        
+        # Banner dimensions - top center, below "1st" header
+        banner_height = 62
+        banner_y = self.header_height + 4  # Right below 1st/leader display
+        banner_width = min(SCREEN_WIDTH - 20, 420)  # Max 420px, with margins
+        banner_x = (SCREEN_WIDTH - banner_width) // 2
+        
+        # Semi-transparent dark background (Alpha 150 per spec)
+        banner = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
+        banner.fill((0, 0, 0, 150))
+        pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=8)
+        
+        # Display font (Impact when available), neon yellow #FFFF00
+        from .config import DISPLAY_FONT_NAMES
+        font = None
+        for fn in DISPLAY_FONT_NAMES:
+            try:
+                font = pygame.font.SysFont(fn, 20, bold=True)
+                break
+            except Exception:
+                continue
+        if font is None:
+            font = pygame.font.Font(None, 18)
+        neon_yellow = (255, 255, 0)  # #FFFF00
+        words = text.split()
+        lines = []
+        current = ""
+        for w in words:
+            test = f"{current} {w}".strip() if current else w
+            if font.size(test)[0] <= banner_width - 16:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+        lines = lines[:2]  # Max 2 lines
+        
+        line_height = 22
+        y_offset = (banner_height - len(lines) * line_height) // 2 + 4
+        for line in lines:
+            text_surf = self._render_text_enhanced(
+                line,
+                font,
+                neon_yellow,
+                outline_color=(0, 0, 0),
+                outline_width=2,
+            )
+            rect = text_surf.get_rect(center=(banner_width // 2, y_offset + line_height // 2))
+            banner.blit(text_surf, rect)
+            y_offset += line_height
+        
+        surface.blit(banner, (banner_x, banner_y))
     
     def _render_race_start_hud(self, alpha: int) -> None:
         """
@@ -3981,6 +4082,18 @@ class GameEngine:
             self.spotlight_current_pos = (racer.body.position.x, racer.body.position.y)
             self.spotlight_target_pos = self.spotlight_current_pos
 
+        # Reset CTA banner to first message for new race
+        self.cta_last_rotation_time = 0.0
+        self.cta_message_index = 0
+        
+        # Spawn promotional message at top
+        self.spawn_floating_text(
+            "Con regalos avanzas más rápido!",
+            self.physics_world.start_x,
+            self.physics_world.game_area_top,
+            (255, 223, 0)  # Gold
+        )
+        
         # Reset combo system
         self.combo_tracker.clear()
         self.combo_counts.clear()
@@ -4071,25 +4184,19 @@ class GameEngine:
         else:
             color = (255, 200, 50)  # Yellow for regular combo
         
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
         combo_text = f"COMBO x{count}!"
-        
-        # Determine font size with elastic pulse effect (grows then shrinks)
-        # Larger size for milestone combos
-        if count % 5 == 0:  # Milestones: 5, 10, 15, 20...
-            base_font_size = 22
-        else:
-            base_font_size = 16
-        
+        base_font_size = 22 if count % 5 == 0 else 16
         self.floating_texts.append(
             FloatingText(
                 text=combo_text,
-                x=x,
-                y=y - 40,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=color,
                 lifespan=50,
                 max_lifespan=50,
                 font_size=base_font_size,
-                dy=-3.0  # Fast upward
+                dy=-1.0
             )
         )
         
@@ -4121,21 +4228,18 @@ class GameEngine:
         if country not in self.physics_world.racers:
             return
         
-        racer = self.physics_world.racers[country]
-        x = racer.body.position.x
-        y = racer.body.position.y
-        
-        # Big announcement
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
+        # Big announcement at top
         self.floating_texts.append(
             FloatingText(
-                text="🔥 ON FIRE! 🔥",
-                x=x,
-                y=y - 50,
+                text="ON FIRE!",
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=(255, 100, 0),
                 lifespan=80,
                 max_lifespan=80,
                 font_size=20,
-                dy=-2.0
+                dy=-1.0
             )
         )
         
@@ -4759,10 +4863,10 @@ class GameEngine:
         if captain and captain != "Unknown":
             # Check if this is a "king" (gift mode captain)
             if self.victory_was_gift_mode:
-                captain_text = f"KING OF THE TRACK: {captain}"
+                captain_text = f"KING OF THE TRACK: @{captain}"
                 captain_color = (255, 215, 0)  # Gold
             else:
-                captain_text = f"Top Voter: {captain}"
+                captain_text = f"Top Voter: @{captain}"
                 captain_color = (200, 200, 255)  # Light blue
             
             captain_surf = self._render_text_with_shadow(

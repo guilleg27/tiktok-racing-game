@@ -147,13 +147,13 @@ class PhysicsWorld:
             # Add to space
             self.space.add(body, shape)
             
-            # Add groove joint to constrain movement to X-axis only
+            # Add groove joint to constrain movement to X-axis only (within race zone)
             groove = pymunk.GrooveJoint(
                 self.space.static_body,
                 body,
-                (0, lane_y),               # Groove start
-                (SCREEN_WIDTH, lane_y),    # Groove end
-                (0, 0)                     # Body anchor
+                (self.start_x, lane_y),       # Groove start (safe zone)
+                (self.finish_line_x, lane_y), # Groove end (80% width)
+                (0, 0)                         # Body anchor
             )
             self.space.add(groove)
             
@@ -556,12 +556,12 @@ class PhysicsWorld:
             # Add back to space
             self.space.add(racer.body, racer.shape)
             
-            # Recreate groove joint
+            # Recreate groove joint (within race zone)
             groove = pymunk.GrooveJoint(
                 self.space.static_body,
                 racer.body,
-                (0, start_y),
-                (SCREEN_WIDTH, start_y),
+                (self.start_x, start_y),
+                (self.finish_line_x, start_y),
                 (0, 0)
             )
             self.space.add(groove)

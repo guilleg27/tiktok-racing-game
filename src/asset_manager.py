@@ -23,7 +23,6 @@ class AssetManager:
         self.assets_path = Path(resolved_path)
         self._cache: Dict[str, pygame.Surface] = {}
         self._missing_assets: set = set()
-        self.combat_icons = {}  # ← NUEVO: Inicializar diccionario de íconos de combate
         
         # Ensure assets directory exists (solo en desarrollo)
         try:
@@ -32,7 +31,6 @@ class AssetManager:
             pass  # En ejecutable empaquetado, la carpeta ya existe
         
         self._preload_assets()
-        self._load_combat_icons()  # ← NUEVO: Cargar íconos de combate
     
     def _preload_assets(self) -> None:
         """Precarga todas las imágenes PNG encontradas en assets/gifts/."""
@@ -221,44 +219,6 @@ class AssetManager:
         self._cache.clear()
         self._missing_assets.clear()
         self._preload_assets()
-        self._load_combat_icons()  # ← NUEVO: Recargar íconos de combate
-    
-    def _load_combat_icons(self) -> None:
-        """Load combat power icons from assets/icons/."""
-        # Usar resource_path para compatibilidad con PyInstaller
-        icons_path = resource_path(os.path.join("assets", "icons"))
-        icons_dir = Path(icons_path)
-        
-        if not icons_dir.exists():
-            logger.warning(f"Icons directory not found: {icons_dir}")
-            return
-        
-        # Mapeo: nombre interno -> nombre de archivo
-        icon_files = {
-            "rosa": "rose.png",
-            "pesa": "weight.png",
-            "hielo": "ice-cream.png"
-        }
-        
-        for icon_name, file_name in icon_files.items():
-            icon_path = icons_dir / file_name
-            
-            if icon_path.exists():
-                try:
-                    icon = pygame.image.load(str(icon_path))
-                    icon = pygame.transform.scale(icon, (20, 20))
-                    self.combat_icons[icon_name] = icon
-                    logger.info(f"✅ Loaded combat icon: {file_name} -> {icon_name}")
-                except Exception as e:
-                    logger.error(f"Failed to load icon {icon_path}: {e}")
-            else:
-                logger.warning(f"Icon not found: {icon_path}")
-        
-        logger.info(f"🎨 Loaded {len(self.combat_icons)} combat icons")
-    
-    def get_combat_icon(self, icon_name: str) -> Optional[pygame.Surface]:
-        """Get a combat icon by name."""
-        return self.combat_icons.get(icon_name)
     
     @property
     def loaded_count(self) -> int:

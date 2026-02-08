@@ -20,8 +20,9 @@ FPS = 60
 MAX_MESSAGES = 15
 MAX_BALLS = 50
 
-# Font settings - MEJORADOS para mejor legibilidad
-FONT_SIZE = 16           # Header y texto principal (era 14)
+# Font settings - Roboto for bold display, fallbacks for compatibility
+DISPLAY_FONT_NAMES = ["Roboto", "Arial Black", "Verdana", "Arial"]
+FONT_SIZE = 18           # Header y texto principal
 FONT_SIZE_SMALL = 12     # Mensajes y detalles (era 11)
 FONT_SIZE_MEDIUM = 14    # NUEVO - Para textos intermedios
 LINE_HEIGHT = 18         # Espaciado entre líneas (era 16)
@@ -51,10 +52,13 @@ BALL_ELASTICITY = 0.85
 WALL_FRICTION = 0.3
 WALL_ELASTICITY = 0.7
 
-# Race Configuration - Posiciones optimizadas
-RACE_START_X = 50        # Inicio de los carriles
-RACE_FINISH_X = 400      # Línea de meta
-FLAG_RADIUS = 12         # Flag radius (reduced to 12 for better fit in lanes)
+# Race Configuration - Safe zone for TikTok Live layout
+SAFE_ZONE_LEFT_MARGIN = 0.20   # 20% - flags must not touch left edge (TikTok comments)
+SAFE_ZONE_FINISH_RATIO = 0.90  # 90% - finish line avoids Share/Like buttons on right
+RACE_OFFSET_X = int(SCREEN_WIDTH * SAFE_ZONE_LEFT_MARGIN)   # Start after comments zone
+RACE_FINISH_X = int(SCREEN_WIDTH * SAFE_ZONE_FINISH_RATIO)  # Meta avoids right-side buttons
+RACE_START_X = RACE_OFFSET_X
+FLAG_RADIUS = 10         # Reduced for spacious, professional look in safe zone
 
 # Race countries (used for flag sprites) - Reduced to 8 for better gameplay
 RACE_COUNTRIES = [
@@ -303,18 +307,29 @@ VOL_COMBO = 0.6          # Slightly higher for combo emphasis
 VOL_FINAL_STRETCH = 0.7  # Louder for dramatic final stretch
 VOL_VICTORY = 0.65       # Victory fanfare volume
 
+# # Audio volume levels
+# VOL_BGM = 0    
+# VOL_SFX = 0
+
+# # NEW: Event-specific volume levels
+# VOL_VOTE = 0          
+# VOL_COMBO = 0         
+# VOL_FINAL_STRETCH = 0 
+# VOL_VICTORY = 0
+
 # Floating Text Colors (VFX)
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante
 COLOR_TEXT_NEGATIVE = (255, 0, 0)      # Rojo brillante
 COLOR_TEXT_FREEZE = (0, 200, 255)      # Celeste hielo
 
-# Floating Text Settings
-FLOATING_TEXT_SPEED = 2.0              # Velocidad hacia arriba (pixels/frame)
-FLOATING_TEXT_LIFESPAN = 60            # Duración en frames (1 segundo a 60 FPS)
-FLOATING_TEXT_FONT_SIZE = 16           # Tamaño de fuente para efectos
+# Floating Text Settings - Displayed towards center for better visibility
+FLOATING_TEXT_TOP_Y = 180              # Y position (towards vertical center)
+FLOATING_TEXT_SPEED = 1.0              # Slow upward drift (pixels/frame)
+FLOATING_TEXT_LIFESPAN = 90            # Duration in frames (~1.5s at 60 FPS)
+FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
-# Game area margins (para no tapar banderas con UI)
-GAME_AREA_TOP = 35       # Debajo del header
+# Game area margins (below CTA banner, above bottom legend)
+GAME_AREA_TOP = 100      # Below _draw_permanent_cta (header 30 + CTA 56 + gap)
 GAME_AREA_BOTTOM = 65    # Encima de la leyenda de combate
 
 # Keyword Binding para equipos
