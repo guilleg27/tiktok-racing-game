@@ -3357,7 +3357,7 @@ class GameEngine:
             subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
             self.render_surface.blit(subtitle_surface, subtitle_rect)
             
-            # Lista de países (2 columnas para compactar)
+            # Lista de países: 2 columnas × 4 filas (4 países por columna)
             item_font = pygame.font.SysFont("Arial", 12, bold=True)
             y_offset = box_y + 95
             line_height = 24
@@ -3367,9 +3367,9 @@ class GameEngine:
                 abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
                 color = self.physics_world.racers[country].color
                 
-                # Determinar columna (izquierda o derecha)
-                col = 0 if i <= 6 else 1
-                row = (i - 1) % 6
+                # 2 columns × 4 rows: left col = 1-4, right col = 5-8
+                col = (i - 1) // 4
+                row = (i - 1) % 4
                 
                 x_base = box_x + 20 + (col * col_width)
                 y_pos = y_offset + (row * line_height)
@@ -3413,7 +3413,7 @@ class GameEngine:
             subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
             self.render_surface.blit(subtitle_surface, subtitle_rect)
 
-        # Last winner info (if exists) - sin efecto de respiración
+        # Last winner info (if exists) - below country list to avoid overlap
         if self.last_winner:
             winner_font = pygame.font.SysFont("Arial", 14, bold=True)
             winner_text = f"Last winner: {self.last_winner}"
@@ -3424,14 +3424,21 @@ class GameEngine:
                 outline_color=(0, 0, 0),
                 outline_width=2
             )
-            winner_rect = winner_surface.get_rect(center=(box_x + box_width // 2, box_y + 140))
+            # In COMMENT mode place below the 4-row country list; in GIFT mode keep higher
+            if GAME_MODE == "COMMENT":
+                winner_y = box_y + 210
+                distance_y = box_y + 235
+            else:
+                winner_y = box_y + 140
+                distance_y = box_y + 165
+            winner_rect = winner_surface.get_rect(center=(box_x + box_width // 2, winner_y))
             self.render_surface.blit(winner_surface, winner_rect)
             
             # Distance info
             diamonds_approx = self._safe_int(self.last_winner_distance / 0.8, 0)
             distance_text = f"Distance: {diamonds_approx} diamonds"
             distance_surface = winner_font.render(distance_text, True, (200, 200, 200))
-            distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, box_y + 165))
+            distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, distance_y))
             self.render_surface.blit(distance_surface, distance_rect)
         
         # 🏆 Render Global Ranking Panel (futuristic style) only
@@ -3736,12 +3743,12 @@ class GameEngine:
         banner.fill((0, 0, 0, 150))
         pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
         
-        # Display font: larger size (17) for legibility, black outline for contrast
+        # Display font: regular weight (no bold) and thin outline for a lighter look
         from .config import DISPLAY_FONT_NAMES
         font = None
         for fn in DISPLAY_FONT_NAMES:
             try:
-                font = pygame.font.SysFont(fn, 17, bold=True)
+                font = pygame.font.SysFont(fn, 17, bold=False)
                 break
             except Exception:
                 continue
@@ -3771,7 +3778,7 @@ class GameEngine:
                 font,
                 neon_yellow,
                 outline_color=(0, 0, 0),
-                outline_width=2,
+                outline_width=1,
             )
             rect = text_surf.get_rect(center=(banner_width // 2, y_offset + line_height // 2))
             banner.blit(text_surf, rect)
