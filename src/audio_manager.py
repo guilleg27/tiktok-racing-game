@@ -46,7 +46,11 @@ class SoundType(Enum):
     # Utility SFX
     FREEZE = auto()         # Freeze effect sound
     COUNTDOWN = auto()      # Race countdown beeps
-    
+
+    # Likes goal / Meteor Shower (retention mechanic)
+    LIKES_CHARGE = auto()   # Bar full - charge-up sound before Meteor Shower
+    METEOR_EXPLOSION = auto()  # Meteor Shower event start
+
     # TTS placeholder
     TTS_WINNER = auto()     # Voice announcement for winners
 
@@ -133,6 +137,16 @@ class AudioManager:
         SoundType.COUNTDOWN: SoundConfig(
             file_path=os.path.join("assets", "audio", "countdown.wav"),
             volume=VOL_SFX * 0.9,
+            max_instances=1
+        ),
+        SoundType.LIKES_CHARGE: SoundConfig(
+            file_path=os.path.join("assets", "audio", "countdown.wav"),
+            volume=VOL_SFX * 0.8,
+            max_instances=1
+        ),
+        SoundType.METEOR_EXPLOSION: SoundConfig(
+            file_path=os.path.join("assets", "audio", "big_gift.wav"),
+            volume=VOL_SFX * 1.2,
             max_instances=1
         ),
     }

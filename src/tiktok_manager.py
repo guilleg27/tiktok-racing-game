@@ -2,14 +2,17 @@
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import (
-    ConnectEvent, 
-    DisconnectEvent, 
+    ConnectEvent,
+    DisconnectEvent,
     GiftEvent,
     CommentEvent,
+    LikeEvent,
+    JoinEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -247,109 +250,116 @@ class TikTokManager:
                         "count": int(count),
                         "diamond_count": diamond_count,
                     },
+                    created_at_sec=time.perf_counter(),
                 ))
-                logger.info(f"🎁 {username} envió {count}x {gift_name} ({diamond_count}💎)")
-                    
             except Exception as e:
                 logger.error(f"Error processing gift: {e}")
-        
+
+        @client.on(LikeEvent)
+        async def on_like(event: LikeEvent) -> None:
+            """Handle stream likes (retention bar / Meteor Shower goal). One event = likes received."""
+            try:
+                # Each LikeEvent typically means one or more likes; extract count if available
+                count = 1
+                if hasattr(event, "count") and event.count is not None:
+                    count = max(1, int(event.count))
+                elif hasattr(event, "_proto") and event._proto:
+                    count = getattr(event._proto, "count", None) or getattr(
+                        event._proto, "likeCount", 1
+                    )
+                    count = max(1, int(count))
+                await self.queue.put(GameEvent(
+                    type=EventType.LIKE,
+                    username="",
+                    content="",
+                    extra={"count": count},
+                    created_at_sec=time.perf_counter(),
+                ))
+            except Exception as e:
+                logger.error(f"Error processing like: {e}")
+
+        @client.on(JoinEvent)
+        async def on_join(event: JoinEvent) -> None:
+            """Handle viewer entering the livestream (Visual Welcome retention mechanic)."""
+            try:
+                username = self._extract_username(event)
+                await self.queue.put(GameEvent(
+                    type=EventType.JOIN,
+                    username=username,
+                    content="",
+                    extra={"room_join": True},
+                    created_at_sec=time.perf_counter(),
+                ))
+            except Exception as e:
+                logger.error(f"Error processing join: {e}")
+
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
-            """Handle chat comments for keyword binding and votes."""
-            logger.debug("📨 CommentEvent received!")
+            """Handle chat comments: minimal work, push to queue only (no heavy logs)."""
             try:
                 from .config import GAME_MODE, COUNTRY_SHORTCUTS
 
-                logger.debug(f"   GAME_MODE: {GAME_MODE}")
                 username = self._extract_username(event)
-                logger.debug(f"   Username extracted: {username}")
-
-                # Debug: log event attributes
-                logger.debug(f"   Event attributes: {[attr for attr in dir(event) if not attr.startswith('_')]}")
-                
-                # Get message content - try all possible methods
                 message = ""
-                if hasattr(event, 'comment') and event.comment:
+                if hasattr(event, "comment") and event.comment:
                     message = str(event.comment)
-                elif hasattr(event, '_proto') and event._proto:
-                    proto_comment = getattr(event._proto, 'content', None)
+                elif hasattr(event, "_proto") and event._proto:
+                    proto_comment = getattr(event._proto, "content", None)
                     if proto_comment:
                         message = str(proto_comment)
-                elif hasattr(event, 'text'):
+                elif hasattr(event, "text"):
                     message = str(event.text)
-                
+
                 if not message:
-                    logger.debug(f"Empty message from {username}")
                     return
-                
-                # Clean message for keyword matching - simple strip
+
+                created = time.perf_counter()
                 clean_message = message.strip()
-                
-                # TEMPORARY: Log all comments that look like votes for debugging
-                if clean_message.isdigit() or (len(clean_message) <= 4 and clean_message.isalpha()):
-                    logger.debug(f"🔍 Potential vote from {username}: '{message}' -> cleaned: '{clean_message}'")
-                
-                # COMMENT MODE: Check for country shortcuts (siglas/números)
+
                 if GAME_MODE == "COMMENT":
-                    # Check exact match (case-insensitive for text, exact for numbers)
                     for shortcut, country in COUNTRY_SHORTCUTS.items():
-                        # For numbers, compare directly (exact match)
                         if shortcut.isdigit():
                             if shortcut == clean_message:
                                 await self.queue.put(GameEvent(
                                     type=EventType.VOTE,
                                     username=username,
                                     content=country,
-                                    extra={
-                                        "shortcut": shortcut,
-                                        "original_message": message,
-                                    },
+                                    extra={"shortcut": shortcut, "original_message": message},
+                                    created_at_sec=created,
                                 ))
-                                logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
                                 return
                         else:
-                            # For text, compare case-insensitive
                             if shortcut.lower() == clean_message.lower():
                                 await self.queue.put(GameEvent(
                                     type=EventType.VOTE,
                                     username=username,
                                     content=country,
-                                    extra={
-                                        "shortcut": shortcut,
-                                        "original_message": message,
-                                    },
+                                    extra={"shortcut": shortcut, "original_message": message},
+                                    created_at_sec=created,
                                 ))
-                                logger.info(f"🗳️ {username} voted for {country} ({shortcut})")
                                 return
-                    
-                    # If we get here and it looked like a vote, log why it didn't match
-                    if clean_message.isdigit() or (len(clean_message) <= 4 and clean_message.isalpha()):
-                        logger.warning(f"⚠️ '{clean_message}' from {username} didn't match any shortcut. Available: {list(COUNTRY_SHORTCUTS.keys())[:15]}...")
-                
-                # GIFT MODE: Check for country keywords (for JOIN)
+
                 if GAME_MODE == "GIFT":
                     from .config import COUNTRY_KEYWORDS
                     for keyword, country in COUNTRY_KEYWORDS.items():
                         if keyword in clean_message:
-                            # Send JOIN event
                             await self.queue.put(GameEvent(
                                 type=EventType.JOIN,
                                 username=username,
                                 content=country,
-                                extra={"keyword": keyword, "original_message": message}
+                                extra={"keyword": keyword, "original_message": message},
+                                created_at_sec=created,
                             ))
-                            logger.info(f"🏁 {username} wants to join {country} (keyword: {keyword})")
-                            break  # Solo el primer match
-                        
-                # Also send regular COMMENT event for chat display
+                            break
+
                 await self.queue.put(GameEvent(
                     type=EventType.COMMENT,
                     username=username,
-                    content=message
+                    content=message,
+                    created_at_sec=created,
                 ))
-                
             except Exception as e:
-                logger.error(f"❌ Error processing comment: {e}", exc_info=True)
+                logger.error(f"Error processing comment: {e}", exc_info=True)
     
     async def _push_status(self, state: ConnectionState, message: str) -> None:
         self._connection_state = state
@@ -357,6 +367,7 @@ class TikTokManager:
             type=EventType.CONNECTION_STATUS,
             content=message,
             extra={"state": state},
+            created_at_sec=time.perf_counter(),
         ))
     
     def _start_reconnect(self) -> None:
@@ -396,7 +407,7 @@ class TikTokManager:
                 ConnectionState.FAILED,
                 "No se pudo reconectar"
             )
-            await self.queue.put(GameEvent(type=EventType.QUIT))
+            await self.queue.put(GameEvent(type=EventType.QUIT, created_at_sec=time.perf_counter()))
     
     async def start(self) -> None:
         self._running = True

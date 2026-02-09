@@ -13,6 +13,7 @@ import signal
 import sys
 import traceback
 import os
+import time
 import ssl
 import certifi
 from datetime import datetime
@@ -309,26 +310,36 @@ class Application:
                 logger.error(f"Error during cleanup: {cleanup_error}")
             logger.info("Cleanup complete")
     
+    async def _frame_sleep(self, target_dt: float, frame_start: float) -> None:
+        """Non-blocking frame pacing: yield to event loop instead of time.sleep to keep TikTok responsive."""
+        elapsed = time.perf_counter() - frame_start
+        remaining = target_dt - elapsed
+        if remaining > 0.001:
+            await asyncio.sleep(remaining)
+    
     async def _game_loop(self) -> None:
-        """Main game loop with bulletproof error handling."""
-        dt = 1.0 / FPS
+        """Main game loop: yield first so asyncio can process TikTok packets, then update/render, then async sleep."""
+        target_dt = 1.0 / FPS
         consecutive_errors = 0
         max_consecutive_errors = 10
+        last_time = time.perf_counter()
         
         while self.game_engine.running and not self._shutdown_event.is_set():
+            await asyncio.sleep(0)
+            frame_start = time.perf_counter()
+            dt = frame_start - last_time
+            last_time = frame_start
+            if dt <= 0 or dt > 0.5:
+                dt = target_dt
+            dt = min(dt, target_dt * 2)
+            
             try:
                 self.game_engine.handle_pygame_events()
-                
-                # Intentar conectar si fue solicitado
                 await self._try_connect()
-                
                 await self.game_engine.process_events()
                 self.game_engine.update(dt)
                 self.game_engine.render()
-                
-                # Reset error counter on successful iteration
                 consecutive_errors = 0
-                
             except KeyboardInterrupt:
                 logger.info("Game loop interrupted by user")
                 self.game_engine.running = False
@@ -337,16 +348,12 @@ class Application:
                 consecutive_errors += 1
                 error_traceback = traceback.format_exc()
                 logger.exception("Error in game loop iteration: %s", e)
-                
-                # If too many consecutive errors, it's a fatal crash
                 if consecutive_errors >= max_consecutive_errors:
                     logger.critical(f"Fatal: {max_consecutive_errors} consecutive errors - shutting down")
                     crash_file = _save_crash_report(e, error_traceback)
                     _show_error_dialog(e, crash_file)
                     self.game_engine.running = False
                     break
-                
-                # Critical errors that should stop the game
                 if "pygame" in str(e).lower() or "surface" in str(e).lower() or "display" in str(e).lower():
                     logger.critical("Critical pygame/display error - shutting down")
                     crash_file = _save_crash_report(e, error_traceback)
@@ -354,7 +361,7 @@ class Application:
                     self.game_engine.running = False
                     break
             
-            await asyncio.sleep(dt)
+            await self._frame_sleep(target_dt, frame_start)
     
     async def _cleanup(self) -> None:
         logger.info("Cleaning up...")

@@ -63,6 +63,7 @@ open dist/TikTokLiveBot.app  # macOS
 | Y | Large random gift |
 | 1/2/3 | Vote country 1/2/3 (COMMENT mode) or Rosa/Pesa/Helado (GIFT mode) |
 | J | User joins team |
+| W | Simulate room join (Visual Welcome) |
 | F | Trigger ON FIRE combo |
 | G | Activate Final Stretch |
 | V | Victory sequence |

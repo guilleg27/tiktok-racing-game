@@ -71,45 +71,47 @@ def build():
     
     print(f"📦 Assets detectados: assets/")
 
-    # IMPORTANTE: Copiar solo las subcarpetas necesarias de assets
-    # Excluir venv y otras carpetas innecesarias
+    # Required asset subfolders. fonts and images (e.g. flags) must exist for visuals.
+    # backgrounds is optional (fallback to procedural star field).
+    asset_subfolders = ['audio', 'gifts', 'sounds', 'fonts', 'images', 'icons', 'backgrounds']
     assets_to_include = []
-    for subfolder in ['audio', 'gifts', 'sounds']:
+    for subfolder in asset_subfolders:
         subfolder_path = os.path.join('assets', subfolder)
         if os.path.isdir(subfolder_path):
             assets_to_include.extend([
                 "--add-data", f"{subfolder_path}{separator}assets/{subfolder}"
             ])
-            print(f"  ✓ Incluyendo: {subfolder_path}")
+            print(f"  ✓ Incluyendo: {subfolder_path} -> assets/{subfolder}")
+        elif subfolder in ('fonts', 'images'):
+            print(f"  ⚠ No encontrada: {subfolder_path} (crea la carpeta si el juego la usa)")
 
-    # Construir comando PyInstaller
+    # Build PyInstaller command. --onedir keeps Windows/macOS runs smooth and output clear.
     cmd = [
         "pyinstaller",
         "--name", "TikTokRacingGoLive",
-        "--windowed",  # No mostrar consola
-        "--onedir",    # Carpeta en lugar de archivo único (más confiable)
-        "--clean",     # Limpiar caché
-        "--noconfirm", # No pedir confirmación
-        
-        # Agregar subcarpetas específicas de assets (excluyendo venv)
+        "--windowed",  # No console window
+        "--onedir",    # Output as folder (more reliable than --onefile on Windows/macOS)
+        "--clean",
+        "--noconfirm",
+
         *assets_to_include,
-        
-        # Excluir explícitamente cosas que no queremos
+
+        # Exclude only what we don't need (tkinter is required for login dialog)
         "--exclude-module", "matplotlib",
-        "--exclude-module", "tkinter",
         "--exclude-module", "PIL",
-        
-        # Hidden imports (módulos que PyInstaller podría no detectar)
+
+        # Hidden imports so PyInstaller bundles them
         "--hidden-import", "pygame",
         "--hidden-import", "pymunk",
         "--hidden-import", "aiosqlite",
         "--hidden-import", "TikTokLive",
         "--hidden-import", "TikTokLive.events",
-        
-        # Icono si existe
+        "--hidden-import", "pyttsx3.drivers",
+        "--hidden-import", "pyttsx3.drivers.sapi5",   # Windows TTS
+        "--hidden-import", "pyttsx3.drivers.nsss",    # macOS TTS
+
         *icon_arg,
-        
-        # Archivo principal
+
         "main.py"
     ]
 
@@ -123,14 +125,17 @@ def build():
         
         print("\n✅ Build completado exitosamente!")
         
+        dist_dir = os.path.join("dist", "TikTokRacingGoLive")
         if system == "Darwin":
-            print(f"📍 Ejecutable en: dist/TikTokRacingGoLive.app")
-            print("\n💡 Para ejecutar desde terminal:")
+            app_path = os.path.join("dist", "TikTokRacingGoLive.app")
+            print(f"📍 Salida (--onedir): {app_path}")
+            print("\n💡 Ejecutar:")
             print("   open dist/TikTokRacingGoLive.app")
-            print("\n💡 O directamente:")
-            print("   dist/TikTokRacingGoLive.app/Contents/MacOS/TikTokRacingGoLive")
+            print("   o: dist/TikTokRacingGoLive.app/Contents/MacOS/TikTokRacingGoLive")
         else:
-            print(f"📍 Ejecutable en: dist\\TikTokRacingGoLive\\TikTokRacingGoLive.exe")
+            exe_path = os.path.join(dist_dir, "TikTokRacingGoLive.exe")
+            print(f"📍 Salida (--onedir): {os.path.normpath(dist_dir)}")
+            print(f"   Ejecutable: {os.path.normpath(exe_path)}")
             
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Error durante el build:")

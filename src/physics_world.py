@@ -12,6 +12,7 @@ from .config import (
     SCREEN_WIDTH,
     SCREEN_HEIGHT,
     PHYSICS_STEPS,
+    PHYSICS_FIXED_HZ,
     WALL_THICKNESS,
     WALL_FRICTION,
     WALL_ELASTICITY,
@@ -147,13 +148,13 @@ class PhysicsWorld:
             # Add to space
             self.space.add(body, shape)
             
-            # Add groove joint to constrain movement to X-axis only
+            # Add groove joint to constrain movement to X-axis only (within race zone)
             groove = pymunk.GrooveJoint(
                 self.space.static_body,
                 body,
-                (0, lane_y),               # Groove start
-                (SCREEN_WIDTH, lane_y),    # Groove end
-                (0, 0)                     # Body anchor
+                (self.start_x, lane_y),       # Groove start (safe zone)
+                (self.finish_line_x, lane_y), # Groove end (80% width)
+                (0, 0)                         # Body anchor
             )
             self.space.add(groove)
             
@@ -317,13 +318,11 @@ class PhysicsWorld:
             
                 # Only interpolate if there's a difference (reduced threshold for smoother motion)
                 if abs(target_x - current_x) > 0.05:  # Reduced from 0.1 for more responsive movement
-                    # Smooth Lerp with adaptive factor based on distance
+                    # Smooth Lerp with adaptive factor; scale by dt so motion is identical at 60Hz and 120Hz
                     distance = abs(target_x - current_x)
-                    # Use slightly higher factor for larger distances (faster catch-up)
                     adaptive_factor = min(self.smoothing_factor * (1.0 + distance / 100.0), 0.25)
-                    # Lerp formula: current += (target - current) * factor
-                    new_x = current_x + (target_x - current_x) * adaptive_factor
-                
+                    step = adaptive_factor * min(1.0, dt * PHYSICS_FIXED_HZ)
+                    new_x = current_x + (target_x - current_x) * step
                     # Update body position (visual position)
                     racer.body.position = (new_x, racer.body.position.y)
             
@@ -556,12 +555,12 @@ class PhysicsWorld:
             # Add back to space
             self.space.add(racer.body, racer.shape)
             
-            # Recreate groove joint
+            # Recreate groove joint (within race zone)
             groove = pymunk.GrooveJoint(
                 self.space.static_body,
                 racer.body,
-                (0, start_y),
-                (SCREEN_WIDTH, start_y),
+                (self.start_x, start_y),
+                (self.finish_line_x, start_y),
                 (0, 0)
             )
             self.space.add(groove)

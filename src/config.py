@@ -20,8 +20,9 @@ FPS = 60
 MAX_MESSAGES = 15
 MAX_BALLS = 50
 
-# Font settings - MEJORADOS para mejor legibilidad
-FONT_SIZE = 16           # Header y texto principal (era 14)
+# Font settings - Roboto for bold display, fallbacks for compatibility
+DISPLAY_FONT_NAMES = ["Roboto", "Arial Black", "Verdana", "Arial"]
+FONT_SIZE = 18           # Header y texto principal
 FONT_SIZE_SMALL = 12     # Mensajes y detalles (era 11)
 FONT_SIZE_MEDIUM = 14    # NUEVO - Para textos intermedios
 LINE_HEIGHT = 18         # Espaciado entre líneas (era 16)
@@ -42,6 +43,8 @@ ACTUAL_HEIGHT = SCREEN_HEIGHT + (GAME_MARGIN * 2)
 # Physics settings (Pymunk)
 GRAVITY = (0, 900)
 PHYSICS_STEPS = 10
+# Fixed timestep for physics (Hz). Independent of render FPS for consistent simulation.
+PHYSICS_FIXED_HZ = 60
 
 # Ball physics - more organic movement
 BALL_FRICTION = 0.4
@@ -51,10 +54,13 @@ BALL_ELASTICITY = 0.85
 WALL_FRICTION = 0.3
 WALL_ELASTICITY = 0.7
 
-# Race Configuration - Posiciones optimizadas
-RACE_START_X = 50        # Inicio de los carriles
-RACE_FINISH_X = 400      # Línea de meta
-FLAG_RADIUS = 12         # Flag radius (reduced to 12 for better fit in lanes)
+# Race Configuration - Safe zone for TikTok Live layout
+SAFE_ZONE_LEFT_MARGIN = 0.20   # 20% - flags must not touch left edge (TikTok comments)
+SAFE_ZONE_FINISH_RATIO = 0.90  # 90% - finish line avoids Share/Like buttons on right
+RACE_OFFSET_X = int(SCREEN_WIDTH * SAFE_ZONE_LEFT_MARGIN)   # Start after comments zone
+RACE_FINISH_X = int(SCREEN_WIDTH * SAFE_ZONE_FINISH_RATIO)  # Meta avoids right-side buttons
+RACE_START_X = RACE_OFFSET_X
+FLAG_RADIUS = 10         # Reduced for spacious, professional look in safe zone
 
 # Race countries (used for flag sprites) - Reduced to 8 for better gameplay
 RACE_COUNTRIES = [
@@ -104,6 +110,12 @@ COUNTRY_ABBREV = {
 # Comment mode settings
 COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
 COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
+
+# Ghost Participation System (keeps race alive during inactivity)
+GHOST_INACTIVITY_THRESHOLD = 12.0  # Seconds without real activity before ghosts activate
+GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
+GHOST_VOTE_INTERVAL_MAX = 7.0  # Max seconds between ghost votes
+GHOST_DISABLE_AFTER_REAL_ACTIVITY = 20.0  # Seconds to disable ghosts after real event
 
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
@@ -303,19 +315,37 @@ VOL_COMBO = 0.6          # Slightly higher for combo emphasis
 VOL_FINAL_STRETCH = 0.7  # Louder for dramatic final stretch
 VOL_VICTORY = 0.65       # Victory fanfare volume
 
+# # Audio volume levels
+# VOL_BGM = 0    
+# VOL_SFX = 0
+
+# # NEW: Event-specific volume levels
+# VOL_VOTE = 0          
+# VOL_COMBO = 0         
+# VOL_FINAL_STRETCH = 0 
+# VOL_VICTORY = 0
+
 # Floating Text Colors (VFX)
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante
 COLOR_TEXT_NEGATIVE = (255, 0, 0)      # Rojo brillante
 COLOR_TEXT_FREEZE = (0, 200, 255)      # Celeste hielo
+COLOR_NEON_CYAN = (0, 255, 255)        # Neon cyan for welcome messages
 
-# Floating Text Settings
-FLOATING_TEXT_SPEED = 2.0              # Velocidad hacia arriba (pixels/frame)
-FLOATING_TEXT_LIFESPAN = 60            # Duración en frames (1 segundo a 60 FPS)
-FLOATING_TEXT_FONT_SIZE = 16           # Tamaño de fuente para efectos
+# Floating Text Settings - Displayed towards center for better visibility
+FLOATING_TEXT_TOP_Y = 180              # Y position (towards vertical center)
+FLOATING_TEXT_SPEED = 1.0              # Slow upward drift (pixels/frame)
+FLOATING_TEXT_LIFESPAN = 90            # Duration in frames (~1.5s at 60 FPS)
+FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
-# Game area margins (para no tapar banderas con UI)
-GAME_AREA_TOP = 35       # Debajo del header
-GAME_AREA_BOTTOM = 65    # Encima de la leyenda de combate
+# CTA banner and likes bar layout (no overlap with first lane)
+CTA_BANNER_Y = 30          # Right below header (header_height 30)
+CTA_BANNER_HEIGHT = 40     # Compact CTA box
+CTA_BANNER_WIDTH = 420     # Wide banner (max SCREEN_WIDTH - 20)
+LIKES_BAR_HEIGHT = 12      # Likes goal bar height
+LIKES_BAR_TOP_GAP = 20     # Used only when not COMMENT+RACING
+# Game area: below hint+label+bar (COMMENT+RACING: hint at CTA+42, label, bar; bar ends ~98)
+GAME_AREA_TOP = 114        # First lane starts here (bar ends ~98 + 4 gap)
+GAME_AREA_BOTTOM = 65      # Encima de la leyenda de combate
 
 # Keyword Binding para equipos
 COUNTRY_KEYWORDS = {
@@ -354,3 +384,14 @@ COUNTRY_KEYWORDS = {
 
 # Anti-spam para joins
 JOIN_NOTIFICATION_COOLDOWN = 5.0  # segundos entre notificaciones del mismo user
+
+# Visual Welcome (room join) - retention mechanic
+WELCOME_COOLDOWN = 1.5           # seconds between welcome messages
+MAX_SIMULTANEOUS_WELCOMES = 2    # max welcome messages on screen at once
+WELCOME_TEXT_Y = 380             # Y position: vertical center (SCREEN_HEIGHT/2 ≈ 410)
+WELCOME_TEXT_LIFESPAN = 120      # frames (~2s at 60 FPS)
+WELCOME_FONT_SIZE = 16           # Compact, non-intrusive
+
+# Likes goal bar (retention mechanic - Meteor Shower event)
+LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower
+LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)

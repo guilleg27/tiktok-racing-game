@@ -72,7 +72,11 @@ class ScreenShaker:
     def big_impact_shake(self) -> None:
         """Trigger a large shake for big gifts or victories."""
         self.shake(intensity=15.0, duration=0.5, decay=True)
-    
+
+    def meteor_shake(self) -> None:
+        """Trigger an intense shake for Meteor Shower event."""
+        self.shake(intensity=22.0, duration=0.7, decay=True)
+
     def register_vote(self) -> bool:
         """
         Register a vote and check for vote burst.

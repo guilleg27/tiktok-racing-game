@@ -8,7 +8,7 @@ import random
 import time
 import sys
 from .cloud_manager import CloudManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pygame
 import pymunk
@@ -38,6 +38,7 @@ from .config import (
     COLOR_STATUS_RECONNECTING,
     AUTO_STRESS_TEST,
     STRESS_TEST_INTERVAL,
+    PHYSICS_FIXED_HZ,
     # Floating Text (NEW)
     COLOR_TEXT_POSITIVE,
     COLOR_TEXT_NEGATIVE,
@@ -45,6 +46,8 @@ from .config import (
     FLOATING_TEXT_SPEED,
     FLOATING_TEXT_LIFESPAN,
     FLOATING_TEXT_FONT_SIZE,
+    LIKES_GOAL_INITIAL,
+    LIKES_SIMULATED_PER_KEY,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -152,6 +155,30 @@ class ConfettiParticle:
     lifetime: float
 
 
+@dataclass
+class Meteor:
+    """
+    Meteor for the Meteor Shower event. Crosses the screen with a trail.
+    When it touches a flag, applies a random speed boost to that country.
+    
+    Attributes:
+        x, y: Current position
+        vx, vy: Velocity (pixels per second)
+        radius: Visual radius
+        trail: List of (x, y, alpha) for trail segments
+        max_trail: Max trail segments to keep
+        hit_countries: Set of countries already boosted by this meteor (avoid double hit)
+    """
+    x: float
+    y: float
+    vx: float
+    vy: float
+    radius: float
+    trail: list = field(default_factory=list)
+    max_trail: int = 12
+    hit_countries: set = field(default_factory=set)
+
+
 class ParticleManager:
     """
     Manages particle systems: trails and explosions.
@@ -249,6 +276,8 @@ class FloatingText:
     lifespan: int = 60         # Frames restantes
     max_lifespan: int = 60     # Para calcular alpha
     font_size: int = 16
+    is_welcome: bool = False   # Tag for welcome messages (cooldown counting)
+    pulse_ratio: float = 0.15  # Fraction of life for elastic pulse (welcome uses 0.4)
     
     def update(self) -> None:
         """Update position and lifespan."""
@@ -264,12 +293,13 @@ class FloatingText:
         alpha = int(255 * (self.lifespan / self.max_lifespan)) if self.max_lifespan > 0 else 0
         alpha = max(0, min(255, alpha))
         
-        # 🎯 ELASTIC PULSE: Scale up then down in first 10 frames
+        # 🎯 ELASTIC PULSE: Scale up then down (configurable ratio)
         life_progress = 1.0 - (self.lifespan / self.max_lifespan) if self.max_lifespan > 0 else 1.0
+        ratio = getattr(self, "pulse_ratio", 0.15)
         
-        if life_progress < 0.15:  # First 15% of life
+        if life_progress < ratio and ratio > 0:  # Configurable pulse duration
             # Elastic overshoot: grows to 1.3x then settles to 1.0x
-            t = life_progress / 0.15  # Normalize to 0-1
+            t = life_progress / ratio  # Normalize to 0-1
             # Elastic formula: overshoot then bounce back
             scale = 1.0 + 0.4 * math.sin(t * math.pi) * (1 - t * 0.5)
         else:
@@ -502,6 +532,7 @@ class GameEngine:
         self.slow_motion_factor = 0.5  # dt multiplier (0.5 = half speed)
         self.confetti_particles: list = []  # Confetti system
         self.max_confetti = 150
+        self._confetti_pool: list[ConfettiParticle] = []  # Object pool to reduce GC pressure
         self.victory_banner_scale = 0.0  # For entrance animation
         self.victory_winner_captain: Optional[str] = None  # Captain who won
         self.victory_was_gift_mode = False  # Track if gift mode for monetization message
@@ -528,6 +559,17 @@ class GameEngine:
         # 📜 Ticker system for shortcuts (bottom scrolling bar)
         self.ticker_offset = 0.0
         self.ticker_speed = 40.0  # pixels per second
+
+        # 👍 Likes goal bar (retention - Meteor Shower event)
+        self.current_likes = 0
+        self.likes_goal = LIKES_GOAL_INITIAL
+        self.meteors: list[Meteor] = []
+        self._likes_charge_played = False  # Play charge sound once when bar fills
+        
+        # 📢 CTA Banner - Smart rotation every 10 seconds
+        self.cta_last_rotation_time: float = 0.0
+        self.cta_message_index: int = 0
+        self.cta_rotation_interval = 8.0  # seconds (Smart CTA rotation)
         
         # 🔥 COMBO SYSTEM
         self.combo_tracker: dict[str, list[float]] = {}  # {country: [timestamps]}
@@ -542,6 +584,7 @@ class GameEngine:
         self.motion_trail_history: dict[str, list[tuple[float, float]]] = {}  # Position history
         self.max_trail_segments = 20  # Max segments per country
         self.trail_segment_lifetime = 0.3  # Seconds before fade
+        self._motion_trail_segment_pool: list[MotionTrailSegment] = []  # Object pool to avoid GC spikes
         
         # ✨ COMBO FLASHES (flash effect on combo level up)
         self.combo_flashes: list[ComboFlash] = []
@@ -569,6 +612,11 @@ class GameEngine:
         self._stress_test_active = False
         self._stress_test_last_inject: float = 0.0
         
+        # 👻 Ghost Participation System (keeps race alive during inactivity)
+        self.last_activity_time: float = time.time()
+        self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
+        self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
+        
         # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
         self._esc_quit_requested = False
         self._esc_quit_time: float = 0.0
@@ -586,6 +634,11 @@ class GameEngine:
         self._last_fps_check_time = time.time()
         self._last_frame_time = time.time()
         
+        # Fixed timestep for physics (independent of render FPS)
+        self._fixed_dt = 1.0 / PHYSICS_FIXED_HZ
+        self._physics_accumulator = 0.0
+        self._max_physics_catchup = self._fixed_dt * 5  # Cap to avoid spiral of death
+        
     
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
@@ -593,7 +646,9 @@ class GameEngine:
         
         try:
             logger.info("🔧 Starting pygame init...")
-            
+            # Windows: high-DPI display before any SDL init to avoid blurry window
+            if sys.platform == "win32":
+                os.environ.setdefault("SDL_VIDEO_HIGHDPI_DISPLAY", "1")
             # Center the window on screen
             os.environ['SDL_VIDEO_WINDOW_POS'] = 'center'
             logger.info("🔧 SDL_VIDEO_WINDOW_POS set")
@@ -610,8 +665,11 @@ class GameEngine:
             pygame.display.set_caption("TikTokGameWindow")
             logger.info("🔧 Caption set")
             
-            # Use fixed window size
-            self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT))
+            # Display flags: double buffer + hardware surface for smooth 60 FPS; SCALED for high-DPI
+            flags = pygame.DOUBLEBUF | pygame.HWSURFACE
+            if hasattr(pygame, "SCALED"):
+                flags |= pygame.SCALED
+            self.screen = pygame.display.set_mode((ACTUAL_WIDTH, ACTUAL_HEIGHT), flags)
             logger.info("🔧 Display mode set")
             
             # Render to inner game surface, then blit with margin
@@ -620,8 +678,9 @@ class GameEngine:
             self.clock = pygame.time.Clock()
             logger.info("🔧 Clock created")
             
-            # Try to load better fonts with fallback chain
-            font_names = ["Verdana", "Arial Black", "Arial"]
+            # Try to load display font with fallback chain (Impact = bold, distinctive)
+            from .config import DISPLAY_FONT_NAMES
+            font_names = DISPLAY_FONT_NAMES
             font_loaded = False
             
             for font_name in font_names:
@@ -950,17 +1009,79 @@ class GameEngine:
         for text in self.floating_texts:
             text.draw(self.render_surface)
     
+    def _on_real_activity(self) -> None:
+        """
+        Reset ghost participation timers when real user activity occurs.
+        Called on GIFT, VOTE, LIKE, COMMENT, JOIN events.
+        """
+        from .config import GHOST_DISABLE_AFTER_REAL_ACTIVITY
+        now = time.time()
+        self.last_activity_time = now
+        self.ghost_bots_disabled_until = now + GHOST_DISABLE_AFTER_REAL_ACTIVITY
+    
+    def _update_ghost_participation(self) -> None:
+        """
+        Generate ghost votes when inactive to keep the race alive.
+        Ghost votes apply impulse only (no FloatingText, no username).
+        Disabled for GHOST_DISABLE_AFTER_REAL_ACTIVITY seconds after real events.
+        """
+        from .config import (
+            RACE_COUNTRIES,
+            COMMENT_POINTS_PER_MESSAGE,
+            GHOST_INACTIVITY_THRESHOLD,
+            GHOST_VOTE_INTERVAL_MIN,
+            GHOST_VOTE_INTERVAL_MAX,
+        )
+        if self.game_state != 'RACING':
+            return
+        if self.physics_world.race_finished:
+            return
+        now = time.time()
+        if now < self.ghost_bots_disabled_until:
+            return
+        if now - self.last_activity_time < GHOST_INACTIVITY_THRESHOLD:
+            return
+        if now < self.ghost_next_vote_time:
+            return
+        countries = [c for c in RACE_COUNTRIES if c in self.physics_world.racers]
+        if not countries:
+            return
+        country = random.choice(countries)
+        success = self.physics_world.apply_gift_impulse(
+            country=country,
+            gift_name="Ghost",
+            diamond_count=COMMENT_POINTS_PER_MESSAGE
+        )
+        if success:
+            self.ghost_next_vote_time = now + random.uniform(
+                GHOST_VOTE_INTERVAL_MIN, GHOST_VOTE_INTERVAL_MAX
+            )
+    
+    # Max events to process per frame to avoid backlog causing a single frame to stall
+    MAX_EVENTS_PER_FRAME = 200
+    LAG_WARNING_THRESHOLD_SEC = 0.5
+
     async def process_events(self) -> None:
-        """Process all available events from the queue."""
-        while True:
+        """Drain the event queue in one frame (burst handling) to avoid backlog on vote spam."""
+        processed = 0
+        while processed < self.MAX_EVENTS_PER_FRAME:
             try:
                 event = self.queue.get_nowait()
                 await self._handle_event(event)
+                processed += 1
             except asyncio.QueueEmpty:
                 break
-    
+
     async def _handle_event(self, event: GameEvent) -> None:
-        """Handle a single event from the queue."""
+        """Handle a single event from the queue. Logs input latency when above threshold."""
+        if event.created_at_sec is not None:
+            latency_sec = time.perf_counter() - event.created_at_sec
+            if latency_sec > self.LAG_WARNING_THRESHOLD_SEC:
+                logger.warning(
+                    "[LAG] Event latency detected: %.0fms (type=%s)",
+                    latency_sec * 1000,
+                    event.type.name,
+                )
         if event.type == EventType.QUIT:
             logger.info("🚪 Exiting: EventType.QUIT (e.g. TikTok disconnect)")
             self.running = False
@@ -976,6 +1097,7 @@ class GameEngine:
                 self.messages = self.messages[-MAX_MESSAGES:]
         
         elif event.type == EventType.GIFT:
+            self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer regalo
             if self.game_state == 'IDLE':
                 self._transition_to_racing()
@@ -1035,16 +1157,18 @@ class GameEngine:
                     diamond_count=diamond_count
                 )
                 
-                # Emit floating text feedback (respect global limit)
+                # Emit floating text feedback at top (respect global limit)
+                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
                 self.floating_texts.append(
                     FloatingText(
                         text=f"{gift_name} x{gift_count}",
-                        x=pos[0],
-                        y=pos[1] - 30,
+                        x=SCREEN_WIDTH / 2,
+                        y=FLOATING_TEXT_TOP_Y,
                         color=(255, 255, 255),
                         lifespan=40,
                         max_lifespan=40,
-                        font_size=20
+                        font_size=20,
+                        dy=-1.0
                     )
                 )
                 if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
@@ -1118,7 +1242,17 @@ class GameEngine:
         elif event.type == EventType.VOTE:
             await self._handle_vote_event(event)
         
+        elif event.type == EventType.LIKE:
+            self._on_real_activity()
+            count = (event.extra or {}).get("count", 1)
+            self.add_likes(max(1, int(count)))
+            msg = event.format_message()
+            self.messages.append((msg, event.type))
+            if len(self.messages) > MAX_MESSAGES:
+                self.messages = self.messages[-MAX_MESSAGES:]
+        
         elif event.type == EventType.COMMENT:
+            self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
             if self.game_state == 'IDLE':
                 logger.info(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
@@ -1132,7 +1266,13 @@ class GameEngine:
                 self.messages = self.messages[-MAX_MESSAGES:]
     
     async def _handle_join_event(self, event: GameEvent) -> None:
-        """Handle user joining a team via keyword."""
+        """Handle user joining: either room join (welcome) or team join (keyword)."""
+        # Room join: viewer entered the livestream → Visual Welcome
+        if event.extra and event.extra.get("room_join"):
+            self._handle_user_join(event.username)
+            return
+
+        # Team join: user joins a country via keyword
         username = event.username
         requested_country = event.content
         keyword = event.extra.get("keyword", "") if event.extra else ""
@@ -1164,6 +1304,7 @@ class GameEngine:
         # Assign user to team
         self.user_assignments[username] = requested_country
         self.last_join_time[username] = current_time
+        self._on_real_activity()
         
         # Visual feedback: floating text on the country's lane
         racer = self.physics_world.racers[requested_country]
@@ -1177,6 +1318,65 @@ class GameEngine:
         )
         
         logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
+
+    def _handle_user_join(self, username: str) -> None:
+        """
+        Handle viewer entering the livestream with Visual Welcome effect.
+        Spawns a welcome FloatingText with Neon Cyan, Elastic Pulse, centered above flags.
+        Cooldown: max 2 simultaneous welcomes, 1.5s between spawns.
+        """
+        import time
+        from .config import (
+            SCREEN_WIDTH,
+            WELCOME_COOLDOWN,
+            MAX_SIMULTANEOUS_WELCOMES,
+            WELCOME_TEXT_Y,
+            WELCOME_TEXT_LIFESPAN,
+            WELCOME_FONT_SIZE,
+            COLOR_NEON_CYAN,
+        )
+
+        current_time = time.time()
+
+        # Count active welcome messages
+        active_welcomes = sum(
+            1 for t in self.floating_texts
+            if getattr(t, "is_welcome", False) and t.is_alive
+        )
+
+        # Cooldown: max 2 simultaneous OR 1.5s between spawns
+        last_welcome = getattr(self, "_last_welcome_spawn_time", 0.0)
+        if active_welcomes >= MAX_SIMULTANEOUS_WELCOMES:
+            return
+        if current_time - last_welcome < WELCOME_COOLDOWN:
+            return
+
+        self._last_welcome_spawn_time = current_time
+
+        # Spawn welcome FloatingText: center, above flags, Neon Cyan, Elastic Pulse
+        welcome_text = FloatingText(
+            text=f"WELCOME @{username}!",
+            x=SCREEN_WIDTH / 2,
+            y=WELCOME_TEXT_Y,
+            color=COLOR_NEON_CYAN,
+            dy=0.0,  # Stay in place (no float up)
+            lifespan=WELCOME_TEXT_LIFESPAN,
+            max_lifespan=WELCOME_TEXT_LIFESPAN,
+            font_size=WELCOME_FONT_SIZE,
+            is_welcome=True,
+            pulse_ratio=0.4,  # Longer elastic pulse for welcome (40% of life)
+        )
+        self.floating_texts.append(welcome_text)
+
+        if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+            # Remove oldest non-welcome first to preserve welcomes
+            non_welcome = [t for t in self.floating_texts if not getattr(t, "is_welcome", False)]
+            if len(non_welcome) > 0:
+                self.floating_texts.remove(non_welcome[0])
+            else:
+                self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
+        logger.debug(f"👋 Welcome displayed for @{username}")
     
     async def _handle_vote_event(self, event: GameEvent) -> None:
         """
@@ -1206,6 +1406,7 @@ class GameEngine:
             if time_since_last < COMMENT_COOLDOWN:
                 return  # Too soon, ignore
         
+        self._on_real_activity()
         # Update last vote time
         if not hasattr(self, '_last_vote_time'):
             self._last_vote_time = {}
@@ -1245,18 +1446,19 @@ class GameEngine:
                 diamond_count=COMMENT_POINTS_PER_MESSAGE
             )
             
-            # Optional: floating text feedback (limited)
+            # Optional: floating text feedback at top (limited)
             if len(self.floating_texts) < self.MAX_FLOATING_TEXTS // 2:
+                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
                 self.floating_texts.append(
                     FloatingText(
                         text=f"+{COMMENT_POINTS_PER_MESSAGE}",
-                        x=pos[0],
-                        y=pos[1] - 20,
+                        x=SCREEN_WIDTH / 2,
+                        y=FLOATING_TEXT_TOP_Y,
                         color=(0, 200, 255),  # Neon blue for votes
                         lifespan=30,
                         max_lifespan=30,
                         font_size=14,
-                        dy=-2.5  # Faster jump
+                        dy=-1.0
                     )
                 )
         
@@ -1461,7 +1663,25 @@ class GameEngine:
                                     COLOR_TEXT_FREEZE
                                 )
     
-                elif event.key == pygame.K_j:  # J = Test JoinEvent
+                elif event.key == pygame.K_w:  # W = Test Room Join (Visual Welcome)
+                    test_usernames = [
+                        "NewViewer", "StreamFan", "Lurker", "Curious", "JustJoined"
+                    ]
+                    base_username = random.choice(test_usernames)
+                    unique_username = f"{base_username}{int(time.time() * 1000) % 1000}"
+                    room_join_event = GameEvent(
+                        type=EventType.JOIN,
+                        username=unique_username,
+                        content="",
+                        extra={"room_join": True},
+                    )
+                    try:
+                        self.queue.put_nowait(room_join_event)
+                        logger.info(f"TEST ROOM JOIN (Welcome): @{unique_username}")
+                    except Exception as e:
+                        logger.error(f"Error adding test room join: {e}")
+
+                elif event.key == pygame.K_j:  # J = Test JoinEvent (team join)
                     # Generate random test join
                     # Random username with timestamp to make it unique
                     test_usernames = [
@@ -1565,6 +1785,9 @@ class GameEngine:
                         self._trigger_victory_sequence(winner, captain)
                         logger.info(f"🏆 TEST VICTORY: {winner} wins! Captain: {captain}")
 
+                elif event.key == pygame.K_l:  # L = Simulate likes (retention bar; production uses real LIKE events)
+                    self.add_likes(LIKES_SIMULATED_PER_KEY)
+
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
         Update session points and check for new captain.
@@ -1635,36 +1858,31 @@ class GameEngine:
         if country not in self.physics_world.racers:
             return
         
-        racer = self.physics_world.racers[country]
-        x = racer.body.position.x
-        y = racer.body.position.y
-        
-        # 👑 GOLDEN CROWN floating text for new captain (larger, longer)
-        crown_text = f"👑 {new_captain}"
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
+        # Floating text for new captain at top
+        crown_text = f"@{new_captain}"
         self.floating_texts.append(
             FloatingText(
                 text=crown_text,
-                x=x,
-                y=y - 15,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=(255, 215, 0),  # Gold
                 lifespan=80,
                 max_lifespan=80,
-                font_size=18,  # Larger for emphasis
-                dy=-2.5  # Faster upward movement
+                font_size=18,
+                dy=-1.0
             )
         )
-        
-        # Secondary "NEW CAPTAIN" text with neon effect
         self.floating_texts.append(
             FloatingText(
                 text="NEW CAPTAIN!",
-                x=x,
-                y=y - 35,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y + 20,
                 color=(255, 255, 100),  # Bright yellow
                 lifespan=60,
                 max_lifespan=60,
                 font_size=14,
-                dy=-2.0
+                dy=-1.0
             )
         )
         
@@ -1695,9 +1913,18 @@ class GameEngine:
             if self.captain_change_timer[country] <= 0:
                 del self.captain_change_timer[country]
 
-        self.physics_world.update(dt)
+        # Fixed timestep physics: run at PHYSICS_FIXED_HZ regardless of render FPS
+        self._physics_accumulator += dt
+        if self._physics_accumulator > self._max_physics_catchup:
+            self._physics_accumulator = self._max_physics_catchup
+        while self._physics_accumulator >= self._fixed_dt:
+            self.physics_world.update(self._fixed_dt)
+            self._physics_accumulator -= self._fixed_dt
         self.update_particles(dt)
         self.update_floating_texts()
+        
+        # 👻 Ghost Participation: generate ghost votes when inactive
+        self._update_ghost_participation()
         
         # 🌌 Update parallax background
         if self.background_manager:
@@ -1705,12 +1932,22 @@ class GameEngine:
         
         # 🎥 Update screen shaker
         self.screen_shaker.update(dt)
+
+        # 🌠 Update Meteor Shower meteors (position, trail, flag collisions)
+        self._update_meteors(dt)
         
         # 🌟 Update leader glow animation
         self.leader_glow_time += dt
         
-        # 📜 Update ticker scroll
-        self.ticker_offset += self.ticker_speed * dt
+        # 📢 Rotate CTA banner every 8 seconds (COMMENT mode, RACING)
+        from .config import GAME_MODE
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+            now = time.time()
+            if self.cta_last_rotation_time == 0:
+                self.cta_last_rotation_time = now
+            elif now - self.cta_last_rotation_time >= self.cta_rotation_interval:
+                self.cta_last_rotation_time = now
+                self.cta_message_index = (self.cta_message_index + 1) % 4  # 4 message variants
         
         # 🌟 Update spotlight position with smooth interpolation
         if self.game_state == 'RACING':
@@ -1898,10 +2135,15 @@ class GameEngine:
         self._render_trails()  # Render trails before particles (behind)
         self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
         self._render_particles()
+        self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_header()
-        self._render_legend()  # Combat powers: fixed, faded (difuminado)
+        # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
+        from .config import GAME_MODE
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+            self._draw_permanent_cta(self.render_surface)
+        self._render_likes_bar()
         self._render_leaderboard()
         
         # 🏁 Render FINAL STRETCH announcement
@@ -1912,12 +2154,9 @@ class GameEngine:
             self._render_stress_test_banner()
         
         # Render shortcuts panel in COMMENT mode (solo durante RACING)
-        from .config import GAME_MODE
         import time as time_module
         
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
-            # Always show ticker at bottom
-            self._render_shortcuts_panel()
+        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
             
             # Show fade-out HUD overlay for first 3 seconds
             if self.race_start_time:
@@ -1946,26 +2185,16 @@ class GameEngine:
         blit_x = GAME_MARGIN + int(shake_offset[0])
         blit_y = GAME_MARGIN + int(shake_offset[1])
         
-        # 🎬 Apply subtle camera zoom during victory sequence
-        # Note: Instead of cropping (which can cut off content), we scale the whole
-        # surface slightly and center it, creating a subtle "push in" effect
+        # 🎬 Apply subtle camera zoom during victory sequence (scale() not smoothscale for 60 FPS)
         if self.victory_sequence_active and self.victory_zoom_level > 1.01:
-            zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom to avoid cutting too much
-            
-            # Scale up the surface
+            zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom
             scaled_width = int(SCREEN_WIDTH * zoom)
             scaled_height = int(SCREEN_HEIGHT * zoom)
-            
-            scaled_surface = pygame.transform.smoothscale(
-                self.render_surface, 
-                (scaled_width, scaled_height)
+            scaled_surface = pygame.transform.scale(
+                self.render_surface, (scaled_width, scaled_height)
             )
-            
-            # Center the scaled surface (this creates a zoom-in effect)
             offset_x = (scaled_width - SCREEN_WIDTH) // 2
             offset_y = (scaled_height - SCREEN_HEIGHT) // 2
-            
-            # Blit with offset to center
             self.screen.blit(scaled_surface, (blit_x - offset_x, blit_y - offset_y))
         else:
             self.screen.blit(self.render_surface, (blit_x, blit_y))
@@ -2169,7 +2398,7 @@ class GameEngine:
         label_y = flag_y + 25  # Below flag (reduced from 35 since no country name)
         
         if captain:
-            captain_text = f"★ {captain}"  # Added star symbol for visual appeal
+            captain_text = f"@{captain}"
 
             # Special highlight if just became captain
             if country in self.captain_change_timer:
@@ -2323,9 +2552,11 @@ class GameEngine:
         # Create surface with alpha for subtle lines
         lane_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         
+        start_x = self.physics_world.start_x
+        finish_x = self.physics_world.finish_line_x
         for i in range(1, self.physics_world.num_lanes):
             y = game_area_top + (i * lane_height)
-            pygame.draw.line(lane_surf, COLOR_LANE_LINE, (0, y), (SCREEN_WIDTH, y), 1)
+            pygame.draw.line(lane_surf, COLOR_LANE_LINE, (start_x, y), (finish_x, y), 1)
         
         self.render_surface.blit(lane_surf, (0, 0))
     
@@ -2600,7 +2831,7 @@ class GameEngine:
         title_rect = title_surf.get_rect(center=(panel_width // 2, padding + 6))
         legend_surf.blit(title_surf, title_rect)
 
-        # Three items: [icon] effect / gift name (vertical layout)
+        # Three items: [shape] effect / gift name (vertical layout) - no icons, shapes only
         items = [
             ("rosa", "+5m", "Rosa", (255, 150, 180)),
             ("pesa", "-10m", "Pesa", (190, 190, 200)),
@@ -2609,33 +2840,25 @@ class GameEngine:
 
         row_height = 22
         start_y = padding + 20
-        icon_size = 16
+        shape_size = 16
         eff_font = pygame.font.SysFont("Arial", 10, bold=True)
         name_font = pygame.font.SysFont("Arial", 8)
 
-        for i, (icon_type, effect, gift_name, color) in enumerate(items):
+        for i, (shape_type, effect, gift_name, color) in enumerate(items):
             y = start_y + i * row_height
-            icon_x = padding + 10
-            icon_y = y + 8
-            text_x = icon_x + icon_size + 6
+            shape_x = padding + 10
+            shape_y = y + 8
+            text_x = shape_x + shape_size + 6
+            r = shape_size // 2
 
-            # Draw icon (with fallback shapes)
-            icon = self.asset_manager.get_combat_icon(icon_type)
-            if icon:
-                # Scale icon to fit
-                scaled_icon = pygame.transform.smoothscale(icon, (icon_size, icon_size))
-                icon_rect = scaled_icon.get_rect(center=(icon_x, icon_y))
-                legend_surf.blit(scaled_icon, icon_rect)
-            else:
-                # Fallback: simple colored shapes
-                r = icon_size // 2
-                if icon_type == "rosa":
-                    pygame.draw.circle(legend_surf, color, (icon_x, icon_y), r)
-                elif icon_type == "pesa":
-                    pygame.draw.rect(legend_surf, color, (icon_x - r, icon_y - r, 2 * r, 2 * r))
-                else:  # hielo
-                    pts = [(icon_x, icon_y - r), (icon_x + r, icon_y), (icon_x, icon_y + r), (icon_x - r, icon_y)]
-                    pygame.draw.polygon(legend_surf, color, pts)
+            # Draw colored shape (no icons)
+            if shape_type == "rosa":
+                pygame.draw.circle(legend_surf, color, (shape_x, shape_y), r)
+            elif shape_type == "pesa":
+                pygame.draw.rect(legend_surf, color, (shape_x - r, shape_y - r, 2 * r, 2 * r))
+            else:  # hielo
+                pts = [(shape_x, shape_y - r), (shape_x + r, shape_y), (shape_x, shape_y + r), (shape_x - r, shape_y)]
+                pygame.draw.polygon(legend_surf, color, pts)
 
             # Effect text
             eff_surf = self._render_text_enhanced(
@@ -2645,12 +2868,12 @@ class GameEngine:
                 outline_color=(0, 0, 0),
                 outline_width=2,  # Strong outline for cross-platform visibility
             )
-            eff_rect = eff_surf.get_rect(midleft=(text_x, icon_y - 4))
+            eff_rect = eff_surf.get_rect(midleft=(text_x, shape_y - 4))
             legend_surf.blit(eff_surf, eff_rect)
 
             # Gift name (smaller, below effect)
             name_surf = name_font.render(gift_name, True, (180, 180, 190))
-            name_rect = name_surf.get_rect(midleft=(text_x, icon_y + 7))
+            name_rect = name_surf.get_rect(midleft=(text_x, shape_y + 7))
             legend_surf.blit(name_surf, name_rect)
 
         # Blit panel to screen
@@ -2938,13 +3161,19 @@ class GameEngine:
         y: float, 
         color: tuple[int, int, int]
     ) -> None:
-        """Spawn a floating text effect at the given position."""
-        from .config import FLOATING_TEXT_SPEED, FLOATING_TEXT_LIFESPAN, FLOATING_TEXT_FONT_SIZE
+        """Spawn a floating text effect at the top of the screen for better visibility."""
+        from .config import (
+            SCREEN_WIDTH,
+            FLOATING_TEXT_TOP_Y,
+            FLOATING_TEXT_SPEED,
+            FLOATING_TEXT_LIFESPAN,
+            FLOATING_TEXT_FONT_SIZE,
+        )
     
         floating_text = FloatingText(
             text=text,
-            x=x,
-            y=y,
+            x=SCREEN_WIDTH / 2,  # Center at top
+            y=FLOATING_TEXT_TOP_Y,
             color=color,
             dy=-FLOATING_TEXT_SPEED,
             lifespan=FLOATING_TEXT_LIFESPAN,
@@ -3128,10 +3357,10 @@ class GameEngine:
             outline_width=3
         )
         
-        # Aplicar escala de "respiración" a la superficie
+        # Apply breathe scale (scale() not smoothscale to avoid stutter in render loop)
         scaled_width = int(title_surface.get_width() * breathe_scale)
         scaled_height = int(title_surface.get_height() * breathe_scale)
-        title_surface = pygame.transform.smoothscale(title_surface, (scaled_width, scaled_height))
+        title_surface = pygame.transform.scale(title_surface, (scaled_width, scaled_height))
         
         # Apply pulsating alpha
         title_alpha_surface = pygame.Surface(title_surface.get_size(), pygame.SRCALPHA)
@@ -3151,7 +3380,7 @@ class GameEngine:
             subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
             self.render_surface.blit(subtitle_surface, subtitle_rect)
             
-            # Lista de países (2 columnas para compactar)
+            # Lista de países: 2 columnas × 4 filas (4 países por columna)
             item_font = pygame.font.SysFont("Arial", 12, bold=True)
             y_offset = box_y + 95
             line_height = 24
@@ -3161,9 +3390,9 @@ class GameEngine:
                 abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
                 color = self.physics_world.racers[country].color
                 
-                # Determinar columna (izquierda o derecha)
-                col = 0 if i <= 6 else 1
-                row = (i - 1) % 6
+                # 2 columns × 4 rows: left col = 1-4, right col = 5-8
+                col = (i - 1) // 4
+                row = (i - 1) % 4
                 
                 x_base = box_x + 20 + (col * col_width)
                 y_pos = y_offset + (row * line_height)
@@ -3193,10 +3422,10 @@ class GameEngine:
                 outline_width=3
             )
             
-            # Aplicar escala de "respiración"
+            # Apply breathe scale (scale() not smoothscale for performance)
             scaled_width = int(subtitle_surface.get_width() * breathe_scale)
             scaled_height = int(subtitle_surface.get_height() * breathe_scale)
-            subtitle_surface = pygame.transform.smoothscale(subtitle_surface, (scaled_width, scaled_height))
+            subtitle_surface = pygame.transform.scale(subtitle_surface, (scaled_width, scaled_height))
             
             # Apply pulsating alpha
             subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
@@ -3207,7 +3436,7 @@ class GameEngine:
             subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
             self.render_surface.blit(subtitle_surface, subtitle_rect)
 
-        # Last winner info (if exists) - sin efecto de respiración
+        # Last winner info (if exists) - below country list to avoid overlap
         if self.last_winner:
             winner_font = pygame.font.SysFont("Arial", 14, bold=True)
             winner_text = f"Last winner: {self.last_winner}"
@@ -3218,14 +3447,21 @@ class GameEngine:
                 outline_color=(0, 0, 0),
                 outline_width=2
             )
-            winner_rect = winner_surface.get_rect(center=(box_x + box_width // 2, box_y + 140))
+            # In COMMENT mode place below the 4-row country list; in GIFT mode keep higher
+            if GAME_MODE == "COMMENT":
+                winner_y = box_y + 210
+                distance_y = box_y + 235
+            else:
+                winner_y = box_y + 140
+                distance_y = box_y + 165
+            winner_rect = winner_surface.get_rect(center=(box_x + box_width // 2, winner_y))
             self.render_surface.blit(winner_surface, winner_rect)
             
             # Distance info
             diamonds_approx = self._safe_int(self.last_winner_distance / 0.8, 0)
             distance_text = f"Distance: {diamonds_approx} diamonds"
             distance_surface = winner_font.render(distance_text, True, (200, 200, 200))
-            distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, box_y + 165))
+            distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, distance_y))
             self.render_surface.blit(distance_surface, distance_rect)
         
         # 🏆 Render Global Ranking Panel (futuristic style) only
@@ -3303,6 +3539,275 @@ class GameEngine:
         # Optional: Add subtle gold borders at top and bottom
         pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
         pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
+
+    def _render_likes_bar(self) -> None:
+        """
+        Render the likes goal bar below the CTA banner and above the first lane.
+        TikTok-style gradient (orange to pink), thin and elegant.
+        Text: 'PRÓXIMO EVENTO: LLUVIA DE METEORITOS (actual/meta)'.
+        """
+        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT, LIKES_BAR_TOP_GAP
+        bar_height = LIKES_BAR_HEIGHT
+        bar_margin_x = 20
+        bar_width = SCREEN_WIDTH - 2 * bar_margin_x
+        progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
+
+        hint_font = pygame.font.SysFont("Arial", 10)
+        hint = "Dale like o tap en vivo para llenar la barra"
+        hint_surf = hint_font.render(hint, True, (240, 240, 240))
+        label_font = pygame.font.SysFont("Arial", 10, bold=True)
+        label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
+        label_surf = label_font.render(label, True, (255, 255, 255))
+
+        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
+            # Hint strictly below CTA so it is never covered. Order: hint → label → bar.
+            hint_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
+            label_y = hint_y + hint_surf.get_height() + 2
+            bar_y = label_y + label_surf.get_height() + 2
+        else:
+            bar_y = self.header_height + 2
+            label_y = bar_y - 2 - label_surf.get_height()
+            hint_y = label_y - 1 - hint_surf.get_height()
+            if hint_y < self.header_height:
+                hint_y = bar_y + bar_height + 2
+
+        # Background track (dark)
+        track_rect = pygame.Rect(bar_margin_x, bar_y, bar_width, bar_height)
+        track_surf = pygame.Surface((bar_width, bar_height), pygame.SRCALPHA)
+        track_surf.fill((30, 30, 40, 220))
+        self.render_surface.blit(track_surf, (bar_margin_x, bar_y))
+        if progress > 0.001:
+            fill_w = max(2, int(bar_width * progress))
+            fill_surf = pygame.Surface((fill_w, bar_height), pygame.SRCALPHA)
+            for i in range(fill_w):
+                t = i / fill_w
+                r, g, b = 255, int(120 * (1 - t) + 105 * t), int(50 * (1 - t) + 180 * t)
+                pygame.draw.line(fill_surf, (r, g, b, 255), (i, 0), (i, bar_height))
+            self.render_surface.blit(fill_surf, (bar_margin_x, bar_y))
+        pygame.draw.rect(self.render_surface, (255, 180, 180, 120), track_rect, 1)
+
+        self.render_surface.blit(hint_surf, (int(bar_margin_x), int(hint_y)))
+        self.render_surface.blit(label_surf, (int(bar_margin_x), int(label_y)))
+
+    def _trigger_meteor_shower(self) -> None:
+        """
+        Trigger Meteor Shower event: intense screen shake, 5 meteors with trails,
+        each meteor that touches a flag gives a random boost. Then double goal and reset likes.
+        """
+        # Audio: charge when bar is full, then explosion
+        if SoundType.LIKES_CHARGE in getattr(self.audio_manager, '_sound_cache', {}):
+            self.audio_manager.play_sfx(SoundType.LIKES_CHARGE)
+        if SoundType.METEOR_EXPLOSION in getattr(self.audio_manager, '_sound_cache', {}):
+            self.audio_manager.play_sfx(SoundType.METEOR_EXPLOSION)
+        self.screen_shaker.meteor_shake()
+        self.current_likes = 0
+        self.likes_goal = min(self.likes_goal * 2, 10000)
+        self._likes_charge_played = False
+
+        # Spawn 15 meteors: cross screen quickly with trail
+        self.meteors.clear()
+        for _ in range(15):
+            # Start from random edge, move across screen
+            side = random.choice(["left", "right", "top"])
+            if side == "left":
+                x = -20
+                y = random.uniform(80, SCREEN_HEIGHT - 80)
+                vx = random.uniform(350, 550)
+                vy = random.uniform(-80, 80)
+            elif side == "right":
+                x = SCREEN_WIDTH + 20
+                y = random.uniform(80, SCREEN_HEIGHT - 80)
+                vx = random.uniform(-550, -350)
+                vy = random.uniform(-80, 80)
+            else:
+                x = random.uniform(0, SCREEN_WIDTH)
+                y = -20
+                vx = random.uniform(-100, 100)
+                vy = random.uniform(350, 550)
+            self.meteors.append(Meteor(
+                x=x, y=y, vx=vx, vy=vy,
+                radius=random.uniform(6, 10),
+                trail=[], max_trail=12, hit_countries=set()
+            ))
+        logger.info("🌠 Meteor Shower triggered! Goal now %s", self.likes_goal)
+
+    def add_likes(self, count: int) -> None:
+        """
+        Add likes to the retention bar (Meteor Shower goal).
+        Call this from real LIKE events (TikTok) or from simulation (e.g. key L).
+        When current_likes >= likes_goal, triggers Meteor Shower and resets.
+
+        Args:
+            count: Number of likes to add (positive integer).
+        """
+        if count <= 0:
+            return
+        cap = max(self.likes_goal * 2, self.likes_goal + 500)
+        self.current_likes = min(self.current_likes + count, cap)
+        logger.debug(f"👍 Likes +{count} → {self.current_likes}/{self.likes_goal}")
+        if self.current_likes >= self.likes_goal:
+            self._trigger_meteor_shower()
+
+    def _update_meteors(self, dt: float) -> None:
+        """Update meteor positions, trails, and flag collisions (boost on touch)."""
+        from .config import FLAG_RADIUS
+        to_remove = []
+        for m in self.meteors:
+            m.x += m.vx * dt
+            m.y += m.vy * dt
+            m.trail.append((m.x, m.y, 255))
+            if len(m.trail) > m.max_trail:
+                m.trail.pop(0)
+            for i, (_, _, a) in enumerate(m.trail):
+                m.trail[i] = (m.trail[i][0], m.trail[i][1], max(0, a - 22))
+            m.trail = [(tx, ty, aa) for (tx, ty, aa) in m.trail if aa > 10]
+
+            # Collision with flags: boost country with random diamonds
+            for country, racer in self.physics_world.get_racers().items():
+                if country in m.hit_countries:
+                    continue
+                fx = float(racer.body.position.x)
+                fy = float(racer.body.position.y)
+                dist = math.hypot(m.x - fx, m.y - fy)
+                if dist < (FLAG_RADIUS + m.radius + 8):
+                    m.hit_countries.add(country)
+                    boost = random.randint(15, 45)
+                    self.physics_world.apply_gift_impulse(
+                        country=country, gift_name="Meteor", diamond_count=boost
+                    )
+                    self.emit_explosion(
+                        pos=(fx, fy), color=racer.color, count=6, power=0.6
+                    )
+                    self.spawn_floating_text(
+                        f"+{boost}", fx, fy, COLOR_TEXT_POSITIVE
+                    )
+            # Remove when off screen
+            if m.x < -50 or m.x > SCREEN_WIDTH + 50 or m.y < -50 or m.y > SCREEN_HEIGHT + 50:
+                to_remove.append(m)
+        for m in to_remove:
+            self.meteors.remove(m)
+
+    def _render_meteors(self) -> None:
+        """Draw meteors and their trails (bright head, fading trail)."""
+        for m in self.meteors:
+            for (tx, ty, alpha) in m.trail:
+                if alpha < 20:
+                    continue
+                k = alpha / 255.0
+                r, g, b = int(255 * k), int(200 * k), int(150 * k)
+                pygame.draw.circle(
+                    self.render_surface,
+                    (r, g, b),
+                    (int(tx), int(ty)),
+                    max(1, int(m.radius * 0.6)),
+                )
+            pygame.draw.circle(
+                self.render_surface,
+                (255, 220, 180),
+                (int(m.x), int(m.y)),
+                int(m.radius),
+            )
+            pygame.draw.circle(
+                self.render_surface,
+                (255, 255, 255),
+                (int(m.x), int(m.y)),
+                int(m.radius),
+                1,
+            )
+
+    def _draw_permanent_cta(self, surface: pygame.Surface) -> None:
+        """
+        Draw permanent CTA banner at bottom center.
+        Semi-transparent rect (Alpha 150), neon yellow text, rotates every 8 seconds.
+        Positioned above TikTok comments area for maximum visibility.
+        
+        Args:
+            surface: Target surface to draw on (typically render_surface).
+        """
+        from .config import (
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            COUNTRY_SHORTCUTS,
+            GAME_MODE,
+            CTA_BANNER_Y,
+            CTA_BANNER_HEIGHT,
+            CTA_BANNER_WIDTH,
+        )
+        
+        if GAME_MODE != "COMMENT":
+            return
+        
+        # Country to number mapping (inverse of COUNTRY_SHORTCUTS)
+        country_to_num = {v: k for k, v in COUNTRY_SHORTCUTS.items() if k.isdigit()}
+        
+        # Build Smart CTA message based on current index and race state
+        leader = self.physics_world.get_leader_country()
+        lb = self.physics_world.get_leaderboard()
+        second = lb[1][1] if len(lb) >= 2 else None
+        second_num = country_to_num.get(second, "?") if second else "?"
+        
+        messages = [
+            "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            f"¿Dónde están los de {second or '?'}? ¡Escribe {second_num} para remontar!" if second else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            f"¡{leader or '?'} está ganando! ¡Detenlo enviando un helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+            "¡Escribe el número de tu país para sumar puntos!",
+            "Con regalos avanzas más rápido!",
+        ]
+        text = messages[self.cta_message_index % len(messages)]
+        
+        # Compact banner: higher and smaller (no overlap with likes bar or first lane)
+        banner_height = CTA_BANNER_HEIGHT
+        banner_y = CTA_BANNER_Y
+        banner_width = min(SCREEN_WIDTH - 20, CTA_BANNER_WIDTH)
+        banner_x = (SCREEN_WIDTH - banner_width) // 2
+        
+        # Semi-transparent dark background (Alpha 150 per spec)
+        banner = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
+        banner.fill((0, 0, 0, 150))
+        pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
+        
+        # Display font: regular weight (no bold) and thin outline for a lighter look
+        from .config import DISPLAY_FONT_NAMES
+        font = None
+        for fn in DISPLAY_FONT_NAMES:
+            try:
+                font = pygame.font.SysFont(fn, 17, bold=False)
+                break
+            except Exception:
+                continue
+        if font is None:
+            font = pygame.font.Font(None, 16)
+        neon_yellow = (255, 255, 0)  # #FFFF00
+        words = text.split()
+        lines = []
+        current = ""
+        for w in words:
+            test = f"{current} {w}".strip() if current else w
+            if font.size(test)[0] <= banner_width - 14:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+        lines = lines[:2]  # Max 2 lines
+        
+        line_height = 20
+        y_offset = (banner_height - len(lines) * line_height) // 2 + 1
+        for line in lines:
+            text_surf = self._render_text_enhanced(
+                line,
+                font,
+                neon_yellow,
+                outline_color=(0, 0, 0),
+                outline_width=1,
+            )
+            rect = text_surf.get_rect(center=(banner_width // 2, y_offset + line_height // 2))
+            banner.blit(text_surf, rect)
+            y_offset += line_height
+        
+        surface.blit(banner, (banner_x, banner_y))
     
     def _render_race_start_hud(self, alpha: int) -> None:
         """
@@ -3981,6 +4486,18 @@ class GameEngine:
             self.spotlight_current_pos = (racer.body.position.x, racer.body.position.y)
             self.spotlight_target_pos = self.spotlight_current_pos
 
+        # Reset CTA banner to first message for new race
+        self.cta_last_rotation_time = 0.0
+        self.cta_message_index = 0
+        
+        # Spawn promotional message at top
+        self.spawn_floating_text(
+            "Con regalos avanzas más rápido!",
+            self.physics_world.start_x,
+            self.physics_world.game_area_top,
+            (255, 223, 0)  # Gold
+        )
+        
         # Reset combo system
         self.combo_tracker.clear()
         self.combo_counts.clear()
@@ -4071,25 +4588,19 @@ class GameEngine:
         else:
             color = (255, 200, 50)  # Yellow for regular combo
         
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
         combo_text = f"COMBO x{count}!"
-        
-        # Determine font size with elastic pulse effect (grows then shrinks)
-        # Larger size for milestone combos
-        if count % 5 == 0:  # Milestones: 5, 10, 15, 20...
-            base_font_size = 22
-        else:
-            base_font_size = 16
-        
+        base_font_size = 22 if count % 5 == 0 else 16
         self.floating_texts.append(
             FloatingText(
                 text=combo_text,
-                x=x,
-                y=y - 40,
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=color,
                 lifespan=50,
                 max_lifespan=50,
                 font_size=base_font_size,
-                dy=-3.0  # Fast upward
+                dy=-1.0
             )
         )
         
@@ -4121,21 +4632,18 @@ class GameEngine:
         if country not in self.physics_world.racers:
             return
         
-        racer = self.physics_world.racers[country]
-        x = racer.body.position.x
-        y = racer.body.position.y
-        
-        # Big announcement
+        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
+        # Big announcement at top
         self.floating_texts.append(
             FloatingText(
-                text="🔥 ON FIRE! 🔥",
-                x=x,
-                y=y - 50,
+                text="ON FIRE!",
+                x=SCREEN_WIDTH / 2,
+                y=FLOATING_TEXT_TOP_Y,
                 color=(255, 100, 0),
                 lifespan=80,
                 max_lifespan=80,
                 font_size=20,
-                dy=-2.0
+                dy=-1.0
             )
         )
         
@@ -4197,33 +4705,34 @@ class GameEngine:
             racer = self.physics_world.racers[country]
             base_color = racer.color
             
-            # Clear old segments and rebuild
+            # Return old segments to pool, then rebuild
+            for seg in self.motion_trails.get(country, []):
+                self._motion_trail_segment_pool.append(seg)
             self.motion_trails[country] = []
             
             for i in range(len(history) - 1):
                 x1, y1 = history[i]
                 x2, y2 = history[i + 1]
-                
-                # Alpha fades towards the back
                 alpha = 255 * (i + 1) / len(history)
-                
-                # Thickness increases towards the flag (front)
                 thickness = 1 if i < len(history) // 2 else 2
                 if country in self.on_fire_countries:
-                    thickness += 1  # Thicker when ON FIRE
-                
-                # Apply jitter to older segments for vibration effect
+                    thickness += 1
                 if country in self.on_fire_countries and i < len(history) - 3:
                     y1 += random.uniform(-1, 1)
                     y2 += random.uniform(-1, 1)
                 
-                segment = MotionTrailSegment(
-                    x1=x1, y1=y1,
-                    x2=x2, y2=y2,
-                    color=base_color,
-                    alpha=alpha,
-                    thickness=thickness
-                )
+                if self._motion_trail_segment_pool:
+                    segment = self._motion_trail_segment_pool.pop()
+                    segment.x1, segment.y1 = x1, y1
+                    segment.x2, segment.y2 = x2, y2
+                    segment.color = base_color
+                    segment.alpha = alpha
+                    segment.thickness = thickness
+                else:
+                    segment = MotionTrailSegment(
+                        x1=x1, y1=y1, x2=x2, y2=y2,
+                        color=base_color, alpha=alpha, thickness=thickness
+                    )
                 self.motion_trails[country].append(segment)
     
     def _update_combo_flashes(self, dt: float) -> None:
@@ -4595,28 +5104,33 @@ class GameEngine:
         if len(self.confetti_particles) >= self.max_confetti:
             return
         
-        # Festive colors
         colors = [
-            (255, 215, 0),    # Gold
-            (255, 0, 100),    # Pink
-            (0, 200, 255),    # Cyan
-            (100, 255, 100),  # Green
-            (255, 100, 0),    # Orange
-            (200, 100, 255),  # Purple
-            (255, 255, 255),  # White
+            (255, 215, 0), (255, 0, 100), (0, 200, 255), (100, 255, 100),
+            (255, 100, 0), (200, 100, 255), (255, 255, 255),
         ]
-        
-        particle = ConfettiParticle(
-            x=random.uniform(0, SCREEN_WIDTH),
-            y=random.uniform(-50, -10),  # Start above screen
-            vx=random.uniform(-30, 30),
-            vy=random.uniform(100, 250),  # Fall speed
-            size=random.uniform(4, 10),
-            color=random.choice(colors),
-            rotation=random.uniform(0, 360),
-            rotation_speed=random.uniform(-300, 300),
-            lifetime=random.uniform(3.0, 6.0)
-        )
+        if self._confetti_pool:
+            particle = self._confetti_pool.pop()
+            particle.x = random.uniform(0, SCREEN_WIDTH)
+            particle.y = random.uniform(-50, -10)
+            particle.vx = random.uniform(-30, 30)
+            particle.vy = random.uniform(100, 250)
+            particle.size = random.uniform(4, 10)
+            particle.color = random.choice(colors)
+            particle.rotation = random.uniform(0, 360)
+            particle.rotation_speed = random.uniform(-300, 300)
+            particle.lifetime = random.uniform(3.0, 6.0)
+        else:
+            particle = ConfettiParticle(
+                x=random.uniform(0, SCREEN_WIDTH),
+                y=random.uniform(-50, -10),
+                vx=random.uniform(-30, 30),
+                vy=random.uniform(100, 250),
+                size=random.uniform(4, 10),
+                color=random.choice(colors),
+                rotation=random.uniform(0, 360),
+                rotation_speed=random.uniform(-300, 300),
+                lifetime=random.uniform(3.0, 6.0)
+            )
         self.confetti_particles.append(particle)
     
     def _update_confetti(self, dt: float) -> None:
@@ -4642,10 +5156,10 @@ class GameEngine:
             # Lifetime
             p.lifetime -= dt
             
-            # Keep if still alive and on screen
             if p.lifetime > 0 and p.y < SCREEN_HEIGHT + 50:
                 alive.append(p)
-        
+            else:
+                self._confetti_pool.append(p)
         self.confetti_particles = alive
     
     def _render_victory_sequence(self) -> None:
@@ -4759,10 +5273,10 @@ class GameEngine:
         if captain and captain != "Unknown":
             # Check if this is a "king" (gift mode captain)
             if self.victory_was_gift_mode:
-                captain_text = f"KING OF THE TRACK: {captain}"
+                captain_text = f"KING OF THE TRACK: @{captain}"
                 captain_color = (255, 215, 0)  # Gold
             else:
-                captain_text = f"Top Voter: {captain}"
+                captain_text = f"Top Voter: @{captain}"
                 captain_color = (200, 200, 255)  # Light blue
             
             captain_surf = self._render_text_with_shadow(
