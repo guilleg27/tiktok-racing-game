@@ -194,7 +194,11 @@ class AudioManager:
         
         # Thread lock for safe concurrent access
         self._lock = threading.Lock()
-        
+
+        # Mute state flags (session-only, not persisted)
+        self._bgm_muted = False
+        self._sfx_muted = False
+
         # Active sound instances tracker (for max_instances limit)
         self._active_sounds: Dict[SoundType, List[pygame.mixer.Channel]] = {}
         
@@ -382,7 +386,31 @@ class AudioManager:
         """Resume paused background music."""
         if self._bgm_channel:
             self._bgm_channel.unpause()
-    
+
+    def toggle_bgm(self) -> bool:
+        """Toggle BGM mute. Returns True if now muted."""
+        self._bgm_muted = not self._bgm_muted
+        if self._bgm_muted:
+            self.pause_bgm()
+        else:
+            self.resume_bgm()
+        return self._bgm_muted
+
+    def toggle_sfx(self) -> bool:
+        """Toggle SFX mute. Returns True if now muted."""
+        self._sfx_muted = not self._sfx_muted
+        return self._sfx_muted
+
+    @property
+    def bgm_muted(self) -> bool:
+        """Whether BGM is currently muted."""
+        return self._bgm_muted
+
+    @property
+    def sfx_muted(self) -> bool:
+        """Whether SFX are currently muted."""
+        return self._sfx_muted
+
     def set_bgm_volume(self, volume: float) -> None:
         """
         Set background music volume.
@@ -429,11 +457,14 @@ class AudioManager:
     def play_bgm_tension(self, fade_in_ms: int = 1500) -> None:
         """
         Switch to tension background music (high-intensity for final stretch).
-        
+
         Args:
             fade_in_ms: Fade-in duration in milliseconds (0 for instant)
         """
         if not self._initialized:
+            return
+
+        if self._bgm_muted:
             return
         
         if SoundType.BGM_TENSION not in self._sound_cache:
@@ -466,11 +497,14 @@ class AudioManager:
     def play_bgm_normal(self, fade_in_ms: int = 1500) -> None:
         """
         Switch back to normal background music.
-        
+
         Args:
             fade_in_ms: Fade-in duration in milliseconds (0 for instant)
         """
         if not self._initialized:
+            return
+
+        if self._bgm_muted:
             return
         
         if SoundType.BGM not in self._sound_cache:
@@ -521,7 +555,10 @@ class AudioManager:
         """
         if not self._initialized:
             return None
-        
+
+        if self._sfx_muted:
+            return None
+
         if sound_type not in self._sound_cache:
             if sound_type not in self._missing_sounds:
                 logger.debug(f"Sound not available: {sound_type.name}")
@@ -638,8 +675,9 @@ class AudioManager:
         # Stop BGM completely to prevent tension music overlap with victory
         self.stop_bgm(fade_out_ms=500)
 
-        # Play victory sound
-        self.play_sfx(SoundType.VICTORY)
+        # Play victory sound (respects BGM mute so the fanfare is treated as music)
+        if not self._bgm_muted:
+            self.play_sfx(SoundType.VICTORY)
 
         # Trigger TTS if available
         if winner_country:
