@@ -638,8 +638,11 @@ class GameEngine:
         self._fixed_dt = 1.0 / PHYSICS_FIXED_HZ
         self._physics_accumulator = 0.0
         self._max_physics_catchup = self._fixed_dt * 5  # Cap to avoid spiral of death
-        
-    
+
+        # 🔊 Audio toast HUD (shown on M/N key press)
+        self._audio_toast_text = ""
+        self._audio_toast_timer = 0.0
+
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
         import os
@@ -1788,6 +1791,18 @@ class GameEngine:
                 elif event.key == pygame.K_l:  # L = Simulate likes (retention bar; production uses real LIKE events)
                     self.add_likes(LIKES_SIMULATED_PER_KEY)
 
+                elif event.key == pygame.K_m:  # M = Toggle BGM
+                    muted = self.audio_manager.toggle_bgm()
+                    status = "OFF" if muted else "ON"
+                    self._audio_toast_text = f"BGM: {status}"
+                    self._audio_toast_timer = 3.0
+
+                elif event.key == pygame.K_n:  # N = Toggle SFX
+                    muted = self.audio_manager.toggle_sfx()
+                    status = "OFF" if muted else "ON"
+                    self._audio_toast_text = f"SFX: {status}"
+                    self._audio_toast_timer = 3.0
+
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
         Update session points and check for new captain.
@@ -2099,7 +2114,11 @@ class GameEngine:
             self.winner_glow_alpha = 0
             # ☁️ Reset cloud sync flag when race resets
             self.race_synced = False
-    
+
+        # 🔊 Decay audio toast timer
+        if self._audio_toast_timer > 0:
+            self._audio_toast_timer = max(0.0, self._audio_toast_timer - dt)
+
     def render(self) -> None:
         """Render all visual elements."""
         # Track frame for FPS calculation
@@ -2198,9 +2217,44 @@ class GameEngine:
             self.screen.blit(scaled_surface, (blit_x - offset_x, blit_y - offset_y))
         else:
             self.screen.blit(self.render_surface, (blit_x, blit_y))
-        
+
+        # 🔊 Audio toast overlay (always rendered on top of everything)
+        if self._audio_toast_timer > 0:
+            self._render_audio_toast()
+
         pygame.display.flip()
-    
+
+    def _render_audio_toast(self) -> None:
+        """Render a semi-transparent toast in the top-right corner showing BGM/SFX status."""
+        if not self.screen or not self._audio_toast_text:
+            return
+
+        from .config import GAME_MARGIN, SCREEN_WIDTH
+
+        font = pygame.font.Font(None, 22)
+        text_surf = font.render(self._audio_toast_text, True, (255, 255, 255))
+        padding_x, padding_y = 10, 6
+        toast_w = text_surf.get_width() + padding_x * 2
+        toast_h = text_surf.get_height() + padding_y * 2
+
+        # Fade-out in the last 0.5 seconds
+        alpha = 180
+        if self._audio_toast_timer < 0.5:
+            alpha = int(180 * (self._audio_toast_timer / 0.5))
+
+        # Position: top-right of the game area on screen
+        x = GAME_MARGIN + SCREEN_WIDTH - toast_w - 8
+        y = GAME_MARGIN + 8
+
+        bg_surf = pygame.Surface((toast_w, toast_h), pygame.SRCALPHA)
+        bg_surf.fill((20, 20, 20, alpha))
+        self.screen.blit(bg_surf, (x, y))
+
+        text_alpha_surf = pygame.Surface(text_surf.get_size(), pygame.SRCALPHA)
+        text_alpha_surf.blit(text_surf, (0, 0))
+        text_alpha_surf.set_alpha(min(255, int(alpha * 255 / 180)))
+        self.screen.blit(text_alpha_surf, (x + padding_x, y + padding_y))
+
     def _render_balls(self) -> None:
         """Render all flag racers with winner spotlight and leader glow."""
         # Draw lanes
