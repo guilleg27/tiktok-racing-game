@@ -1054,11 +1054,30 @@ class GameEngine:
         Reset ghost participation timers when real user activity occurs.
         Called on GIFT, VOTE, LIKE, COMMENT, JOIN events.
         """
-        from .config import GHOST_DISABLE_AFTER_REAL_ACTIVITY
+        from .config import GHOST_DISABLE_AFTER_REAL_ACTIVITY, GHOST_INACTIVITY_THRESHOLD
         now = time.time()
+        # Log only when ghost mode was actually active (avoids log spam)
+        was_ghost_active = (
+            now >= self.ghost_bots_disabled_until
+            and now - self.last_activity_time >= GHOST_INACTIVITY_THRESHOLD
+        )
         self.last_activity_time = now
         self.ghost_bots_disabled_until = now + GHOST_DISABLE_AFTER_REAL_ACTIVITY
-    
+        if was_ghost_active:
+            logger.info("👻 Ghost mode DEACTIVATED by real user activity")
+
+    @property
+    def _ghost_mode_active(self) -> bool:
+        """True when ghost bots are currently generating votes."""
+        now = time.time()
+        from .config import GHOST_INACTIVITY_THRESHOLD
+        return (
+            self.game_state == 'RACING'
+            and not self.physics_world.race_finished
+            and now >= self.ghost_bots_disabled_until
+            and now - self.last_activity_time >= GHOST_INACTIVITY_THRESHOLD
+        )
+
     def _update_ghost_participation(self) -> None:
         """
         Generate ghost votes when inactive to keep the race alive.
@@ -1093,6 +1112,7 @@ class GameEngine:
             diamond_count=COMMENT_POINTS_PER_MESSAGE
         )
         if success:
+            logger.debug(f"👻 Ghost vote fired → {country}")
             self.ghost_next_vote_time = now + random.uniform(
                 GHOST_VOTE_INTERVAL_MIN, GHOST_VOTE_INTERVAL_MAX
             )
@@ -2206,7 +2226,8 @@ class GameEngine:
             self._draw_permanent_cta(self.render_surface)
         self._render_likes_bar()
         self._render_leaderboard()
-        
+        self._render_ghost_mode_indicator()
+
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
         
@@ -3621,6 +3642,24 @@ class GameEngine:
         # Optional: Add subtle gold borders at top and bottom
         pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
         pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
+
+    def _render_ghost_mode_indicator(self) -> None:
+        """Render a small 'AUTO' badge when ghost bots are active."""
+        if not self._ghost_mode_active:
+            return
+        now = time.time()
+        # Pulse between 150-255 alpha at 1 Hz
+        alpha = int(150 + 105 * abs(((now % 1.0) - 0.5) * 2))
+        font = _get_font("Arial", 11, bold=True)
+        text_surf = font.render("👻 AUTO", True, (180, 180, 255))
+        badge = pygame.Surface(
+            (text_surf.get_width() + 10, text_surf.get_height() + 6),
+            pygame.SRCALPHA,
+        )
+        badge.fill((20, 20, 60, min(alpha, 200)))
+        badge.blit(text_surf, (5, 3))
+        badge.set_alpha(alpha)
+        self.render_surface.blit(badge, (4, self.header_height + 4))
 
     def _render_likes_bar(self) -> None:
         """
