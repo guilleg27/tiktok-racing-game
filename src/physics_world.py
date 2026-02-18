@@ -63,7 +63,7 @@ class PhysicsWorld:
         self.racers: dict[str, FlagRacer] = {}
         
         # Race configuration - Using optimized constants from config
-        self.num_lanes = 8  # Reduced to 8 countries for better gameplay
+        self.num_lanes = 10  # 10 countries
 
         # Game area (excluding header and footer)
         self.game_area_top = GAME_AREA_TOP       # 35px below header
@@ -74,7 +74,7 @@ class PhysicsWorld:
         self.start_x = RACE_START_X
         self.finish_line_x = RACE_FINISH_X
 
-        # Countries/teams (8 countries total)
+        # Countries/teams
         self.countries = list(RACE_COUNTRIES)
         
         # Winner tracking

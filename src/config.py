@@ -62,10 +62,11 @@ RACE_FINISH_X = int(SCREEN_WIDTH * SAFE_ZONE_FINISH_RATIO)  # Meta avoids right-
 RACE_START_X = RACE_OFFSET_X
 FLAG_RADIUS = 10         # Reduced for spacious, professional look in safe zone
 
-# Race countries (used for flag sprites) - Reduced to 8 for better gameplay
+# Race countries (used for flag sprites)
 RACE_COUNTRIES = [
     "Argentina", "Brasil", "Mexico", "Colombia",
     "Chile", "Peru", "Venezuela", "USA",
+    "PuertoRico", "Uruguay",
 ]
 
 # Country shortcuts for COMMENT mode (siglas + números)
@@ -93,6 +94,14 @@ COUNTRY_SHORTCUTS = {
 
     # USA
     "8": "USA", "usa": "USA", "us": "USA", "america": "USA",
+
+    # Puerto Rico
+    "9": "PuertoRico", "pri": "PuertoRico", "puertorico": "PuertoRico",
+    "pr": "PuertoRico", "puerto rico": "PuertoRico",
+
+    # Uruguay
+    "10": "Uruguay", "uru": "Uruguay", "uruguay": "Uruguay",
+    "uy": "Uruguay",
 }
 
 # Country abbreviations for display (3 letters)
@@ -105,6 +114,8 @@ COUNTRY_ABBREV = {
     "Peru": "PER",
     "Venezuela": "VEN",
     "USA": "USA",
+    "PuertoRico": "PRI",
+    "Uruguay": "URU",
 }
 
 # Comment mode settings
@@ -380,6 +391,14 @@ COUNTRY_KEYWORDS = {
     # USA
     'usa': 'USA', 'united states': 'USA', 'us': 'USA',
     'america': 'USA', '🇺🇸': 'USA',
+
+    # Puerto Rico
+    'pri': 'PuertoRico', 'puertorico': 'PuertoRico', 'pr': 'PuertoRico',
+    'puerto rico': 'PuertoRico', '🇵🇷': 'PuertoRico',
+
+    # Uruguay
+    'uru': 'Uruguay', 'uruguay': 'Uruguay', 'uy': 'Uruguay',
+    '🇺🇾': 'Uruguay',
 }
 
 # Anti-spam para joins

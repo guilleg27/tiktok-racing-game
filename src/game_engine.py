@@ -4398,7 +4398,9 @@ class GameEngine:
             'USA': 'USA',
             'Indonesia': 'IDN',
             'Russia': 'RUS',
-            'Italy': 'ITA'
+            'Italy': 'ITA',
+            'PuertoRico': 'PRI',
+            'Uruguay': 'URU',
         }
         return abbrev_map.get(country, '???')
     
