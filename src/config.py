@@ -42,7 +42,7 @@ ACTUAL_HEIGHT = SCREEN_HEIGHT + (GAME_MARGIN * 2)
 
 # Physics settings (Pymunk)
 GRAVITY = (0, 900)
-PHYSICS_STEPS = 10
+PHYSICS_STEPS = 3   # was 10; horizontal-only race with Lerp movement needs no more than 3 substeps
 # Fixed timestep for physics (Hz). Independent of render FPS for consistent simulation.
 PHYSICS_FIXED_HZ = 60
 

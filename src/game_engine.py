@@ -59,6 +59,35 @@ from .background_manager import BackgroundManager
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level font cache — eliminates repeated pygame.font.SysFont() calls.
+# Key: (name, size, bold). Built lazily on first request, O(1) thereafter.
+# ---------------------------------------------------------------------------
+_font_cache: dict[tuple, "pygame.font.Font"] = {}
+
+
+def _get_font(name: Optional[str], size: int, bold: bool = False) -> "pygame.font.Font":
+    """Return a cached font, constructing it only on the first request.
+
+    Args:
+        name: Font family name (e.g. "Arial"), or None for the default font.
+        size: Point size.
+        bold: Whether to request the bold variant.
+
+    Returns:
+        A pygame.font.Font ready to render text.
+    """
+    key = (name, size, bold)
+    if key not in _font_cache:
+        if name is None:
+            _font_cache[key] = pygame.font.Font(None, size)
+        else:
+            try:
+                _font_cache[key] = pygame.font.SysFont(name, size, bold=bold)
+            except Exception:
+                _font_cache[key] = pygame.font.Font(None, size)
+    return _font_cache[key]
+
 
 @dataclass
 class Particle:
@@ -309,10 +338,7 @@ class FloatingText:
         actual_font_size = max(8, int(self.font_size * scale))
         
         # Create font con BOLD para mejor legibilidad
-        try:
-            font = pygame.font.SysFont("Arial", actual_font_size, bold=True)
-        except:
-            font = pygame.font.Font(None, actual_font_size)
+        font = _get_font("Arial", actual_font_size, bold=True)
     
         # Render main text con anti-aliasing
         text_surface = font.render(self.text, True, self.color)
@@ -466,6 +492,13 @@ class GameEngine:
         self.font: Optional[pygame.font.Font] = None
         self.font_small: Optional[pygame.font.Font] = None
         self.clock: Optional[pygame.time.Clock] = None
+
+        # Pre-allocated alpha layers (set in init_pygame)
+        self._particle_layer: Optional[pygame.Surface] = None
+        self._trail_layer: Optional[pygame.Surface] = None
+        self._flash_layer: Optional[pygame.Surface] = None
+        self._ray_layer: Optional[pygame.Surface] = None
+        self._lanes_surface: Optional[pygame.Surface] = None
         
         self.header_height = 30          # era 70, ahora 70 * 0.42 ≈ 30
         self.message_area_height = 70   # Reducido de 105 a 70
@@ -507,6 +540,7 @@ class GameEngine:
         
         # Cloud sync control
         self.race_synced = False  # Flag to prevent multiple syncs per race
+        self._leaderboard_cache: Optional[pygame.Surface] = None  # Cached post-race leaderboard
         
         # 🏆 Global Ranking Panel
         self.global_rank_data: list[dict] = []  # Top 3 countries by wins
@@ -570,6 +604,8 @@ class GameEngine:
         self.cta_last_rotation_time: float = 0.0
         self.cta_message_index: int = 0
         self.cta_rotation_interval = 8.0  # seconds (Smart CTA rotation)
+        self._cta_surface: Optional[pygame.Surface] = None  # Cached banner surface
+        self._cta_cached_index: int = -1  # Index when cache was built
         
         # 🔥 COMBO SYSTEM
         self.combo_tracker: dict[str, list[float]] = {}  # {country: [timestamps]}
@@ -716,7 +752,17 @@ class GameEngine:
             logger.info("🔧 Rendering emojis...")
             self._render_flag_emojis()
             logger.info("🔧 Emojis rendered")
-            
+
+            # Pre-allocate reusable alpha layers (eliminates per-frame Surface allocations)
+            self._particle_layer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            self._trail_layer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            self._flash_layer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            self._ray_layer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+
+            # Pre-render static lanes surface (lane separators never change)
+            self._lanes_surface = self._build_lanes_surface()
+            logger.info("🔧 Alpha layers and lanes surface pre-allocated")
+
             logger.info("🔧 Starting BGM...")
             self.audio_manager.play_bgm()
             
@@ -944,68 +990,59 @@ class GameEngine:
     
     def _render_trails(self) -> None:
         """
-        Render trail particles behind flags.
-        Creates smooth color trails showing flag movement.
+        Render trail particles into a shared alpha layer then blit once.
+        Eliminates per-particle Surface allocations.
         """
-        for country, trail_particles in self.particle_manager.trail_particles.items():
+        if not self.particle_manager.trail_particles or self._trail_layer is None:
+            return
+        self._trail_layer.fill((0, 0, 0, 0))
+        has_any = False
+        for trail_particles in self.particle_manager.trail_particles.values():
             for particle in trail_particles:
                 if particle.alpha <= 0 or particle.size <= 0:
                     continue
-                
-                # Create surface for trail particle with alpha
-                size = max(int(particle.size * 2), 2)
-                trail_surf = pygame.Surface((size, size), pygame.SRCALPHA)
-                
-                # Draw particle with alpha
                 color_with_alpha = (*particle.color, particle.alpha)
-                pygame.draw.circle(
-                    trail_surf,
-                    color_with_alpha,
-                    (size // 2, size // 2),
-                    max(int(particle.size), 1)
-                )
-                
-                # Blit to render surface
-                blit_x = int(particle.pos[0] - size // 2)
-                blit_y = int(particle.pos[1] - size // 2)
-                self.render_surface.blit(trail_surf, (blit_x, blit_y))
+                cx = int(particle.pos[0])
+                cy = int(particle.pos[1])
+                radius = max(int(particle.size), 1)
+                pygame.draw.circle(self._trail_layer, color_with_alpha, (cx, cy), radius)
+                has_any = True
+        if has_any:
+            self.render_surface.blit(self._trail_layer, (0, 0))
     
     def _render_particles(self) -> None:
         """
-        Render particles with optimized direct circle drawing.
-        Uses pygame.draw.circle directly on surface for maximum speed.
+        Render particles into a shared alpha layer then blit once.
+        Eliminates per-particle Surface allocations.
         """
+        if not self.particles or self._particle_layer is None:
+            return
+        self._particle_layer.fill((0, 0, 0, 0))
         for particle in self.particles:
             # Skip if position is invalid
             if not math.isfinite(particle.pos.x) or not math.isfinite(particle.pos.y):
                 continue
-            
+
             # Calculate lifetime ratio for opacity
             life_ratio = particle.lifetime / particle.max_lifetime if particle.max_lifetime > 0 else 0
-            
+
             # Opacity fade
             opacity = self._safe_int(255 * life_ratio, 0)
-            
+
             # Clamp radius to minimum 1 pixel
             radius = max(self._safe_int(particle.radius, 1), 1)
-            
+
             # Skip if too transparent
             if opacity < 10:
                 continue
-            
-            # Create color with alpha
+
+            # Draw directly onto shared layer
             color_with_alpha = (*particle.color, opacity)
-            
-            # Optimized: Direct circle draw with alpha
-            # Create minimal surface for particle
-            size = radius * 2
-            particle_surf = pygame.Surface((size, size), pygame.SRCALPHA)
-            pygame.draw.circle(particle_surf, color_with_alpha, (radius, radius), radius)
-            
-            # Blit to render surface (safe conversions)
-            blit_x = self._safe_int(particle.pos.x - radius, 0)
-            blit_y = self._safe_int(particle.pos.y - radius, 0)
-            self.render_surface.blit(particle_surf, (blit_x, blit_y))
+            cx = self._safe_int(particle.pos.x, 0)
+            cy = self._safe_int(particle.pos.y, 0)
+            pygame.draw.circle(self._particle_layer, color_with_alpha, (cx, cy), radius)
+
+        self.render_surface.blit(self._particle_layer, (0, 0))
     
     def _render_floating_texts(self) -> None:
         """Render all floating texts for visual feedback."""
@@ -1219,12 +1256,14 @@ class GameEngine:
                     self.screen_shaker.impact_shake()
             
             if self.database:
-                await self.database.save_event_to_db(
-                    user=username,
-                    gift_name=gift_name,
-                    diamond_count=diamond_count,
-                    gift_count=gift_count,
-                    streamer=self.streamer_name
+                asyncio.create_task(
+                    self.database.save_event_to_db(
+                        user=username,
+                        gift_name=gift_name,
+                        diamond_count=diamond_count,
+                        gift_count=gift_count,
+                        streamer=self.streamer_name
+                    )
                 )
             
             # Message with assignment indicator
@@ -2234,7 +2273,7 @@ class GameEngine:
 
         from .config import GAME_MARGIN, SCREEN_WIDTH
 
-        font = pygame.font.Font(None, 22)
+        font = _get_font(None, 22)
         text_surf = font.render(self._audio_toast_text, True, (255, 255, 255))
         padding_x, padding_y = 10, 6
         toast_w = text_surf.get_width() + padding_x * 2
@@ -2404,8 +2443,8 @@ class GameEngine:
         country_abbrev = self._get_country_abbrev(racer.country)
         
         # Font for labels
-        label_font = pygame.font.SysFont("Arial", 11, bold=True)
-        
+        label_font = _get_font("Arial", 11, bold=True)
+
         # === NUMBER on LEFT side ===
         number_x = ix - radius - 18  # To the left of flag edge
         number_y = iy
@@ -2468,7 +2507,7 @@ class GameEngine:
 
             # Render with enhanced text (outline) - stronger outline for cross-platform visibility
             try:
-                captain_font = pygame.font.SysFont("Arial", font_size, bold=True)
+                captain_font = _get_font("Arial", font_size, bold=True)
                 captain_surface = self._render_text_enhanced(
                     captain_text,
                     captain_font,
@@ -2546,7 +2585,7 @@ class GameEngine:
         if self.leader_pop_timer > 0:
             # Escala 1.1x durante el pop
             pop_scale = 1.1
-            pop_font = pygame.font.SysFont("Arial", int(FONT_SIZE * pop_scale), bold=True)
+            pop_font = _get_font("Arial", int(FONT_SIZE * pop_scale), bold=True)
             count_surface = self._render_text_with_shadow(
                 leader_text, pop_font, (255, 255, 0), shadow_offset=2
             )
@@ -2599,23 +2638,24 @@ class GameEngine:
             
             self.render_surface.blit(text_surface, (PADDING, y))
     
-    def _render_lanes(self) -> None:
-        """Draw subtle lane separators."""
+    def _build_lanes_surface(self) -> pygame.Surface:
+        """Build the static lanes surface once; reused every frame."""
         from .config import COLOR_LANE_LINE
-        
-        lane_height = self.physics_world.lane_height
-        game_area_top = self.physics_world.game_area_top
-        
-        # Create surface with alpha for subtle lines
-        lane_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        
+        surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        surf.fill((0, 0, 0, 0))
         start_x = self.physics_world.start_x
         finish_x = self.physics_world.finish_line_x
+        game_area_top = self.physics_world.game_area_top
+        lane_height = self.physics_world.lane_height
         for i in range(1, self.physics_world.num_lanes):
-            y = game_area_top + (i * lane_height)
-            pygame.draw.line(lane_surf, COLOR_LANE_LINE, (start_x, y), (finish_x, y), 1)
-        
-        self.render_surface.blit(lane_surf, (0, 0))
+            y = game_area_top + i * lane_height
+            pygame.draw.line(surf, COLOR_LANE_LINE, (start_x, y), (finish_x, y), 1)
+        return surf
+
+    def _render_lanes(self) -> None:
+        """Draw subtle lane separators using pre-rendered static surface."""
+        if self._lanes_surface is not None:
+            self.render_surface.blit(self._lanes_surface, (0, 0))
     
     def _render_final_stretch_line(self) -> None:
         """Draw a dashed, blurred yellow line at 80% of track marking where final stretch begins."""
@@ -2693,25 +2733,27 @@ class GameEngine:
             pygame.draw.circle(glow_surf, (255, 215, 0, glow_alpha), (glow_size//2, glow_size//2), self._safe_int(glow_radius, 30), 4)
             self.render_surface.blit(glow_surf, (self._safe_int(x - glow_radius), self._safe_int(y - glow_radius)))
 
-        # Radial light rays
-        num_rays = 8
-        ray_length = 80
-        for i in range(num_rays):
-            angle = (self.winner_animation_time * 2.0 + i * (2 * math.pi / num_rays))
-            start_x = x + math.cos(angle) * radius
-            start_y = y + math.sin(angle) * radius
-            end_x = x + math.cos(angle) * (radius + ray_length)
-            end_y = y + math.sin(angle) * (radius + ray_length)
-            ray_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-            alpha = max(0, self.winner_glow_alpha - 80)
-            pygame.draw.line(
-                ray_surf, 
-                (255, 223, 0, alpha), 
-                (self._safe_int(start_x), self._safe_int(start_y)), 
-                (self._safe_int(end_x), self._safe_int(end_y)), 
-                3
-            )
-            self.render_surface.blit(ray_surf, (0, 0))
+        # Radial light rays — drawn into shared layer, one blit total
+        if self._ray_layer is not None:
+            self._ray_layer.fill((0, 0, 0, 0))
+            num_rays = 8
+            ray_length = 80
+            ray_alpha = max(0, self.winner_glow_alpha - 80)
+            ray_color = (255, 223, 0, ray_alpha)
+            for i in range(num_rays):
+                angle = (self.winner_animation_time * 2.0 + i * (2 * math.pi / num_rays))
+                start_x_r = x + math.cos(angle) * radius
+                start_y_r = y + math.sin(angle) * radius
+                end_x_r = x + math.cos(angle) * (radius + ray_length)
+                end_y_r = y + math.sin(angle) * (radius + ray_length)
+                pygame.draw.line(
+                    self._ray_layer,
+                    ray_color,
+                    (self._safe_int(start_x_r), self._safe_int(start_y_r)),
+                    (self._safe_int(end_x_r), self._safe_int(end_y_r)),
+                    3
+                )
+            self.render_surface.blit(self._ray_layer, (0, 0))
 
         # Orbiting stars
         num_stars = 10
@@ -2741,60 +2783,36 @@ class GameEngine:
                          (self._safe_int(ix - size*0.7), self._safe_int(iy + size*0.7)), 
                          (self._safe_int(ix + size*0.7), self._safe_int(iy - size*0.7)), 1)
 
-    def _render_leaderboard(self) -> None:
-        """Render leaderboard overlay when race finished."""
-        if not self.physics_world.race_finished:
-            return
+    def _build_leaderboard_surface(self) -> pygame.Surface:
+        """Render the leaderboard table into a cached surface (called once per race end)."""
+        leaderboard = self.physics_world.get_leaderboard()[:10]
 
-        # Render 3D ranking visualization behind the final classification
-        # Uses global Supabase ranking to create futuristic tracks
-        if self.global_rank_data:
-            self._render_3d_ranking_visualization()
-
-        # Dim background behind the final classification panel
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 140))
-        self.render_surface.blit(overlay, (0, 0))
-
-        leaderboard = self.physics_world.get_leaderboard()
-        # Limit to first 10 entries only
-        leaderboard = leaderboard[:10]
-        
-        # Reduced table width and added side margins
-        side_margin = 20  # Margin on each side of screen
-        left_margin = 15  # Additional left margin for text visibility
-        table_w, table_h = SCREEN_WIDTH - (side_margin * 2), 420  # Full width minus margins
-        table_x = side_margin  # Start with margin from left
-        table_y = SCREEN_HEIGHT - table_h - 60
-
-        # Adjusted internal margins for better content fit
-        bar_margin_left = 90 + left_margin  # Increased left margin for text visibility
-        bar_margin_right = 80  # Increased from 20 to prevent cutoff
+        side_margin = 20
+        left_margin = 15
+        table_w, table_h = SCREEN_WIDTH - (side_margin * 2), 420
+        bar_margin_left = 90 + left_margin
+        bar_margin_right = 80
         bar_h = 10
         bar_w = table_w - bar_margin_left - bar_margin_right
         bar_x = bar_margin_left
+        max_distance = max(1, self.physics_world.finish_line_x - self.physics_world.start_x)
 
         surf = pygame.Surface((table_w, table_h), pygame.SRCALPHA)
         pygame.draw.rect(surf, (5, 5, 10, 255), (0, 0, table_w, table_h), border_radius=10)
         pygame.draw.rect(surf, (255, 215, 0, 180), (0, 0, table_w, table_h), 2, border_radius=10)
-        
-        header_font = pygame.font.SysFont("Arial", 18, bold=True)
-        hdr = header_font.render("FINAL CLASSIFICATION", True, (255, 215, 0))
-        surf.blit(hdr, (15 + left_margin, 10))  # Add left margin to header
 
-        row_font = pygame.font.SysFont("Arial", 14, bold=True)
+        header_font = _get_font("Arial", 18, bold=True)
+        hdr = header_font.render("FINAL CLASSIFICATION", True, (255, 215, 0))
+        surf.blit(hdr, (15 + left_margin, 10))
+
+        row_font = _get_font("Arial", 14, bold=True)
         start_y = 45
         row_h = 35
-        max_distance = max(1, self.physics_world.finish_line_x - self.physics_world.start_x)
-
-        # Medallas como texto (no emojis)
-        medal_text = {1: "[1st]", 2: "[2nd]", 3: "[3rd]"}
         medal_colors = {1: (255, 215, 0), 2: (192, 192, 192), 3: (205, 127, 50)}
 
-        for idx, (position, country, distance, medal) in enumerate(leaderboard):
+        for idx, (position, country, distance, _medal) in enumerate(leaderboard):
             y = start_y + idx * row_h
-            
-            # Row background
+
             if position == 1:
                 bg = (50, 40, 20, 140)
             elif position == 2:
@@ -2803,14 +2821,11 @@ class GameEngine:
                 bg = (45, 35, 25, 100)
             else:
                 bg = (20, 20, 20, 70)
-            
-            # Add left margin to row background
+
             pygame.draw.rect(surf, bg, (10 + left_margin, y - 5, table_w - 20 - left_margin, row_h - 4), border_radius=6)
 
-            # Position con medalla de color - with left margin
             position_x = 25 + left_margin
             if position <= 3:
-                # Dibujar círculo de medalla
                 medal_color = medal_colors[position]
                 pygame.draw.circle(surf, medal_color, (position_x, y + 8), 10)
                 pygame.draw.circle(surf, (255, 255, 255), (position_x, y + 8), 10, 1)
@@ -2819,44 +2834,58 @@ class GameEngine:
             else:
                 pos_s = row_font.render(f"{position}", True, (200, 200, 200))
                 surf.blit(pos_s, (position_x - 5, y))
-        
-            # Country name (sin medal emoji) - with left margin
+
             country_x = 45 + left_margin
             country_s = row_font.render(country, True, (255, 255, 255))
-            # Truncate long country names to fit
-            max_country_width = bar_x - country_x - 10  # Space between country name and bar start
+            max_country_width = bar_x - country_x - 10
             if country_s.get_width() > max_country_width:
-                # Truncate country name if too long
                 truncated = country[:12] + "..." if len(country) > 12 else country
                 country_s = row_font.render(truncated, True, (255, 255, 255))
             surf.blit(country_s, (country_x, y))
 
-            # Distance en diamantes (sin emoji) - positioned with margin
             dist_val = distance if (isinstance(distance, (int, float)) and math.isfinite(distance)) else 0.0
             diamonds_approx = self._safe_int(dist_val / 0.8, 0)
-            dist_txt = f"{diamonds_approx}d"
-            dist_s = row_font.render(dist_txt, True, (255, 215, 100))
-            # Position with right margin to prevent cutoff
-            dist_x = table_w - bar_margin_right - 5  # 5px padding from bar margin
-            surf.blit(dist_s, (dist_x, y))
+            dist_s = row_font.render(f"{diamonds_approx}d", True, (255, 215, 100))
+            surf.blit(dist_s, (table_w - bar_margin_right - 5, y))
 
-            # Progress bar
-            prog = (dist_val / max_distance) if max_distance > 0 else 0.0
-            prog = min(max(prog, 0.0), 1.0)
+            prog = min(max((dist_val / max_distance) if max_distance > 0 else 0.0, 0.0), 1.0)
             filled = self._safe_int(bar_w * prog, 0)
-            
             pygame.draw.rect(surf, (50, 50, 50), (bar_x, y + 20, bar_w, bar_h), border_radius=5)
-            
             if filled > 0:
                 bar_color = medal_colors.get(position, (80, 180, 80))
                 pygame.draw.rect(surf, bar_color, (bar_x, y + 20, filled, bar_h), border_radius=5)
 
-        # Overlay
+        return surf
+
+    def _render_leaderboard(self) -> None:
+        """Render leaderboard overlay when race finished. Table surface is cached."""
+        if not self.physics_world.race_finished:
+            return
+
+        # Render 3D ranking visualization behind the final classification (animated, not cached)
+        if self.global_rank_data:
+            self._render_3d_ranking_visualization()
+
+        # Dim background behind the final classification panel
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill((0, 0, 0, 140))
         self.render_surface.blit(overlay, (0, 0))
 
-        self.render_surface.blit(surf, (table_x, table_y))
+        # Build (once) and blit the static leaderboard table
+        if self._leaderboard_cache is None:
+            self._leaderboard_cache = self._build_leaderboard_surface()
+
+        side_margin = 20
+        table_h = 420
+        table_x = side_margin
+        table_y = SCREEN_HEIGHT - table_h - 60
+
+        # Second dim overlay
+        overlay2 = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay2.fill((0, 0, 0, 180))
+        self.render_surface.blit(overlay2, (0, 0))
+
+        self.render_surface.blit(self._leaderboard_cache, (table_x, table_y))
 
     def _render_legend(self) -> None:
         """Render combat powers panel in bottom-right corner with transparent background."""
@@ -2877,7 +2906,7 @@ class GameEngine:
         pygame.draw.rect(legend_surf, (255, 215, 0, 180), (0, 0, panel_width, panel_height), 2, border_radius=8)
 
         # Title
-        title_font = pygame.font.SysFont("Arial", 10, bold=True)
+        title_font = _get_font("Arial", 10, bold=True)
         title_surf = self._render_text_enhanced(
             "COMBAT POWERS",
             title_font,
@@ -2898,8 +2927,8 @@ class GameEngine:
         row_height = 22
         start_y = padding + 20
         shape_size = 16
-        eff_font = pygame.font.SysFont("Arial", 10, bold=True)
-        name_font = pygame.font.SysFont("Arial", 8)
+        eff_font = _get_font("Arial", 10, bold=True)
+        name_font = _get_font("Arial", 8)
 
         for i, (shape_type, effect, gift_name, color) in enumerate(items):
             y = start_y + i * row_height
@@ -2939,7 +2968,7 @@ class GameEngine:
         # Frozen indicator (if active, show above the panel)
         if self.physics_world.frozen_countries:
             parts = [f"{c}: {t:.1f}s" for c, t in self.physics_world.frozen_countries.items()]
-            frozen_font = pygame.font.SysFont("Arial", 10, bold=True)
+            frozen_font = _get_font("Arial", 10, bold=True)
             frozen_surf = self._render_text_enhanced(
                 f"FROZEN: {' | '.join(parts)}",
                 frozen_font,
@@ -3159,17 +3188,13 @@ class GameEngine:
         return sanitized
     
     def _get_emoji_font(self, size: int) -> pygame.font.Font:
-        """Get a font that supports emoji rendering."""
-        try:
-            # macOS
-            return pygame.font.SysFont("Apple Color Emoji", size)
-        except:
+        """Get a cached font that supports emoji rendering."""
+        for name in ("Apple Color Emoji", "Segoe UI Emoji", "Arial"):
             try:
-                # Windows
-                return pygame.font.SysFont("Segoe UI Emoji", size)
-            except:
-                # Fallback
-                return pygame.font.SysFont("Arial", size)
+                return _get_font(name, size)
+            except Exception:
+                continue
+        return _get_font(None, size)
 
     def _render_text_with_emoji(
         self, 
@@ -3207,8 +3232,8 @@ class GameEngine:
         if has_emoji:
             font = self._get_emoji_font(size)
         else:
-            font = pygame.font.SysFont("Arial", size, bold=bold)
-        
+            font = _get_font("Arial", size, bold=bold)
+
         return font.render(text, True, color)
     
     def spawn_floating_text(
@@ -3400,7 +3425,7 @@ class GameEngine:
         pulse_alpha = int(200 + 55 * math.sin(ticks * 0.0025))  # Alpha pulsante
 
         # Main title - different text depending on mode
-        title_font = pygame.font.SysFont("Arial", 22, bold=True)
+        title_font = _get_font("Arial", 22, bold=True)
         if GAME_MODE == "COMMENT":
             title_text = "VOTE IN CHAT!"
         else:
@@ -3431,14 +3456,14 @@ class GameEngine:
         # COMMENT MODE: Mostrar lista de opciones dentro del recuadro
         if GAME_MODE == "COMMENT":
             # Subtitle
-            subtitle_font = pygame.font.SysFont("Arial", 14, bold=True)
+            subtitle_font = _get_font("Arial", 14, bold=True)
             subtitle_text = "Type # or SIGLA to start:"
             subtitle_surface = subtitle_font.render(subtitle_text, True, (200, 200, 200))
             subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
             self.render_surface.blit(subtitle_surface, subtitle_rect)
             
             # Lista de países: 2 columnas × 4 filas (4 países por columna)
-            item_font = pygame.font.SysFont("Arial", 12, bold=True)
+            item_font = _get_font("Arial", 12, bold=True)
             y_offset = box_y + 95
             line_height = 24
             col_width = box_width // 2
@@ -3469,7 +3494,7 @@ class GameEngine:
         
         else:
             # GIFT MODE: Subtitle con mismo efecto de respiración
-            subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
+            subtitle_font = _get_font("Arial", 20, bold=True)
             subtitle_text = "TO START!"
             subtitle_surface = self._render_text_enhanced(
                 subtitle_text,
@@ -3495,7 +3520,7 @@ class GameEngine:
 
         # Last winner info (if exists) - below country list to avoid overlap
         if self.last_winner:
-            winner_font = pygame.font.SysFont("Arial", 14, bold=True)
+            winner_font = _get_font("Arial", 14, bold=True)
             winner_text = f"Last winner: {self.last_winner}"
             winner_surface = self._render_text_enhanced(
                 winner_text,
@@ -3543,7 +3568,7 @@ class GameEngine:
         self.render_surface.blit(ticker_bg, (0, ticker_y))
         
         # Build ticker content string with colors
-        item_font = pygame.font.SysFont("Arial", 12, bold=True)
+        item_font = _get_font("Arial", 12, bold=True)
         separator = "  •  "
         
         # Calculate total width of one complete cycle
@@ -3609,10 +3634,10 @@ class GameEngine:
         bar_width = SCREEN_WIDTH - 2 * bar_margin_x
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
-        hint_font = pygame.font.SysFont("Arial", 10)
+        hint_font = _get_font("Arial", 10)
         hint = "Dale like o tap en vivo para llenar la barra"
         hint_surf = hint_font.render(hint, True, (240, 240, 240))
-        label_font = pygame.font.SysFont("Arial", 10, bold=True)
+        label_font = _get_font("Arial", 10, bold=True)
         label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
@@ -3777,94 +3802,85 @@ class GameEngine:
         Draw permanent CTA banner at bottom center.
         Semi-transparent rect (Alpha 150), neon yellow text, rotates every 8 seconds.
         Positioned above TikTok comments area for maximum visibility.
-        
+        Surface is cached and rebuilt only when cta_message_index changes.
+
         Args:
             surface: Target surface to draw on (typically render_surface).
         """
         from .config import (
             SCREEN_WIDTH,
-            SCREEN_HEIGHT,
             COUNTRY_SHORTCUTS,
             GAME_MODE,
             CTA_BANNER_Y,
             CTA_BANNER_HEIGHT,
             CTA_BANNER_WIDTH,
+            DISPLAY_FONT_NAMES,
         )
-        
+
         if GAME_MODE != "COMMENT":
             return
-        
-        # Country to number mapping (inverse of COUNTRY_SHORTCUTS)
-        country_to_num = {v: k for k, v in COUNTRY_SHORTCUTS.items() if k.isdigit()}
-        
-        # Build Smart CTA message based on current index and race state
-        leader = self.physics_world.get_leader_country()
-        lb = self.physics_world.get_leaderboard()
-        second = lb[1][1] if len(lb) >= 2 else None
-        second_num = country_to_num.get(second, "?") if second else "?"
-        
-        messages = [
-            "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
-            f"¿Dónde están los de {second or '?'}? ¡Escribe {second_num} para remontar!" if second else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
-            f"¡{leader or '?'} está ganando! ¡Detenlo enviando un helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
-            "¡Escribe el número de tu país para sumar puntos!",
-            "Con regalos avanzas más rápido!",
-        ]
-        text = messages[self.cta_message_index % len(messages)]
-        
-        # Compact banner: higher and smaller (no overlap with likes bar or first lane)
-        banner_height = CTA_BANNER_HEIGHT
-        banner_y = CTA_BANNER_Y
+
         banner_width = min(SCREEN_WIDTH - 20, CTA_BANNER_WIDTH)
         banner_x = (SCREEN_WIDTH - banner_width) // 2
-        
-        # Semi-transparent dark background (Alpha 150 per spec)
-        banner = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
-        banner.fill((0, 0, 0, 150))
-        pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
-        
-        # Display font: regular weight (no bold) and thin outline for a lighter look
-        from .config import DISPLAY_FONT_NAMES
-        font = None
-        for fn in DISPLAY_FONT_NAMES:
-            try:
-                font = pygame.font.SysFont(fn, 17, bold=False)
-                break
-            except Exception:
-                continue
-        if font is None:
-            font = pygame.font.Font(None, 16)
-        neon_yellow = (255, 255, 0)  # #FFFF00
-        words = text.split()
-        lines = []
-        current = ""
-        for w in words:
-            test = f"{current} {w}".strip() if current else w
-            if font.size(test)[0] <= banner_width - 14:
-                current = test
-            else:
-                if current:
-                    lines.append(current)
-                current = w
-        if current:
-            lines.append(current)
-        lines = lines[:2]  # Max 2 lines
-        
-        line_height = 20
-        y_offset = (banner_height - len(lines) * line_height) // 2 + 1
-        for line in lines:
-            text_surf = self._render_text_enhanced(
-                line,
-                font,
-                neon_yellow,
-                outline_color=(0, 0, 0),
-                outline_width=1,
-            )
-            rect = text_surf.get_rect(center=(banner_width // 2, y_offset + line_height // 2))
-            banner.blit(text_surf, rect)
-            y_offset += line_height
-        
-        surface.blit(banner, (banner_x, banner_y))
+        banner_y = CTA_BANNER_Y
+
+        # Rebuild banner surface only when the message index changes (every 8s)
+        if self._cta_cached_index != self.cta_message_index or self._cta_surface is None:
+            # Country to number mapping (inverse of COUNTRY_SHORTCUTS)
+            country_to_num = {v: k for k, v in COUNTRY_SHORTCUTS.items() if k.isdigit()}
+
+            # Build Smart CTA message based on current index and race state
+            leader = self.physics_world.get_leader_country()
+            lb = self.physics_world.get_leaderboard()
+            second = lb[1][1] if len(lb) >= 2 else None
+            second_num = country_to_num.get(second, "?") if second else "?"
+
+            messages = [
+                "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+                f"¿Dónde están los de {second or '?'}? ¡Escribe {second_num} para remontar!" if second else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+                f"¡{leader or '?'} está ganando! ¡Detenlo enviando un helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+                "¡Escribe el número de tu país para sumar puntos!",
+                "Con regalos avanzas más rápido!",
+            ]
+            text = messages[self.cta_message_index % len(messages)]
+
+            banner_height = CTA_BANNER_HEIGHT
+            banner = pygame.Surface((banner_width, banner_height), pygame.SRCALPHA)
+            banner.fill((0, 0, 0, 150))
+            pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
+
+            font = _get_font(DISPLAY_FONT_NAMES[0], 17, bold=False)
+            neon_yellow = (255, 255, 0)
+            words = text.split()
+            lines = []
+            current = ""
+            for w in words:
+                test = f"{current} {w}".strip() if current else w
+                if font.size(test)[0] <= banner_width - 14:
+                    current = test
+                else:
+                    if current:
+                        lines.append(current)
+                    current = w
+            if current:
+                lines.append(current)
+            lines = lines[:2]
+
+            line_height = 20
+            y_offset = (banner_height - len(lines) * line_height) // 2 + 1
+            for line in lines:
+                text_surf = self._render_text_enhanced(
+                    line, font, neon_yellow,
+                    outline_color=(0, 0, 0), outline_width=1,
+                )
+                rect = text_surf.get_rect(center=(banner_width // 2, y_offset + line_height // 2))
+                banner.blit(text_surf, rect)
+                y_offset += line_height
+
+            self._cta_surface = banner
+            self._cta_cached_index = self.cta_message_index
+
+        surface.blit(self._cta_surface, (banner_x, banner_y))
     
     def _render_race_start_hud(self, alpha: int) -> None:
         """
@@ -3887,9 +3903,9 @@ class GameEngine:
         overlay.fill((0, 0, 0, bg_alpha))
         
         # "GO!" text with glow effect
-        title_font = pygame.font.SysFont("Arial", 48, bold=True)
-        subtitle_font = pygame.font.SysFont("Arial", 16, bold=True)
-        
+        title_font = _get_font("Arial", 48, bold=True)
+        subtitle_font = _get_font("Arial", 16, bold=True)
+
         # Main title
         title_color = (255, 215, 0)  # Gold
         title_text = "GO!"
@@ -3958,7 +3974,7 @@ class GameEngine:
         self.render_surface.blit(panel_surface, (panel_x, panel_y))
         
         # Title: "*** RÉCORDS MUNDIALES ***"
-        title_font = pygame.font.SysFont("Arial", 16, bold=True)
+        title_font = _get_font("Arial", 16, bold=True)
         title_text = "*** WORLD RECORDS ***"
         title_surface = self._render_text_enhanced(
             title_text,
@@ -3969,10 +3985,10 @@ class GameEngine:
         )
         title_rect = title_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + 20))
         self.render_surface.blit(title_surface, title_rect)
-        
+
         # Render Top 3 countries
-        entry_font = pygame.font.SysFont("Arial", 14, bold=True)
-        medal_font = pygame.font.SysFont("Arial", 16, bold=True)
+        entry_font = _get_font("Arial", 14, bold=True)
+        medal_font = _get_font("Arial", 16, bold=True)
         
         start_y = panel_y + 50
         line_height = 32
@@ -4008,7 +4024,7 @@ class GameEngine:
         
         # Footer: last update time (optional)
         if self.global_rank_last_update > 0:
-            footer_font = pygame.font.SysFont("Arial", 9)
+            footer_font = _get_font("Arial", 9)
             elapsed = time.time() - self.global_rank_last_update
             if elapsed < 60:
                 footer_text = "Updated a few seconds ago"
@@ -4104,16 +4120,7 @@ class GameEngine:
         self.render_surface.blit(panel_surface, (panel_x, panel_y))
         
         # Title with glow effect - using improved font
-        font_names = ["Verdana", "Arial Black", "Arial"]
-        title_font = None
-        for font_name in font_names:
-            try:
-                title_font = pygame.font.SysFont(font_name, 20, bold=True)
-                break
-            except:
-                continue
-        if title_font is None:
-            title_font = pygame.font.Font(None, 20)
+        title_font = _get_font("Verdana", 20, bold=True)
         
         title_text = "* WORLD RECORDS *"
         
@@ -4130,23 +4137,8 @@ class GameEngine:
         self.render_surface.blit(title_surface, title_rect)
         
         # Render Top 3 with enhanced styling - using improved fonts
-        font_names = ["Verdana", "Arial Black", "Arial"]
-        entry_font = None
-        medal_font = None
-        for font_name in font_names:
-            try:
-                if entry_font is None:
-                    entry_font = pygame.font.SysFont(font_name, 16, bold=True)
-                if medal_font is None:
-                    medal_font = pygame.font.SysFont(font_name, 18, bold=True)
-                if entry_font and medal_font:
-                    break
-            except:
-                continue
-        if entry_font is None:
-            entry_font = pygame.font.Font(None, 16)
-        if medal_font is None:
-            medal_font = pygame.font.Font(None, 18)
+        entry_font = _get_font("Verdana", 16, bold=True)
+        medal_font = _get_font("Verdana", 18, bold=True)
         
         start_y = panel_y + 65
         line_height = 35
@@ -4186,16 +4178,7 @@ class GameEngine:
         
         # Footer with update time - using improved font
         if self.global_rank_last_update > 0:
-            font_names = ["Verdana", "Arial Black", "Arial"]
-            footer_font = None
-            for font_name in font_names:
-                try:
-                    footer_font = pygame.font.SysFont(font_name, 10)
-                    break
-                except:
-                    continue
-            if footer_font is None:
-                footer_font = pygame.font.Font(None, 10)
+            footer_font = _get_font("Verdana", 10)
             elapsed = time.time() - self.global_rank_last_update
             if elapsed < 60:
                 footer_text = "Updated a few seconds ago"
@@ -4324,7 +4307,7 @@ class GameEngine:
             
             # Country abbreviation on flag
             abbrev = self._get_country_abbrev(country)
-            flag_font = pygame.font.SysFont("Arial", int(flag_radius * 0.8), bold=True)
+            flag_font = _get_font("Arial", max(8, int(flag_radius * 0.8)), bold=True)
             abbrev_surf = flag_font.render(abbrev, True, (255, 255, 255))
             abbrev_rect = abbrev_surf.get_rect(center=(int(flag_x), int(flag_y)))
             self.render_surface.blit(abbrev_surf, abbrev_rect)
@@ -4447,12 +4430,15 @@ class GameEngine:
         
         # ☁️ Reset cloud sync flag for next race
         self.race_synced = False
-        
+
+        # Invalidate leaderboard cache for next race
+        self._leaderboard_cache = None
+
         # 🎬 Reset winner animation time for next race
         self.winner_animation_time = 0.0
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
-        
+
         # 📍 Reset shortcuts panel position for next race
         self.shortcuts_panel_position = "right"
         
@@ -4505,6 +4491,7 @@ class GameEngine:
         self.current_captains.clear()
         self.captain_change_timer.clear()
         self.race_synced = False
+        self._leaderboard_cache = None
         self.winner_animation_time = 0.0
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
@@ -4851,36 +4838,36 @@ class GameEngine:
                     )
     
     def _render_combo_flashes(self) -> None:
-        """Render flash effects on flags when combo levels up."""
+        """Render flash ring effects on flags into a shared layer then blit once."""
+        if not self.combo_flashes or self._flash_layer is None:
+            return
+        self._flash_layer.fill((0, 0, 0, 0))
+        has_any = False
         for flash in self.combo_flashes:
             if flash.country not in self.physics_world.racers:
                 continue
-            
+
             racer = self.physics_world.racers[flash.country]
             x = int(racer.body.position.x)
             y = int(racer.body.position.y)
-            
+
             # Flash fades out over duration
             progress = flash.time / flash.duration
             alpha = int(255 * (1.0 - progress) * flash.intensity)
-            
+
             # Expanding ring effect
             radius = int(20 + 30 * progress)
-            
-            # Create flash surface
-            flash_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+
             pygame.draw.circle(
-                flash_surf,
+                self._flash_layer,
                 (255, 255, 255, alpha),
-                (radius, radius),
+                (x, y),
                 radius,
                 3  # Ring, not filled
             )
-            
-            self.render_surface.blit(
-                flash_surf,
-                (x - radius, y - radius)
-            )
+            has_any = True
+        if has_any:
+            self.render_surface.blit(self._flash_layer, (0, 0))
     
     def _check_final_stretch(self) -> None:
         """
@@ -5045,8 +5032,8 @@ class GameEngine:
         overlay.fill((0, 0, 0, bg_alpha))
         
         # Main text with glow
-        font = pygame.font.SysFont("Arial", 36, bold=True)
-        
+        font = _get_font("Arial", 36, bold=True)
+
         # Glow effect (multiple layers)
         glow_color = (255, int(100 + 100 * pulse), 0)  # Orange pulsing
         text = "🏁 FINAL STRETCH! 🏁"
@@ -5073,7 +5060,7 @@ class GameEngine:
         
         overlay = pygame.Surface((SCREEN_WIDTH, 36), pygame.SRCALPHA)
         overlay.fill((180, 0, 0, 200))
-        font = pygame.font.SysFont("Arial", 20, bold=True)
+        font = _get_font("Arial", 20, bold=True)
         text = font.render("STRESS TEST ACTIVE", True, (255, 255, 255))
         r = text.get_rect(center=(SCREEN_WIDTH // 2, 18))
         overlay.blit(text, r)
@@ -5302,20 +5289,20 @@ class GameEngine:
         banner.fill((0, 0, 0, bg_alpha))
         
         # Winner text with golden glow
-        title_font = pygame.font.SysFont("Arial", 42, bold=True)
-        subtitle_font = pygame.font.SysFont("Arial", 20, bold=True)
-        
+        title_font = _get_font("Arial", 42, bold=True)
+        subtitle_font = _get_font("Arial", 20, bold=True)
+
         # Pulsing gold color
         pulse = 0.5 + 0.5 * math.sin(self.victory_sequence_time * 6.0)
         gold_color = (255, int(200 + 55 * pulse), int(50 * pulse))
-        
+
         # Main winner text
         winner_text = f"{abbrev} WINS!"
-        
+
         # Apply scale from entrance animation
         scaled_size = int(42 * self.victory_banner_scale)
         if scaled_size > 8:
-            title_font = pygame.font.SysFont("Arial", scaled_size, bold=True)
+            title_font = _get_font("Arial", scaled_size, bold=True)
         
         title_surf = self._render_text_enhanced(
             winner_text,
@@ -5364,7 +5351,7 @@ class GameEngine:
         alpha = int(255 * fade_in)
         
         # CTA text
-        cta_font = pygame.font.SysFont("Arial", 16, bold=True)
+        cta_font = _get_font("Arial", 16, bold=True)
         cta_text = "Send a GIFT to claim YOUR crown next race!"
         
         cta_surf = self._render_text_with_shadow(
