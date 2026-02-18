@@ -123,6 +123,8 @@ COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
 COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
 # Ghost Participation System (keeps race alive during inactivity)
+# Set GHOST_MODE_ENABLED = False to permanently disable ghost bots
+GHOST_MODE_ENABLED = False
 GHOST_INACTIVITY_THRESHOLD = 12.0  # Seconds without real activity before ghosts activate
 GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
 GHOST_VOTE_INTERVAL_MAX = 7.0  # Max seconds between ghost votes

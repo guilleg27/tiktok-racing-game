@@ -39,97 +39,60 @@ class TikTokManager:
         return client
     
     def _extract_username(self, event) -> str:
-        """Extract username from event using multiple fallback methods."""
+        """Extract username from event using TikTokLive 6.6.5 proto field names."""
         import time
-        
-        # Método 1: Atributos directos del event.user (más seguro)
+
+        # TikTokLive 6.6.5 User proto fields:
+        #   nick_name  (field 3)  — display name, almost always populated
+        #   username   (field 38) — TikTok @handle, sometimes omitted
+        # ExtendedUser adds properties: nickname (→ nick_name), unique_id (→ username)
+        # NOTE: 'id' (field 1) is the numeric user ID (int64) — NOT a display name, excluded.
+
+        # String-only attrs to try on any User/ExtendedUser object (ordered by reliability)
+        _STRING_ATTRS = ('nick_name', 'username', 'nickname', 'unique_id', 'display_id')
+
+        def _try_user_obj(user) -> str:
+            """Return first non-empty string attr from a user object, or ''."""
+            for attr in _STRING_ATTRS:
+                try:
+                    if not hasattr(user, attr):
+                        continue
+                    val = getattr(user, attr, None)
+                    # Only accept actual strings (exclude int fields like 'id')
+                    if val and isinstance(val, str) and val.strip():
+                        return val.strip()
+                except Exception:
+                    continue
+            return ''
+
+        # Method 1: event.user (ExtendedUser — works for CommentEvent and GiftEvent)
         try:
             if hasattr(event, 'user') and event.user:
-                user = event.user
-                
-                # Intentar acceder a cada atributo de forma segura
-                safe_attrs = [
-                    'unique_id',
-                    'uniqueId',
-                    'nickname',
-                    'display_name',
-                    'displayName',
-                    'username',
-                    'userName',
-                    'id',
-                    'displayId',
-                    'display_id',
-                ]
-                for attr in safe_attrs:
-                    try:
-                        if hasattr(user, attr):
-                            val = getattr(user, attr, None)
-                            if val and str(val).strip():
-                                return str(val).strip()
-                    except Exception:
-                        continue  # Continuar con el siguiente atributo si este falla
-                
-                # Fallback: intentar str(user) si es legible
-                try:
-                    raw = str(user).strip()
-                    if raw and raw != repr(user):
-                        return raw
-                except Exception:
-                    pass
-        except Exception:
-            pass  # Continuar con otros métodos
-        
-        # Método 2: Proto buffer (acceso más seguro)
-        try:
-            if hasattr(event, '_proto') and event._proto:
-                proto = event._proto
-                if hasattr(proto, 'user') and proto.user:
-                    user = proto.user
-                    
-                    # Probar múltiples nombres de atributos de forma segura
-                    safe_attrs = [
-                        'uniqueId',
-                        'unique_id',
-                        'nickname',
-                        'nick_name',
-                        'displayName',
-                        'display_name',
-                        'username',
-                        'userName',
-                        'id',
-                        'displayId',
-                        'display_id',
-                    ]
-                    for attr in safe_attrs:
-                        try:
-                            if hasattr(user, attr):
-                                val = getattr(user, attr, None)
-                                if val and str(val).strip():
-                                    return str(val).strip()
-                        except Exception:
-                            continue  # Continuar con el siguiente atributo si este falla
-                    
-                    # Fallback adicional con str(user)
-                    try:
-                        raw = str(user).strip()
-                        if raw and raw != repr(user):
-                            return raw
-                    except Exception:
-                        pass
-        except Exception:
-            pass  # Continuar con fallback
-        
-        # Método 3: Intentar acceder directamente a atributos del evento
-        try:
-            # Algunos eventos tienen el username directamente
-            if hasattr(event, 'username'):
-                val = getattr(event, 'username', None)
-                if val and str(val).strip():
-                    return str(val).strip()
+                result = _try_user_obj(event.user)
+                if result:
+                    return result
         except Exception:
             pass
-        
-        # Método 4: Fallback con ID único temporal (solo si todo falla)
+
+        # Method 2: event.user_info (CommentEvent direct field — User proto)
+        try:
+            if hasattr(event, 'user_info') and event.user_info:
+                result = _try_user_obj(event.user_info)
+                if result:
+                    return result
+        except Exception:
+            pass
+
+        # Method 3: event.from_user (GiftEvent direct field — ExtendedUser)
+        try:
+            if hasattr(event, 'from_user') and event.from_user:
+                result = _try_user_obj(event.from_user)
+                if result:
+                    return result
+        except Exception:
+            pass
+
+        # Fallback: timestamp-based name (only when all proto fields are empty)
         fallback_name = f"Usuario{int(time.time() * 1000) % 10000}"
         logger.debug(f"⚠️ Could not extract username from event, using fallback: {fallback_name}")
         return fallback_name
