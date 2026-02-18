@@ -1505,17 +1505,18 @@ class GameEngine:
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
-    
+
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
                     diamonds = random.randint(1, 10)
-                    
+
                     self.physics_world.apply_gift_impulse(
                         country=country,
                         gift_name="Test Gift",
                         diamond_count=diamonds
                     )
-                    
+                    self._on_real_activity()
+
                     logger.info(f"TEST: {country} received {diamonds}💎")
                     
                 elif event.key == pygame.K_y:  # Y = Test Big Gift
@@ -1523,17 +1524,18 @@ class GameEngine:
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
                         logger.info("🏁 Game state: RACING (test mode)")
-    
+
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
                     diamonds = random.randint(25, 50)
-                    
+
                     self.physics_world.apply_gift_impulse(
                         country=country,
                         gift_name="Big Test Gift",
                         diamond_count=diamonds
                     )
-                    
+                    self._on_real_activity()
+
                     logger.info(f"TEST BIG: {country} received {diamonds}💎")
 
                 elif event.key == pygame.K_1:  # 1 = Test Vote/Rosa (depends on mode)
@@ -1753,6 +1755,7 @@ class GameEngine:
                                     gift_name="ComboTest",
                                     diamond_count=1
                                 )
+                            self._on_real_activity()
                             logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
                         except Exception as e:
                             logger.exception("🔥 TEST FIRE failed: %s", e)
@@ -4533,6 +4536,7 @@ class GameEngine:
         self.audio_manager.stop_victory_sound()
 
         self.game_state = 'RACING'
+        self._on_real_activity()  # Reset ghost timer at race start
         self.race_start_time = time.time()
 
         # Initialize spotlight position to first racer
