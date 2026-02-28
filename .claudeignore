@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.egg-info/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs & crash reports
+*.log
+crash_report.log
+
+# Assets (binaries)
+assets/audio/
+assets/sounds/
+assets/gifts/
+assets/flags/
+
+# macOS system files
+.DS_Store
+
+# Environment secrets
+.env
