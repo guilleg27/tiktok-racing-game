@@ -9,6 +9,9 @@ env/
 .venv/
 .env/
 
+#Snapshots
+snapshots/
+
 # PyInstaller builds
 build/
 dist/
