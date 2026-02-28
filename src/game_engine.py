@@ -651,6 +651,7 @@ class GameEngine:
         # 👻 Ghost Participation System (keeps race alive during inactivity)
         from .config import GHOST_MODE_ENABLED
         self.ghost_mode_enabled: bool = GHOST_MODE_ENABLED  # Can be toggled at runtime with B key
+        self.recording_mode: bool = False    # Toggle with R — hides dev UI for TikTok clips
         self.last_activity_time: float = time.time()
         self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
         self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
@@ -1561,9 +1562,16 @@ class GameEngine:
                         self._esc_quit_requested = True
                         self._esc_quit_time = now
                         logger.info("🚪 Press ESC again within 2s to quit")
-                elif event.key == pygame.K_c or event.key == pygame.K_r:
+                elif event.key == pygame.K_c:
                     self._return_to_idle()  # Usar nuevo método
                     logger.info("Race reset to IDLE!")
+
+                elif event.key == pygame.K_r:                          # R = Recording Mode toggle
+                    self.recording_mode = not self.recording_mode
+                    pygame.mouse.set_visible(not self.recording_mode)
+                    status = "ON" if self.recording_mode else "OFF"
+                    print(f"[NomisLab] Recording Mode: {status}")
+                    logger.info("[NomisLab] Recording Mode: %s", status)
                 elif event.key == pygame.K_t:  # Test mode
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
@@ -2231,54 +2239,59 @@ class GameEngine:
         self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
-        self._render_header()
-        # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
-        from .config import GAME_MODE
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
-            self._draw_permanent_cta(self.render_surface)
-        self._render_likes_bar()
-        self._render_leaderboard()
-        self._render_ghost_mode_indicator()
+
+        if not self.recording_mode:
+            self._render_header()
+            # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
+            from .config import GAME_MODE
+            if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+                self._draw_permanent_cta(self.render_surface)
+            self._render_likes_bar()
+            self._render_leaderboard()
+            self._render_ghost_mode_indicator()
+        else:
+            from .config import GAME_MODE
 
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
-        
-        # 🧪 Stress test indicator (key K)
-        if self._stress_test_active:
-            self._render_stress_test_banner()
-        
-        # Render shortcuts panel in COMMENT mode (solo durante RACING)
-        import time as time_module
-        
-        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            
-            # Show fade-out HUD overlay for first 3 seconds
-            if self.race_start_time:
-                elapsed = time_module.time() - self.race_start_time
-                if elapsed < self.hud_fade_duration:
-                    # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
-                    fade_progress = elapsed / self.hud_fade_duration
-                    overlay_alpha = int(255 * (1.0 - fade_progress))
-                    if overlay_alpha > 20:  # Only render if visible
-                        self._render_race_start_hud(overlay_alpha)
-        
+
+        if not self.recording_mode:
+            # 🧪 Stress test indicator (key K)
+            if self._stress_test_active:
+                self._render_stress_test_banner()
+
+            # Render shortcuts panel in COMMENT mode (solo durante RACING)
+            import time as time_module
+
+            if GAME_MODE == "COMMENT" and self.game_state == "RACING":
+
+                # Show fade-out HUD overlay for first 3 seconds
+                if self.race_start_time:
+                    elapsed = time_module.time() - self.race_start_time
+                    if elapsed < self.hud_fade_duration:
+                        # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
+                        fade_progress = elapsed / self.hud_fade_duration
+                        overlay_alpha = int(255 * (1.0 - fade_progress))
+                        if overlay_alpha > 20:  # Only render if visible
+                            self._render_race_start_hud(overlay_alpha)
+
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
             self._render_idle_screen()
-        
+
         # Render victory flash effect (white screen flash)
         if self.victory_flash_alpha > 0:
             self._render_victory_flash()
-        
+
         # 🏆 Render EPIC VICTORY SEQUENCE (on top of almost everything)
         if self.victory_sequence_active:
             self._render_victory_sequence()
-    
+
         # 🎥 Apply screen shake offset when blitting to window
         shake_offset = self.screen_shaker.current_offset
         blit_x = GAME_MARGIN + int(shake_offset[0])
         blit_y = GAME_MARGIN + int(shake_offset[1])
-        
+
         # 🎬 Apply subtle camera zoom during victory sequence (scale() not smoothscale for 60 FPS)
         if self.victory_sequence_active and self.victory_zoom_level > 1.01:
             zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom
@@ -2294,8 +2307,21 @@ class GameEngine:
             self.screen.blit(self.render_surface, (blit_x, blit_y))
 
         # 🔊 Audio toast overlay (always rendered on top of everything)
-        if self._audio_toast_timer > 0:
+        if self._audio_toast_timer > 0 and not self.recording_mode:
             self._render_audio_toast()
+
+        # 🎙️ NomisLab watermark (recording mode only, drawn directly on screen — unaffected by camera shake)
+        if self.recording_mode:
+            from .config import WATERMARK_TEXT, BRAND_COLOR, WATERMARK_ALPHA
+            wm_font = self.font_small or _get_font(None, FONT_SIZE_SMALL)
+            wm_surf = wm_font.render(WATERMARK_TEXT, True, BRAND_COLOR)
+            wm_alpha_surf = pygame.Surface(wm_surf.get_size(), pygame.SRCALPHA)
+            wm_alpha_surf.blit(wm_surf, (0, 0))
+            wm_alpha_surf.set_alpha(WATERMARK_ALPHA)
+            padding = 20
+            wx = self.screen.get_width() - wm_alpha_surf.get_width() - padding
+            wy = self.screen.get_height() - wm_alpha_surf.get_height() - padding
+            self.screen.blit(wm_alpha_surf, (wx, wy))
 
         pygame.display.flip()
 

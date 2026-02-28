@@ -149,6 +149,12 @@ COLOR_STATUS_CONNECTED = (0, 255, 0)       # Green for connected status
 COLOR_STATUS_DISCONNECTED = (255, 0, 0)    # Red for disconnected status
 COLOR_STATUS_RECONNECTING = (255, 165, 0)  # Orange for reconnecting status
 
+# ── NomisLab Brand ──────────────────────────────────────────────────────────
+BRAND_NAME = "NomisLab"
+BRAND_COLOR = (0, 255, 255)          # Electric Cyan
+WATERMARK_TEXT = "NOMISLAB | Interactive Engine"
+WATERMARK_ALPHA = 153                # 0.6 × 255
+
 # Gift name to color mapping (Spanish and English names)
 GIFT_COLORS = {
     # Common gifts - Spanish
