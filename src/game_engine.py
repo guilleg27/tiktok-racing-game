@@ -91,6 +91,24 @@ def _get_font(name: Optional[str], size: int, bold: bool = False) -> "pygame.fon
     return _font_cache[key]
 
 
+_MONO_FONT_CANDIDATES = ["Courier New", "Courier", "Consolas", "DejaVu Sans Mono", "Lucida Console"]
+
+
+def _get_mono_font(size: int) -> "pygame.font.Font":
+    """Return a cached monospaced font, trying several candidates then falling back."""
+    key = ("__mono__", size, False)
+    if key not in _font_cache:
+        for name in _MONO_FONT_CANDIDATES:
+            try:
+                _font_cache[key] = pygame.font.SysFont(name, size)
+                break
+            except Exception:
+                continue
+        else:
+            _font_cache[key] = pygame.font.Font(None, size)  # Non-mono fallback — safe
+    return _font_cache[key]
+
+
 @dataclass
 class Particle:
     """
@@ -658,6 +676,10 @@ class GameEngine:
         # 📸 Victory Snapshot System
         self._snapshot_taken: bool = False    # One snapshot per race; prevents duplicates
         self._snapshot_pending: bool = False  # Set on winner detection, cleared after save
+
+        # 🔬 Engineering Mode
+        self.engineering_mode: bool = False        # Toggle with E key
+        self._eng_physics_step_ms: float = 0.0    # Last physics step duration in ms
 
         # 🎙️ Epic CTA Overlay (SHIFT+G)
         self.cta_overlay_active: bool = False        # Whether overlay is currently shown
@@ -1584,6 +1606,11 @@ class GameEngine:
                     status = "ON" if self.recording_mode else "OFF"
                     print(f"[NomisLab] Recording Mode: {status}")
                     logger.info("[NomisLab] Recording Mode: %s", status)
+                elif event.key == pygame.K_e:  # E = Engineering Mode toggle
+                    self.engineering_mode = not self.engineering_mode
+                    status = "ON" if self.engineering_mode else "OFF"
+                    print(f"[NomisLab] Engineering Mode: {status}")
+                    logger.info("[NomisLab] Engineering Mode: %s", status)
                 elif event.key == pygame.K_s:  # S = Manual screenshot
                     self._save_snapshot(manual=True)
                 elif event.key == pygame.K_t:  # Test mode
@@ -2042,7 +2069,9 @@ class GameEngine:
         if self._physics_accumulator > self._max_physics_catchup:
             self._physics_accumulator = self._max_physics_catchup
         while self._physics_accumulator >= self._fixed_dt:
+            _phys_t0 = time.perf_counter()
             self.physics_world.update(self._fixed_dt)
+            self._eng_physics_step_ms = (time.perf_counter() - _phys_t0) * 1000
             self._physics_accumulator -= self._fixed_dt
         self.update_particles(dt)
         self.update_floating_texts()
@@ -2328,6 +2357,10 @@ class GameEngine:
         # 🎙️ Epic CTA Overlay (SHIFT+G) — always visible, even in recording mode
         self._render_cta_overlay()
 
+        # 🔬 Engineering Mode: physics wireframe + telemetry HUD
+        if self.engineering_mode:
+            self._render_engineering_overlay()
+
         # 🎥 Apply screen shake offset when blitting to window
         shake_offset = self.screen_shaker.current_offset
         blit_x = GAME_MARGIN + int(shake_offset[0])
@@ -2556,6 +2589,85 @@ class GameEngine:
         except Exception as e:
             logger.error("[NomisLab] Snapshot failed: %s", e)
             print(f"[NomisLab] Snapshot failed: {e}")
+
+    def _render_engineering_overlay(self) -> None:
+        """Draw the Engineering Mode diagnostics: Pymunk wireframe + telemetry HUD.
+
+        All drawing targets self.render_surface (460×820) so the overlay participates
+        in screen shake and stays within the game area.
+        """
+        import pymunk as _pymunk
+
+        CYAN = (0, 255, 255)
+        rs = self.render_surface
+
+        # ── 1. Physics Wireframe (SRCALPHA surface for glow layers) ──────────────
+        eng_surf = pygame.Surface(rs.get_size(), pygame.SRCALPHA)
+
+        # 1a. Groove joint rails (constraint lines — the invisible X-axis rails)
+        for constraint in self.physics_world.space.constraints:
+            if isinstance(constraint, _pymunk.GrooveJoint):
+                ga = constraint.groove_a
+                gb = constraint.groove_b
+                pygame.draw.line(
+                    eng_surf, (0, 180, 200, 50),
+                    (int(ga.x), int(ga.y)),
+                    (int(gb.x), int(gb.y)), 1
+                )
+
+        # 1b. Flag racer circles with glow halo
+        for racer in self.physics_world.racers.values():
+            cx = int(racer.body.position.x)
+            cy = int(racer.body.position.y)
+            r  = int(racer.shape.radius)
+            pygame.draw.circle(eng_surf, (0, 255, 255, 20), (cx, cy), r + 6)   # outer bloom
+            pygame.draw.circle(eng_surf, (0, 255, 255, 55), (cx, cy), r + 3)   # mid glow
+            pygame.draw.circle(eng_surf, (0, 255, 255, 190), (cx, cy), r, 1)   # sharp outline
+
+        rs.blit(eng_surf, (0, 0))
+
+        # ── 2. Telemetry HUD (top-left terminal panel) ───────────────────────────
+        from .config import GAME_MODE
+
+        fps_val = self._fps_samples[-1] if self._fps_samples else 0.0
+        entity_count = len(self.physics_world.racers) + len(self.meteors)
+        particle_count = len(self.particles)
+
+        if self._stress_test_active:
+            eng_state = "STRESS"
+        elif self.recording_mode:
+            eng_state = "RECORDING"
+        else:
+            eng_state = self.game_state  # IDLE / RACING / VICTORY
+
+        rows = [
+            ("[NOMISLAB ENGINE]", CYAN, True),
+            ("─" * 20, (0, 180, 180), False),
+            (f"FPS          : {fps_val:.1f}", (200, 255, 200), False),
+            (f"Active_Ent   : {entity_count}", (200, 255, 200), False),
+            (f"Physics_Step : {self._eng_physics_step_ms:.3f}ms", (200, 255, 200), False),
+            (f"Engine_State : {eng_state}", (200, 255, 200), False),
+            (f"Particles    : {particle_count}", (200, 255, 200), False),
+            (f"Mode         : {GAME_MODE}", (200, 255, 200), False),
+        ]
+
+        font_sm = _get_mono_font(13)
+        line_h = font_sm.get_linesize() + 2
+        pad_x, pad_y = 8, 6
+        panel_w = 195
+        panel_h = len(rows) * line_h + pad_y * 2
+
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel.fill((0, 10, 20, 200))
+        # Cyan left-border accent
+        pygame.draw.rect(panel, CYAN, (0, 0, 2, panel_h))
+
+        for i, (text, color, _bold) in enumerate(rows):
+            font = _get_mono_font(13)
+            surf = font.render(text, True, color)
+            panel.blit(surf, (pad_x, pad_y + i * line_h))
+
+        rs.blit(panel, (6, 6))
 
     def _render_balls(self) -> None:
         """Render all flag racers with winner spotlight and leader glow."""
