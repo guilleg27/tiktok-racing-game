@@ -7,6 +7,8 @@ import math
 import random
 import time
 import sys
+import os
+import datetime
 from .cloud_manager import CloudManager
 from dataclasses import dataclass, field
 
@@ -86,6 +88,24 @@ def _get_font(name: Optional[str], size: int, bold: bool = False) -> "pygame.fon
                 _font_cache[key] = pygame.font.SysFont(name, size, bold=bold)
             except Exception:
                 _font_cache[key] = pygame.font.Font(None, size)
+    return _font_cache[key]
+
+
+_MONO_FONT_CANDIDATES = ["Courier New", "Courier", "Consolas", "DejaVu Sans Mono", "Lucida Console"]
+
+
+def _get_mono_font(size: int) -> "pygame.font.Font":
+    """Return a cached monospaced font, trying several candidates then falling back."""
+    key = ("__mono__", size, False)
+    if key not in _font_cache:
+        for name in _MONO_FONT_CANDIDATES:
+            try:
+                _font_cache[key] = pygame.font.SysFont(name, size)
+                break
+            except Exception:
+                continue
+        else:
+            _font_cache[key] = pygame.font.Font(None, size)  # Non-mono fallback — safe
     return _font_cache[key]
 
 
@@ -652,6 +672,21 @@ class GameEngine:
         # 👻 Ghost Participation System (keeps race alive during inactivity)
         from .config import GHOST_MODE_ENABLED
         self.ghost_mode_enabled: bool = GHOST_MODE_ENABLED  # Can be toggled at runtime with B key
+        self.recording_mode: bool = False    # Toggle with R — hides dev UI for TikTok clips
+
+        # 📸 Victory Snapshot System
+        self._snapshot_taken: bool = False    # One snapshot per race; prevents duplicates
+        self._snapshot_pending: bool = False  # Set on winner detection, cleared after save
+
+        # 🔬 Engineering Mode
+        self.engineering_mode: bool = False        # Toggle with E key
+        self._eng_physics_step_ms: float = 0.0    # Last physics step duration in ms
+
+        # 🎙️ Epic CTA Overlay (SHIFT+G)
+        self.cta_overlay_active: bool = False        # Whether overlay is currently shown
+        self.cta_overlay_time: float = 0.0           # Counts up while active (drives animations)
+        self.cta_overlay_fade_start: float = -1.0   # -1 = not fading; else = time value when fade began
+
         self.last_activity_time: float = time.time()
         self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
         self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
@@ -1562,9 +1597,23 @@ class GameEngine:
                         self._esc_quit_requested = True
                         self._esc_quit_time = now
                         logger.info("🚪 Press ESC again within 2s to quit")
-                elif event.key == pygame.K_c or event.key == pygame.K_r:
+                elif event.key == pygame.K_c:
                     self._return_to_idle()  # Usar nuevo método
                     logger.info("Race reset to IDLE!")
+
+                elif event.key == pygame.K_r:                          # R = Recording Mode toggle
+                    self.recording_mode = not self.recording_mode
+                    pygame.mouse.set_visible(not self.recording_mode)
+                    status = "ON" if self.recording_mode else "OFF"
+                    print(f"[NomisLab] Recording Mode: {status}")
+                    logger.info("[NomisLab] Recording Mode: %s", status)
+                elif event.key == pygame.K_e:  # E = Engineering Mode toggle
+                    self.engineering_mode = not self.engineering_mode
+                    status = "ON" if self.engineering_mode else "OFF"
+                    print(f"[NomisLab] Engineering Mode: {status}")
+                    logger.info("[NomisLab] Engineering Mode: %s", status)
+                elif event.key == pygame.K_s:  # S = Manual screenshot
+                    self._save_snapshot(manual=True)
                 elif event.key == pygame.K_t:  # Test mode
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
@@ -1820,6 +1869,19 @@ class GameEngine:
                     else:
                         logger.debug("🔥 TEST FIRE: cooldown %.1fs", self._test_fire_cooldown - (now - self._last_test_fire_time))
                 
+                elif event.key == pygame.K_g and (event.mod & pygame.KMOD_SHIFT):  # SHIFT+G = Epic CTA toggle
+                    if not self.cta_overlay_active:
+                        self.cta_overlay_active = True
+                        self.cta_overlay_time = 0.0
+                        self.cta_overlay_fade_start = -1.0
+                        print("[NomisLab] CTA Overlay: ACTIVE")
+                        logger.info("[NomisLab] CTA Overlay: ACTIVE")
+                    else:
+                        if self.cta_overlay_fade_start < 0.0:
+                            self.cta_overlay_fade_start = self.cta_overlay_time
+                            print("[NomisLab] CTA Overlay: DEACTIVATING")
+                            logger.info("[NomisLab] CTA Overlay: DEACTIVATING")
+
                 elif event.key == pygame.K_g:  # G = Test Final Stretch
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
@@ -2004,7 +2066,9 @@ class GameEngine:
         if self._physics_accumulator > self._max_physics_catchup:
             self._physics_accumulator = self._max_physics_catchup
         while self._physics_accumulator >= self._fixed_dt:
+            _phys_t0 = time.perf_counter()
             self.physics_world.update(self._fixed_dt)
+            self._eng_physics_step_ms = (time.perf_counter() - _phys_t0) * 1000
             self._physics_accumulator -= self._fixed_dt
         self.update_particles(dt)
         self.update_floating_texts()
@@ -2064,9 +2128,18 @@ class GameEngine:
             # Update final stretch animation timer
             if self.final_stretch_triggered:
                 self.final_stretch_time += dt
-            
+
             # 🎤 Check for overtakes and close races (TTS announcements)
             self._check_race_events(dt)
+
+        # 🎙️ Epic CTA Overlay animation timer + auto-dismiss after fade completes
+        if self.cta_overlay_active:
+            self.cta_overlay_time += dt
+            if self.cta_overlay_fade_start >= 0.0:
+                if self.cta_overlay_time - self.cta_overlay_fade_start >= 0.4:
+                    self.cta_overlay_active = False
+                    self.cta_overlay_time = 0.0
+                    self.cta_overlay_fade_start = -1.0
         
         # Update victory flash effect (fade out) - non-blocking, runs independently
         if self.victory_flash_alpha > 0:
@@ -2128,7 +2201,9 @@ class GameEngine:
             # ☁️ CLOUD SYNC: Sync to Supabase on first detection (non-blocking)
             if not self.race_synced and self.winner_animation_time < dt * 2:
                 self.race_synced = True
-                
+                if not self._snapshot_taken:
+                    self._snapshot_pending = True
+
                 # 🎥 BIG VICTORY SHAKE!
                 self.screen_shaker.big_impact_shake()
                 
@@ -2230,37 +2305,42 @@ class GameEngine:
         self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
-        self._render_header()
-        # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
-        from .config import GAME_MODE
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
-            self._draw_permanent_cta(self.render_surface)
-        self._render_likes_bar()
-        self._render_leaderboard()
-        self._render_ghost_mode_indicator()
+
+        if not self.recording_mode:
+            self._render_header()
+            # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
+            from .config import GAME_MODE
+            if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+                self._draw_permanent_cta(self.render_surface)
+            self._render_likes_bar()
+            self._render_leaderboard()
+            self._render_ghost_mode_indicator()
+        else:
+            from .config import GAME_MODE
 
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
-        
-        # 🧪 Stress test indicator (key K)
-        if self._stress_test_active:
-            self._render_stress_test_banner()
-        
-        # Render shortcuts panel in COMMENT mode (solo durante RACING)
-        import time as time_module
-        
-        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            
-            # Show fade-out HUD overlay for first 3 seconds
-            if self.race_start_time:
-                elapsed = time_module.time() - self.race_start_time
-                if elapsed < self.hud_fade_duration:
-                    # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
-                    fade_progress = elapsed / self.hud_fade_duration
-                    overlay_alpha = int(255 * (1.0 - fade_progress))
-                    if overlay_alpha > 20:  # Only render if visible
-                        self._render_race_start_hud(overlay_alpha)
-        
+
+        if not self.recording_mode:
+            # 🧪 Stress test indicator (key K)
+            if self._stress_test_active:
+                self._render_stress_test_banner()
+
+            # Render shortcuts panel in COMMENT mode (solo durante RACING)
+            import time as time_module
+
+            if GAME_MODE == "COMMENT" and self.game_state == "RACING":
+
+                # Show fade-out HUD overlay for first 3 seconds
+                if self.race_start_time:
+                    elapsed = time_module.time() - self.race_start_time
+                    if elapsed < self.hud_fade_duration:
+                        # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
+                        fade_progress = elapsed / self.hud_fade_duration
+                        overlay_alpha = int(255 * (1.0 - fade_progress))
+                        if overlay_alpha > 20:  # Only render if visible
+                            self._render_race_start_hud(overlay_alpha)
+
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
             self._render_idle_screen()
@@ -2274,16 +2354,23 @@ class GameEngine:
         # Render victory flash effect (white screen flash)
         if self.victory_flash_alpha > 0:
             self._render_victory_flash()
-        
+
         # 🏆 Render EPIC VICTORY SEQUENCE (on top of almost everything)
         if self.victory_sequence_active:
             self._render_victory_sequence()
-    
+
+        # 🎙️ Epic CTA Overlay (SHIFT+G) — always visible, even in recording mode
+        self._render_cta_overlay()
+
+        # 🔬 Engineering Mode: physics wireframe + telemetry HUD
+        if self.engineering_mode:
+            self._render_engineering_overlay()
+
         # 🎥 Apply screen shake offset when blitting to window
         shake_offset = self.screen_shaker.current_offset
         blit_x = GAME_MARGIN + int(shake_offset[0])
         blit_y = GAME_MARGIN + int(shake_offset[1])
-        
+
         # 🎬 Apply subtle camera zoom during victory sequence (scale() not smoothscale for 60 FPS)
         if self.victory_sequence_active and self.victory_zoom_level > 1.01:
             zoom = min(self.victory_zoom_level, 1.15)  # Cap at 15% zoom
@@ -2299,8 +2386,29 @@ class GameEngine:
             self.screen.blit(self.render_surface, (blit_x, blit_y))
 
         # 🔊 Audio toast overlay (always rendered on top of everything)
-        if self._audio_toast_timer > 0:
+        if self._audio_toast_timer > 0 and not self.recording_mode:
             self._render_audio_toast()
+
+        # 🎙️ NomisLab watermark (recording mode only, drawn directly on screen — unaffected by camera shake)
+        if self.recording_mode:
+            from .config import WATERMARK_TEXT, BRAND_COLOR, WATERMARK_ALPHA
+            wm_font = self.font_small or _get_font(None, FONT_SIZE_SMALL)
+            wm_surf = wm_font.render(WATERMARK_TEXT, True, BRAND_COLOR)
+            wm_alpha_surf = pygame.Surface(wm_surf.get_size(), pygame.SRCALPHA)
+            wm_alpha_surf.blit(wm_surf, (0, 0))
+            wm_alpha_surf.set_alpha(WATERMARK_ALPHA)
+            padding = 20
+            wx = self.screen.get_width() - wm_alpha_surf.get_width() - padding
+            wy = self.screen.get_height() - wm_alpha_surf.get_height() - padding
+            self.screen.blit(wm_alpha_surf, (wx, wy))
+
+        # 📸 Auto-snapshot: capture victory after animation settles (0.5 s)
+        if (self._snapshot_pending
+                and self.victory_sequence_active
+                and self.victory_sequence_time >= 0.5):
+            self._save_snapshot(manual=False)
+            self._snapshot_pending = False
+            self._snapshot_taken = True
 
         pygame.display.flip()
 
@@ -2334,6 +2442,237 @@ class GameEngine:
         text_alpha_surf.blit(text_surf, (0, 0))
         text_alpha_surf.set_alpha(min(255, int(alpha * 255 / 180)))
         self.screen.blit(text_alpha_surf, (x + padding_x, y + padding_y))
+
+    def _render_cta_overlay(self) -> None:
+        """Render the Epic CTA full-screen overlay (SHIFT+G toggle).
+
+        Draws a dark dimmed background (0.7 alpha), a pulsing neon headline,
+        and a subtitle. Handles zoom-in entrance (0.4 s) and fade-out (0.4 s).
+        Always drawn on render_surface so it is visible in all modes.
+        """
+        if not self.cta_overlay_active:
+            return
+
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+
+        t = self.cta_overlay_time
+        FADE_IN_DUR = 0.4    # seconds
+        FADE_OUT_DUR = 0.4   # seconds
+        PULSE_HZ = 3.0       # neon flicker cycles per second
+
+        # Overall opacity: fade-in on enter, fade-out on dismiss
+        if self.cta_overlay_fade_start >= 0.0:
+            fade_elapsed = t - self.cta_overlay_fade_start
+            alpha_factor = max(0.0, 1.0 - fade_elapsed / FADE_OUT_DUR)
+        elif t < FADE_IN_DUR:
+            alpha_factor = t / FADE_IN_DUR
+        else:
+            alpha_factor = 1.0
+
+        # Zoom-in entrance: 0.7 → 1.0 scale over FADE_IN_DUR
+        scale = min(1.0, 0.7 + 0.3 * min(1.0, t / FADE_IN_DUR))
+
+        # 1. Dark overlay (0.7 alpha = 178 at full opacity)
+        bg_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        bg_surf.fill((0, 0, 0, int(178 * alpha_factor)))
+        self.render_surface.blit(bg_surf, (0, 0))
+
+        # 2. Neon pulse: white (255,255,255) ↔ Electric Cyan (0,255,255)
+        pulse = 0.5 + 0.5 * math.sin(t * PULSE_HZ * 2.0 * math.pi)
+        text_color = (int(255 * pulse), 255, 255)
+
+        # 3. Main headline with outline
+        main_font = _get_font(None, 28, bold=True)
+        main_surf = self._render_text_enhanced(
+            "GO LIVE WITH NOMISLAB",
+            main_font,
+            text_color,
+            outline_color=(0, 0, 0),
+            outline_width=3,
+        )
+        if scale < 0.999:
+            sw = max(1, int(main_surf.get_width() * scale))
+            sh = max(1, int(main_surf.get_height() * scale))
+            main_surf = pygame.transform.scale(main_surf, (sw, sh))
+        main_surf.set_alpha(int(255 * alpha_factor))
+
+        # 4. Subtitle (Unicode escape avoids editor encoding issues with emoji)
+        sub_font = _get_font(None, 18, bold=False)
+        sub_surf = sub_font.render(
+            "Join the race in the chat! \U0001f3c1", True, (220, 220, 220)
+        )
+        sub_surf.set_alpha(int(255 * alpha_factor))
+
+        # 5. Position and blit
+        cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+        main_rect = main_surf.get_rect(center=(cx, cy - 20))
+        sub_rect = sub_surf.get_rect(center=(cx, main_rect.bottom + 18))
+        self.render_surface.blit(main_surf, main_rect)
+        self.render_surface.blit(sub_surf, sub_rect)
+
+    def _save_snapshot(self, manual: bool = False) -> None:
+        """Save a branded PNG screenshot to the snapshots/ directory.
+
+        Args:
+            manual: If True, uses prefix 'manual_'; else uses 'victory_'.
+                    Manual snapshots skip the winner banner.
+        """
+        try:
+            from .config import (
+                WATERMARK_TEXT, BRAND_COLOR, FONT_SIZE_SMALL, GAME_MODE
+            )
+
+            # 1. Create output directory
+            snap_dir = os.path.abspath("snapshots")
+            os.makedirs(snap_dir, exist_ok=True)
+
+            # 2. Build filename
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            prefix = "manual" if manual else "victory"
+            filename = os.path.join(snap_dir, f"{prefix}_{ts}.png")
+
+            # 3. Copy fully-rendered screen (victory overlay already drawn)
+            snap_surf = self.screen.copy()
+            sw, sh = snap_surf.get_size()
+
+            # 4. Winner banner strip (victory snapshots only)
+            if not manual and self.physics_world.winner:
+                winner_country = self.physics_world.winner
+                winner_captain = self.victory_winner_captain or ""
+                winner_points = (
+                    self.session_points.get(winner_country, {}).get(winner_captain, 0)
+                )
+                score_label = "pts" if GAME_MODE == "COMMENT" else "diamonds"
+
+                banner_h = 56
+                banner_y = sh - banner_h - 50  # sits above watermark area
+                banner_surf = pygame.Surface((sw, banner_h), pygame.SRCALPHA)
+                banner_surf.fill((0, 0, 0, 210))
+                snap_surf.blit(banner_surf, (0, banner_y))
+
+                # Country name
+                win_font = _get_font(None, 22, bold=True)
+                win_surf = self._render_text_enhanced(
+                    f"WINNER: {winner_country.upper()}",
+                    win_font,
+                    (255, 215, 0),     # Gold
+                    outline_color=(0, 0, 0),
+                    outline_width=2,
+                )
+                win_rect = win_surf.get_rect(centerx=sw // 2, top=banner_y + 6)
+                snap_surf.blit(win_surf, win_rect)
+
+                # Score
+                score_font = _get_font(None, 14)
+                score_surf = score_font.render(
+                    f"{winner_points} {score_label}", True, (200, 200, 200)
+                )
+                score_rect = score_surf.get_rect(centerx=sw // 2, top=win_rect.bottom + 4)
+                snap_surf.blit(score_surf, score_rect)
+
+            # 5. Watermark at 100% opacity (overrides or adds regardless of recording_mode)
+            wm_font = _get_font(None, FONT_SIZE_SMALL, bold=True)
+            wm_surf = wm_font.render(WATERMARK_TEXT, True, BRAND_COLOR)
+            padding = 20
+            snap_surf.blit(
+                wm_surf,
+                (sw - wm_surf.get_width() - padding, sh - wm_surf.get_height() - padding),
+            )
+
+            # 6. Trading card border: 4 px cyan frame + white corner accents
+            border_color = (0, 255, 255)
+            pygame.draw.rect(snap_surf, border_color, (0, 0, sw, sh), 4)
+            corner = 10
+            for cx, cy in [(0, 0), (sw - corner, 0), (0, sh - corner), (sw - corner, sh - corner)]:
+                pygame.draw.rect(snap_surf, (255, 255, 255), (cx, cy, corner, corner))
+
+            # 7. Save
+            pygame.image.save(snap_surf, filename)
+            print(f"[NomisLab] Snapshot saved: {filename}")
+            logger.info("[NomisLab] Snapshot saved: %s", filename)
+
+        except Exception as e:
+            logger.error("[NomisLab] Snapshot failed: %s", e)
+            print(f"[NomisLab] Snapshot failed: {e}")
+
+    def _render_engineering_overlay(self) -> None:
+        """Draw the Engineering Mode diagnostics: Pymunk wireframe + telemetry HUD.
+
+        All drawing targets self.render_surface (460×820) so the overlay participates
+        in screen shake and stays within the game area.
+        """
+        import pymunk as _pymunk
+
+        CYAN = (0, 255, 255)
+        rs = self.render_surface
+
+        # ── 1. Physics Wireframe (SRCALPHA surface for glow layers) ──────────────
+        eng_surf = pygame.Surface(rs.get_size(), pygame.SRCALPHA)
+
+        # 1a. Groove joint rails (constraint lines — the invisible X-axis rails)
+        for constraint in self.physics_world.space.constraints:
+            if isinstance(constraint, _pymunk.GrooveJoint):
+                ga = constraint.groove_a
+                gb = constraint.groove_b
+                pygame.draw.line(
+                    eng_surf, (0, 180, 200, 50),
+                    (int(ga.x), int(ga.y)),
+                    (int(gb.x), int(gb.y)), 1
+                )
+
+        # 1b. Flag racer circles with glow halo
+        for racer in self.physics_world.racers.values():
+            cx = int(racer.body.position.x)
+            cy = int(racer.body.position.y)
+            r  = int(racer.shape.radius)
+            pygame.draw.circle(eng_surf, (0, 255, 255, 20), (cx, cy), r + 6)   # outer bloom
+            pygame.draw.circle(eng_surf, (0, 255, 255, 55), (cx, cy), r + 3)   # mid glow
+            pygame.draw.circle(eng_surf, (0, 255, 255, 190), (cx, cy), r, 1)   # sharp outline
+
+        rs.blit(eng_surf, (0, 0))
+
+        # ── 2. Telemetry HUD (top-left terminal panel) ───────────────────────────
+        from .config import GAME_MODE
+
+        fps_val = self._fps_samples[-1] if self._fps_samples else 0.0
+        entity_count = len(self.physics_world.racers) + len(self.meteors)
+        particle_count = len(self.particles)
+
+        if self._stress_test_active:
+            eng_state = "STRESS"
+        elif self.recording_mode:
+            eng_state = "RECORDING"
+        else:
+            eng_state = self.game_state  # IDLE / RACING / VICTORY
+
+        rows = [
+            ("[NOMISLAB ENGINE]", CYAN, True),
+            ("─" * 20, (0, 180, 180), False),
+            (f"FPS          : {fps_val:.1f}", (200, 255, 200), False),
+            (f"Active_Ent   : {entity_count}", (200, 255, 200), False),
+            (f"Physics_Step : {self._eng_physics_step_ms:.3f}ms", (200, 255, 200), False),
+            (f"Engine_State : {eng_state}", (200, 255, 200), False),
+            (f"Particles    : {particle_count}", (200, 255, 200), False),
+            (f"Mode         : {GAME_MODE}", (200, 255, 200), False),
+        ]
+
+        font_sm = _get_mono_font(13)
+        line_h = font_sm.get_linesize() + 2
+        pad_x, pad_y = 8, 6
+        panel_w = 195
+        panel_h = len(rows) * line_h + pad_y * 2
+
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel.fill((0, 10, 20, 200))
+        # Cyan left-border accent
+        pygame.draw.rect(panel, CYAN, (0, 0, 2, panel_h))
+
+        for i, (text, color, _bold) in enumerate(rows):
+            font = _get_mono_font(13)
+            surf = font.render(text, True, color)
+            panel.blit(surf, (pad_x, pad_y + i * line_h))
+
+        rs.blit(panel, (6, 6))
 
     def _render_balls(self) -> None:
         """Render all flag racers with winner spotlight and leader glow."""
@@ -4480,6 +4819,8 @@ class GameEngine:
         
         # ☁️ Reset cloud sync flag for next race
         self.race_synced = False
+        self._snapshot_taken = False
+        self._snapshot_pending = False
 
         # Invalidate leaderboard cache for next race
         self._leaderboard_cache = None
@@ -5086,7 +5427,7 @@ class GameEngine:
 
         # Glow effect (multiple layers)
         glow_color = (255, int(100 + 100 * pulse), 0)  # Orange pulsing
-        text = "🏁 FINAL STRETCH! 🏁"
+        text = "FINAL STRETCH!"
         
         text_surf = self._render_text_enhanced(
             text,
