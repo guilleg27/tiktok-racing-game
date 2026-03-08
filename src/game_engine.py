@@ -542,7 +542,8 @@ class GameEngine:
         self._leaderboard_cache: Optional[pygame.Surface] = None  # Cached post-race leaderboard
         
         # 🏆 Global Ranking Panel
-        self.global_rank_data: list[dict] = []  # Top 3 countries by wins
+        self.global_rank_data: list[dict] = []  # Top 5 countries by wins (all-time)
+        self.daily_rank_data: list[dict] = []   # Top 5 countries by wins (today)
         self.global_rank_last_update = 0.0  # Timestamp of last update
         self.global_rank_loading = False  # Flag to prevent multiple fetches
         
@@ -4097,159 +4098,142 @@ class GameEngine:
     
     def _render_global_ranking_futuristic(self) -> None:
         """
-        Render futuristic holographic-style global ranking panel.
-        Features: Glowing cyan borders, particle effects, animated glow.
+        Render two side-by-side ranking panels: all-time (left) and today (right).
         """
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
-        
-        if not self.global_rank_data:
+        from .config import SCREEN_WIDTH
+
+        if not self.global_rank_data and not self.daily_rank_data:
             return
 
-        # Panel dimensions (centered at top)
-        panel_width = 450
-        panel_height = 240
-        panel_x = (SCREEN_WIDTH - panel_width) // 2
+        panel_w = 220
+        panel_h = 210
+        gap = 10
+        total_w = panel_w * 2 + gap
+        panel_x_left = (SCREEN_WIDTH - total_w) // 2
+        panel_x_right = panel_x_left + panel_w + gap
         panel_y = 20
-        
-        # Create panel surface with alpha for glassmorphism
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        
-        # Animated glow intensity
+
         glow_intensity = 0.7 + 0.3 * math.sin(self.ranking_3d_animation_time * 2.0)
-        
-        # Glassmorphism: Semi-transparent background with blur effect simulation
-        # Base glass color (dark with slight blue tint)
-        glass_base = (15, 25, 45, 180)  # Semi-transparent dark blue
-        
-        # Draw glass background with gradient
-        for i in range(panel_height):
-            ratio = i / panel_height
-            # Subtle gradient from slightly lighter to darker
-            alpha = int(230 - 20 * ratio)  # Fade from top to bottom
-            r = int(15 + 5 * (1 - ratio))
-            g = int(25 + 10 * (1 - ratio))
-            b = int(45 + 15 * (1 - ratio))
-            pygame.draw.line(panel_surface, (r, g, b, alpha), (0, i), (panel_width, i))
-        
-        # Glassmorphism border: Bright, glowing border with multiple layers
-        border_color_base = (100, 200, 255)  # Cyan
-        border_alpha = int(220 * glow_intensity)
-        
-        # Outer glow layers (creates depth)
-        for i in range(4):
-            alpha = int(border_alpha * (0.3 / (i + 1)))
-            pygame.draw.rect(
-                panel_surface, 
-                (*border_color_base, alpha), 
-                (i, i, panel_width - i*2, panel_height - i*2), 
-                2, 
-                border_radius=15 - i
-            )
-        
-        # Main bright border (glass edge effect)
-        pygame.draw.rect(
-            panel_surface, 
-            (*border_color_base, border_alpha), 
-            (0, 0, panel_width, panel_height), 
-            3, 
-            border_radius=15
-        )
-        
-        # Inner highlight (top edge light reflection)
-        highlight_alpha = int(150 * glow_intensity)
-        pygame.draw.rect(
-            panel_surface, 
-            (200, 240, 255, highlight_alpha), 
-            (4, 4, panel_width - 8, 8), 
-            0, 
-            border_radius=11
-        )
-        
-        # Subtle inner border for depth
-        pygame.draw.rect(
-            panel_surface, 
-            (150, 220, 255, 80), 
-            (3, 3, panel_width - 6, panel_height - 6), 
-            1, 
-            border_radius=12
-        )
-        
-        # Blit glassmorphic panel
-        self.render_surface.blit(panel_surface, (panel_x, panel_y))
-        
-        # Title with glow effect - using improved font
-        title_font = _get_font("Verdana", 20, bold=True)
-        
-        title_text = "* WORLD RECORDS *"
-        
-        # Title with cyan glow
-        title_color = (150, 220, 255)  # Bright cyan
-        title_surface = self._render_text_enhanced(
-            title_text,
-            title_font,
-            title_color,
-            outline_color=(0, 50, 100),
-            outline_width=3
-        )
-        title_rect = title_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + 25))
-        self.render_surface.blit(title_surface, title_rect)
-        
-        # Render Top 3 with enhanced styling - using improved fonts
-        entry_font = _get_font("Verdana", 16, bold=True)
-        medal_font = _get_font("Verdana", 18, bold=True)
-        
-        start_y = panel_y + 65
-        line_height = 35
-        
-        # Neon colors for medals
+
         neon_colors = [
-            (255, 215, 0),      # Gold (bright)
-            (192, 192, 255),    # Silver (with blue tint)
-            (255, 150, 100),    # Bronze (with orange tint)
-            (150, 220, 180),    # 4th (green-tinted)
-            (180, 180, 255),    # 5th (lavender)
+            (255, 215, 0),    # Gold
+            (192, 192, 255),  # Silver
+            (255, 150, 100),  # Bronze
+            (150, 220, 180),  # 4th
+            (180, 180, 255),  # 5th
+        ]
+        medals = ['1º', '2º', '3º', '4º', '5º']
+
+        panels = [
+            {
+                "x": panel_x_left,
+                "title": "HISTORICO",
+                "border_color": (100, 200, 255),   # Cyan
+                "title_color": (150, 220, 255),
+                "data": self.global_rank_data[:5],
+                "wins_key": "total_wins",
+            },
+            {
+                "x": panel_x_right,
+                "title": "HOY",
+                "border_color": (100, 255, 160),   # Green
+                "title_color": (120, 255, 180),
+                "data": self.daily_rank_data[:5],
+                "wins_key": "wins",
+            },
         ]
 
-        for i, entry in enumerate(self.global_rank_data[:5]):
-            country = entry.get('country', 'Unknown')
-            wins = entry.get('total_wins', 0)
+        title_font = _get_font("Verdana", 13, bold=True)
+        entry_font = _get_font("Verdana", 12, bold=True)
+        medal_font = _get_font("Verdana", 13, bold=True)
+        footer_font = _get_font("Verdana", 9)
 
-            y_pos = start_y + i * line_height
+        for panel in panels:
+            px = panel["x"]
+            border_color = panel["border_color"]
+            border_alpha = int(220 * glow_intensity)
 
-            # Medal with glow
-            medals = ['1º', '2º', '3º', '4º', '5º']
-            medal = medals[i] if i < 5 else f"{i+1}º"
-            medal_color = neon_colors[i] if i < 5 else (200, 200, 200)
-            
-            # Glow effect for medal
-            glow_surf = medal_font.render(medal, True, (*medal_color, 100))
-            for offset in [(1, 1), (-1, -1), (1, -1), (-1, 1)]:
-                self.render_surface.blit(glow_surf, (panel_x + 25 + offset[0], y_pos + offset[1]))
-            
-            medal_surface = medal_font.render(medal, True, medal_color)
-            self.render_surface.blit(medal_surface, (panel_x + 25, y_pos))
-            
-            # Country entry with abbreviation
-            country_abbrev = self._get_country_abbrev(country)
-            entry_text = f"[{country_abbrev}] {country[:12]}: {wins}"
-            entry_color = (255, 255, 255) if i == 0 else (220, 240, 255)  # White for 1st, cyan-tinted for others
-            entry_surface = entry_font.render(entry_text, True, entry_color)
-            self.render_surface.blit(entry_surface, (panel_x + 70, y_pos + 2))
-        
-        # Footer with update time - using improved font
-        if self.global_rank_last_update > 0:
-            footer_font = _get_font("Verdana", 10)
-            elapsed = time.time() - self.global_rank_last_update
-            if elapsed < 60:
-                footer_text = "Updated a few seconds ago"
-            elif elapsed < 3600:
-                footer_text = f"Updated {int(elapsed/60)}m ago"
+            # Background
+            surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            for i in range(panel_h):
+                ratio = i / panel_h
+                alpha = int(230 - 20 * ratio)
+                r = int(15 + 5 * (1 - ratio))
+                g = int(25 + 10 * (1 - ratio))
+                b = int(45 + 15 * (1 - ratio))
+                pygame.draw.line(surf, (r, g, b, alpha), (0, i), (panel_w, i))
+
+            # Outer glow layers
+            for i in range(3):
+                a = int(border_alpha * (0.3 / (i + 1)))
+                pygame.draw.rect(surf, (*border_color, a),
+                                 (i, i, panel_w - i*2, panel_h - i*2), 2, border_radius=12 - i)
+
+            # Main border
+            pygame.draw.rect(surf, (*border_color, border_alpha),
+                             (0, 0, panel_w, panel_h), 2, border_radius=12)
+
+            # Top highlight
+            highlight_a = int(120 * glow_intensity)
+            pygame.draw.rect(surf, (200, 240, 255, highlight_a),
+                             (3, 3, panel_w - 6, 6), 0, border_radius=9)
+
+            self.render_surface.blit(surf, (px, panel_y))
+
+            # Title
+            title_surf = self._render_text_enhanced(
+                panel["title"], title_font, panel["title_color"],
+                outline_color=(0, 40, 80), outline_width=2
+            )
+            title_rect = title_surf.get_rect(center=(px + panel_w // 2, panel_y + 16))
+            self.render_surface.blit(title_surf, title_rect)
+
+            # Divider line
+            pygame.draw.line(self.render_surface, (*border_color, 160),
+                             (px + 8, panel_y + 28), (px + panel_w - 8, panel_y + 28), 1)
+
+            # Entries
+            data = panel["data"]
+            wins_key = panel["wins_key"]
+            start_y = panel_y + 38
+            line_h = 30
+
+            if not data:
+                no_data_surf = footer_font.render("Sin datos hoy", True, (160, 160, 160))
+                no_data_rect = no_data_surf.get_rect(center=(px + panel_w // 2, panel_y + panel_h // 2))
+                self.render_surface.blit(no_data_surf, no_data_rect)
             else:
-                footer_text = f"Updated {int(elapsed/3600)}h ago"
-            
-            footer_surface = footer_font.render(footer_text, True, (150, 200, 255))
-            footer_rect = footer_surface.get_rect(center=(panel_x + panel_width // 2, panel_y + panel_height - 15))
-            self.render_surface.blit(footer_surface, footer_rect)
+                for i, entry in enumerate(data):
+                    country = entry.get('country', '?')
+                    wins = entry.get(wins_key, 0)
+                    y_pos = start_y + i * line_h
+                    medal_color = neon_colors[i] if i < 5 else (200, 200, 200)
+                    medal_text = medals[i] if i < 5 else f"{i+1}º"
+
+                    # Medal glow
+                    glow_s = medal_font.render(medal_text, True, medal_color)
+                    for off in [(1, 1), (-1, -1)]:
+                        self.render_surface.blit(glow_s, (px + 8 + off[0], y_pos + off[1]))
+                    self.render_surface.blit(glow_s, (px + 8, y_pos))
+
+                    # Country + wins
+                    entry_text = f"{country[:10]}  {wins}W"
+                    entry_color = (255, 255, 255) if i == 0 else (210, 235, 255)
+                    entry_surf = entry_font.render(entry_text, True, entry_color)
+                    self.render_surface.blit(entry_surf, (px + 38, y_pos + 1))
+
+            # Footer
+            if self.global_rank_last_update > 0 and panel["wins_key"] == "total_wins":
+                elapsed = time.time() - self.global_rank_last_update
+                if elapsed < 60:
+                    footer_text = "actualizado ahora"
+                elif elapsed < 3600:
+                    footer_text = f"hace {int(elapsed/60)}m"
+                else:
+                    footer_text = f"hace {int(elapsed/3600)}h"
+                footer_surf = footer_font.render(footer_text, True, (150, 200, 255))
+                footer_rect = footer_surf.get_rect(center=(px + panel_w // 2, panel_y + panel_h - 10))
+                self.render_surface.blit(footer_surf, footer_rect)
     
     def _render_3d_ranking_visualization(self) -> None:
         """
@@ -5472,18 +5456,28 @@ class GameEngine:
         self.global_rank_loading = True
         
         try:
-            ranking = await self.cloud_manager.get_global_ranking(limit=5)
-            
-            if ranking:
+            ranking, daily = await asyncio.gather(
+                self.cloud_manager.get_global_ranking(limit=5),
+                self.cloud_manager.get_daily_ranking(limit=5),
+                return_exceptions=True
+            )
+
+            if isinstance(ranking, list) and ranking:
                 self.global_rank_data = ranking
                 self.global_rank_last_update = time.time()
                 logger.info(f"🏆 Global ranking updated: {len(ranking)} countries")
             else:
                 logger.debug("🏆 No global ranking data available")
-        
+
+            if isinstance(daily, list) and daily:
+                self.daily_rank_data = daily
+                logger.info(f"📅 Daily ranking updated: {len(daily)} countries")
+            else:
+                logger.debug("📅 No daily ranking data available")
+
         except Exception as e:
             logger.error(f"❌ Failed to fetch global ranking: {e}")
-        
+
         finally:
             self.global_rank_loading = False
     

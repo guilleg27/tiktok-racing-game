@@ -280,6 +280,67 @@ class CloudManager:
             logger.error(f"❌ Supabase query error: {e}")
             return []
     
+    async def get_daily_ranking(self, limit: int = 5) -> list[Dict[str, Any]]:
+        """
+        Fetch today's ranking by aggregating global_hall_of_fame records.
+
+        Filters races where race_timestamp >= today 00:00:00 UTC, then
+        groups by country in Python (no GROUP BY support in Supabase client).
+
+        Args:
+            limit: Maximum number of countries to return
+
+        Returns:
+            List sorted by wins DESC: [{'country': ..., 'wins': ..., 'total_diamonds': ...}, ...]
+        """
+        if not self.enabled:
+            return []
+
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._get_daily_ranking_blocking,
+                limit
+            )
+            return result
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch daily ranking: {e}")
+            return []
+
+    def _get_daily_ranking_blocking(self, limit: int) -> list[Dict[str, Any]]:
+        """Blocking version of get_daily_ranking."""
+        try:
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            response = self.client.table("global_hall_of_fame") \
+                .select("country, total_diamonds") \
+                .gte("race_timestamp", today_start) \
+                .execute()
+
+            if not response.data:
+                return []
+
+            # Aggregate in Python
+            aggregated: Dict[str, Dict[str, Any]] = {}
+            for row in response.data:
+                country = row.get("country", "Unknown")
+                diamonds = row.get("total_diamonds", 0)
+                if country not in aggregated:
+                    aggregated[country] = {"country": country, "wins": 0, "total_diamonds": 0}
+                aggregated[country]["wins"] += 1
+                aggregated[country]["total_diamonds"] += diamonds
+
+            sorted_list = sorted(
+                aggregated.values(),
+                key=lambda x: (x["wins"], x["total_diamonds"]),
+                reverse=True
+            )
+            return sorted_list[:limit]
+
+        except Exception as e:
+            logger.error(f"❌ Supabase daily ranking error: {e}")
+            return []
+
     async def get_country_stats(self, country: str) -> Optional[Dict[str, Any]]:
         """
         Fetch global stats for a specific country.
