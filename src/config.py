@@ -65,8 +65,7 @@ FLAG_RADIUS = 10         # Reduced for spacious, professional look in safe zone
 # Race countries (used for flag sprites)
 RACE_COUNTRIES = [
     "Argentina", "Brasil", "Mexico", "Colombia",
-    "Chile", "Peru", "Venezuela", "USA",
-    "PuertoRico", "Uruguay",
+    "Chile", "Peru", "Venezuela", "Uruguay",
 ]
 
 # Country shortcuts for COMMENT mode (siglas + números)
@@ -92,15 +91,8 @@ COUNTRY_SHORTCUTS = {
     # Venezuela
     "7": "Venezuela", "ven": "Venezuela", "venezuela": "Venezuela", "vzla": "Venezuela",
 
-    # USA
-    "8": "USA", "usa": "USA", "us": "USA", "america": "USA",
-
-    # Puerto Rico
-    "9": "PuertoRico", "pri": "PuertoRico", "puertorico": "PuertoRico",
-    "pr": "PuertoRico", "puerto rico": "PuertoRico",
-
     # Uruguay
-    "10": "Uruguay", "uru": "Uruguay", "uruguay": "Uruguay",
+    "8": "Uruguay", "uru": "Uruguay", "uruguay": "Uruguay",
     "uy": "Uruguay",
 }
 
@@ -113,8 +105,6 @@ COUNTRY_ABBREV = {
     "Chile": "CHI",
     "Peru": "PER",
     "Venezuela": "VEN",
-    "USA": "USA",
-    "PuertoRico": "PRI",
     "Uruguay": "URU",
 }
 
@@ -217,8 +207,6 @@ GIFT_COLORS = {
     "Chile": (0, 57, 166),             # Blue
     "Peru": (212, 0, 0),               # Red
     "Venezuela": (255, 221, 0),        # Yellow
-    "USA": (0, 50, 150),               # Blue (USA flag)
-    
     # Default fallback
     "default": (255, 255, 255),
 }
@@ -352,7 +340,7 @@ FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
 # CTA banner and likes bar layout (no overlap with first lane)
 CTA_BANNER_Y = 30          # Right below header (header_height 30)
-CTA_BANNER_HEIGHT = 40     # Compact CTA box
+CTA_BANNER_HEIGHT = 54     # Compact CTA box
 CTA_BANNER_WIDTH = 420     # Wide banner (max SCREEN_WIDTH - 20)
 LIKES_BAR_HEIGHT = 12      # Likes goal bar height
 LIKES_BAR_TOP_GAP = 20     # Used only when not COMMENT+RACING
@@ -389,14 +377,6 @@ COUNTRY_KEYWORDS = {
     # Venezuela
     'ven': 'Venezuela', 'venezuela': 'Venezuela', 've': 'Venezuela',
     'vzla': 'Venezuela', '🇻🇪': 'Venezuela',
-
-    # USA
-    'usa': 'USA', 'united states': 'USA', 'us': 'USA',
-    'america': 'USA', '🇺🇸': 'USA',
-
-    # Puerto Rico
-    'pri': 'PuertoRico', 'puertorico': 'PuertoRico', 'pr': 'PuertoRico',
-    'puerto rico': 'PuertoRico', '🇵🇷': 'PuertoRico',
 
     # Uruguay
     'uru': 'Uruguay', 'uruguay': 'Uruguay', 'uy': 'Uruguay',
