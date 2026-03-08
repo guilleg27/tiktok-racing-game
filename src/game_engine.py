@@ -2091,6 +2091,8 @@ class GameEngine:
         if self.game_state == 'IDLE':
             self.idle_animation_time += dt
             self.ranking_3d_animation_time += dt * 0.5  # Slower animation for 3D effect
+        elif self._show_ranking_panel:
+            self.ranking_3d_animation_time += dt * 0.5  # Keep glow animated during RACING panel
             
             # 🏆 Load global ranking on first IDLE state (non-blocking)
             if not self.global_rank_data and not self.global_rank_loading and self.global_rank_last_update == 0:
@@ -2263,7 +2265,10 @@ class GameEngine:
         if self.game_state == 'IDLE':
             self._render_idle_screen()
         elif self._show_ranking_panel:
-            # Also show ranking panel during RACING when toggled on
+            # Dim the race behind the ranking panel so it's clearly readable
+            _overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            _overlay.fill((0, 0, 0, 160))
+            self.render_surface.blit(_overlay, (0, 0))
             self._render_global_ranking_futuristic()
 
         # Render victory flash effect (white screen flash)
@@ -4102,9 +4107,6 @@ class GameEngine:
         """
         from .config import SCREEN_WIDTH
 
-        if not self.global_rank_data and not self.daily_rank_data:
-            return
-
         panel_w = 220
         panel_h = 210
         gap = 10
@@ -4199,7 +4201,13 @@ class GameEngine:
             line_h = 30
 
             if not data:
-                no_data_surf = footer_font.render("Sin datos hoy", True, (160, 160, 160))
+                if self.global_rank_loading:
+                    placeholder_text = "Cargando..."
+                    placeholder_color = (180, 220, 255)
+                else:
+                    placeholder_text = "Sin datos"
+                    placeholder_color = (160, 160, 160)
+                no_data_surf = footer_font.render(placeholder_text, True, placeholder_color)
                 no_data_rect = no_data_surf.get_rect(center=(px + panel_w // 2, panel_y + panel_h // 2))
                 self.render_surface.blit(no_data_surf, no_data_rect)
             else:
