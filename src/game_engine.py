@@ -413,7 +413,6 @@ class GameEngine:
             "🇨🇱": "Chile",
             "🇵🇪": "Peru",
             "🇻🇪": "Venezuela",
-            "🇺🇸": "USA",
             "🇮🇩": "Indonesia",
             "🇷🇺": "Russia",
             "🇮🇹": "Italy"
@@ -1788,16 +1787,7 @@ class GameEngine:
                     except Exception as e:
                         logger.error(f"Error adding test join to queue: {e}")
 
-                elif event.key == pygame.K_k:  # K = Toggle stress test (VOTE/GIFT @ 20/sec)
-                    self._stress_test_active = not self._stress_test_active
-                    if self._stress_test_active:
-                        self._stress_test_last_inject = time.time()
-                        if self.game_state == 'IDLE':
-                            self._transition_to_racing()
-                            logger.info("🏁 Game state: RACING (stress test)")
-                        logger.info("🧪 STRESS TEST ACTIVE – VOTE/GIFT @ 20/s. Press K again to stop.")
-                    else:
-                        logger.info("🧪 STRESS TEST OFF")
+                # K (stress test) disabled
                 
                 elif event.key == pygame.K_f:  # F = Test FIRE (rapid combo)
                     # Cooldown to avoid crash when spamming F (TTS/audio flood)
@@ -3693,10 +3683,10 @@ class GameEngine:
         bar_width = SCREEN_WIDTH - 2 * bar_margin_x
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
-        hint_font = _get_font("Arial", 10)
+        hint_font = _get_font("Arial", 11)
         hint = "Dale like o tap en vivo para llenar la barra"
         hint_surf = hint_font.render(hint, True, (240, 240, 240))
-        label_font = _get_font("Arial", 10, bold=True)
+        label_font = _get_font("Arial", 11, bold=True)
         label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
@@ -3908,7 +3898,7 @@ class GameEngine:
             banner.fill((0, 0, 0, 150))
             pygame.draw.rect(banner, (255, 255, 0, 100), (0, 0, banner_width, banner_height), 2, border_radius=6)
 
-            font = _get_font(DISPLAY_FONT_NAMES[0], 17, bold=False)
+            font = _get_font(DISPLAY_FONT_NAMES[0], 21, bold=False)
             neon_yellow = (255, 255, 0)
             words = text.split()
             lines = []
@@ -3925,7 +3915,7 @@ class GameEngine:
                 lines.append(current)
             lines = lines[:2]
 
-            line_height = 20
+            line_height = 25
             y_offset = (banner_height - len(lines) * line_height) // 2 + 1
             for line in lines:
                 text_surf = self._render_text_enhanced(
@@ -4440,11 +4430,9 @@ class GameEngine:
             'Chile': 'CHI',
             'Peru': 'PER',
             'Venezuela': 'VEN',
-            'USA': 'USA',
             'Indonesia': 'IDN',
             'Russia': 'RUS',
             'Italy': 'ITA',
-            'PuertoRico': 'PRI',
             'Uruguay': 'URU',
         }
         return abbrev_map.get(country, '???')

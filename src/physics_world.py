@@ -590,7 +590,7 @@ class PhysicsWorld:
             "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Mexico": "🇲🇽",
             "España": "🇪🇸", "Colombia": "🇨🇴", "Chile": "🇨🇱",
             "Peru": "🇵🇪", "Venezuela": "🇻🇪",
-            "USA": "🇺🇸", "Indonesia": "🇮🇩", "Russia": "🇷🇺", "Italy": "🇮🇹"
+            "Indonesia": "🇮🇩", "Russia": "🇷🇺", "Italy": "🇮🇹"
         }
         
         for country, racer in self.racers.items():
