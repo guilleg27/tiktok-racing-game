@@ -63,14 +63,15 @@ class CloudManager:
         self.client: Optional[Client] = None
         self.enabled = False
         
-        # Load environment variables.
-        # When running as a PyInstaller exe, look for .env next to the executable.
-        # In development, load_dotenv() finds it from CWD automatically.
+        # Load environment variables with an explicit path so it works regardless
+        # of the current working directory (important on Windows).
+        # - Frozen exe: .env sits next to the .exe
+        # - Development: .env is at the project root (two levels up from src/)
         if getattr(sys, 'frozen', False):
             _env_path = os.path.join(os.path.dirname(sys.executable), '.env')
-            load_dotenv(_env_path)
         else:
-            load_dotenv()
+            _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+        load_dotenv(_env_path)
 
         # Initialize Supabase client
         self._initialize_client()
