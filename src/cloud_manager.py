@@ -11,12 +11,23 @@ import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+# Import Supabase client (optional dependency)
 try:
     from supabase import create_client, Client
-    from dotenv import load_dotenv
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
+    create_client = None  # type: ignore[assignment]
+    Client = None  # type: ignore[assignment]
+
+# Import dotenv separately so we can still load .env
+# even if Supabase library is missing.
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - defensive fallback
+    def load_dotenv(*args: Any, **kwargs: Any) -> None:
+        """Fallback no-op load_dotenv when python-dotenv is not installed."""
+        return
 
 logger = logging.getLogger(__name__)
 
