@@ -6,6 +6,7 @@ the main game loop. Follows the project's rules for non-blocking operations.
 """
 
 import os
+import sys
 import logging
 import asyncio
 from typing import Optional, Dict, Any
@@ -62,9 +63,15 @@ class CloudManager:
         self.client: Optional[Client] = None
         self.enabled = False
         
-        # Load environment variables
-        load_dotenv()
-        
+        # Load environment variables.
+        # When running as a PyInstaller exe, look for .env next to the executable.
+        # In development, load_dotenv() finds it from CWD automatically.
+        if getattr(sys, 'frozen', False):
+            _env_path = os.path.join(os.path.dirname(sys.executable), '.env')
+            load_dotenv(_env_path)
+        else:
+            load_dotenv()
+
         # Initialize Supabase client
         self._initialize_client()
         
