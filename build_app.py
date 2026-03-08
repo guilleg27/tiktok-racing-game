@@ -110,6 +110,19 @@ def build():
         "--hidden-import", "pyttsx3.drivers.sapi5",   # Windows TTS
         "--hidden-import", "pyttsx3.drivers.nsss",    # macOS TTS
 
+        # Supabase + HTTP stack (dynamic imports not detected by PyInstaller)
+        "--hidden-import", "supabase",
+        "--hidden-import", "postgrest",
+        "--hidden-import", "gotrue",
+        "--hidden-import", "storage3",
+        "--hidden-import", "realtime",
+        "--hidden-import", "httpx",
+        "--hidden-import", "httpcore",
+        "--hidden-import", "httpcore._backends.sync",
+        "--hidden-import", "httpcore._backends.asyncio",
+        "--hidden-import", "certifi",                  # SSL certificates on Windows
+        "--collect-all", "certifi",                    # Bundle CA certs bundle
+
         *icon_arg,
 
         "main.py"

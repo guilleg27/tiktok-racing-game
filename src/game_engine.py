@@ -5464,10 +5464,13 @@ class GameEngine:
         self.global_rank_loading = True
         
         try:
-            ranking, daily = await asyncio.gather(
-                self.cloud_manager.get_global_ranking(limit=5),
-                self.cloud_manager.get_daily_ranking(limit=5),
-                return_exceptions=True
+            ranking, daily = await asyncio.wait_for(
+                asyncio.gather(
+                    self.cloud_manager.get_global_ranking(limit=5),
+                    self.cloud_manager.get_daily_ranking(limit=5),
+                    return_exceptions=True,
+                ),
+                timeout=10.0,
             )
 
             if isinstance(ranking, list) and ranking:
@@ -5475,14 +5478,16 @@ class GameEngine:
                 self.global_rank_last_update = time.time()
                 logger.info(f"🏆 Global ranking updated: {len(ranking)} countries")
             else:
-                logger.debug("🏆 No global ranking data available")
+                logger.warning("🏆 No global ranking data returned from Supabase")
 
             if isinstance(daily, list) and daily:
                 self.daily_rank_data = daily
                 logger.info(f"📅 Daily ranking updated: {len(daily)} countries")
             else:
-                logger.debug("📅 No daily ranking data available")
+                logger.warning("📅 No daily ranking data returned from Supabase")
 
+        except asyncio.TimeoutError:
+            logger.error("❌ Ranking fetch timed out after 10s (Supabase unreachable?)")
         except Exception as e:
             logger.error(f"❌ Failed to fetch global ranking: {e}")
 
