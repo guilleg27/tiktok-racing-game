@@ -548,6 +548,7 @@ class GameEngine:
         
         # 3D Visualization animation state
         self.ranking_3d_animation_time = 0.0  # For animated effects
+        self._show_ranking_panel: bool = False  # Toggle with H key
         
         # Victory flash effect (white screen flash on win)
         self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
@@ -1866,6 +1867,11 @@ class GameEngine:
                     logger.info(f"👻 Ghost mode toggled: {status}")
                     self._audio_toast_text = f"Modo Auto: {status}"
                     self._audio_toast_timer = 3.0
+                elif event.key == pygame.K_h:  # H = Toggle ranking panel + refresh
+                    self._show_ranking_panel = not self._show_ranking_panel
+                    if self._show_ranking_panel:
+                        asyncio.create_task(self._fetch_global_ranking())
+                    logger.info(f"🏆 Ranking panel: {'ON' if self._show_ranking_panel else 'OFF'}")
 
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
@@ -2255,7 +2261,10 @@ class GameEngine:
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':
             self._render_idle_screen()
-        
+        elif self._show_ranking_panel:
+            # Also show ranking panel during RACING when toggled on
+            self._render_global_ranking_futuristic()
+
         # Render victory flash effect (white screen flash)
         if self.victory_flash_alpha > 0:
             self._render_victory_flash()
@@ -3414,16 +3423,16 @@ class GameEngine:
         overlay.fill((0, 0, 0, 150))  # ← Cambiado de 180 a 150
         self.render_surface.blit(overlay, (0, 0))
         
-        # Central message box - MÁS GRANDE en COMMENT mode para incluir lista
+        # Central message box
         if GAME_MODE == "COMMENT":
             box_width = 320
-            box_height = 420
+            box_height = 205
         else:
             box_width = 380
             box_height = 200
-        
+
         box_x = (SCREEN_WIDTH - box_width) // 2
-        box_y = (SCREEN_HEIGHT - box_height) // 2
+        box_y = (SCREEN_HEIGHT - box_height) // 2 + 40
         
         # Box with gradient effect
         box_surface = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
@@ -4095,10 +4104,10 @@ class GameEngine:
         
         if not self.global_rank_data:
             return
-        
+
         # Panel dimensions (centered at top)
         panel_width = 450
-        panel_height = 180
+        panel_height = 240
         panel_x = (SCREEN_WIDTH - panel_width) // 2
         panel_y = 20
         
@@ -4116,7 +4125,7 @@ class GameEngine:
         for i in range(panel_height):
             ratio = i / panel_height
             # Subtle gradient from slightly lighter to darker
-            alpha = int(180 - 20 * ratio)  # Fade from top to bottom
+            alpha = int(230 - 20 * ratio)  # Fade from top to bottom
             r = int(15 + 5 * (1 - ratio))
             g = int(25 + 10 * (1 - ratio))
             b = int(45 + 15 * (1 - ratio))
@@ -4196,19 +4205,21 @@ class GameEngine:
         neon_colors = [
             (255, 215, 0),      # Gold (bright)
             (192, 192, 255),    # Silver (with blue tint)
-            (255, 150, 100)     # Bronze (with orange tint)
+            (255, 150, 100),    # Bronze (with orange tint)
+            (150, 220, 180),    # 4th (green-tinted)
+            (180, 180, 255),    # 5th (lavender)
         ]
-        
-        for i, entry in enumerate(self.global_rank_data[:3]):
+
+        for i, entry in enumerate(self.global_rank_data[:5]):
             country = entry.get('country', 'Unknown')
             wins = entry.get('total_wins', 0)
-            
+
             y_pos = start_y + i * line_height
-            
+
             # Medal with glow
-            medals = ['1º', '2º', '3º']
-            medal = medals[i] if i < 3 else f"{i+1}º"
-            medal_color = neon_colors[i] if i < 3 else (200, 200, 200)
+            medals = ['1º', '2º', '3º', '4º', '5º']
+            medal = medals[i] if i < 5 else f"{i+1}º"
+            medal_color = neon_colors[i] if i < 5 else (200, 200, 200)
             
             # Glow effect for medal
             glow_surf = medal_font.render(medal, True, (*medal_color, 100))
@@ -5461,7 +5472,7 @@ class GameEngine:
         self.global_rank_loading = True
         
         try:
-            ranking = await self.cloud_manager.get_global_ranking(limit=3)
+            ranking = await self.cloud_manager.get_global_ranking(limit=5)
             
             if ranking:
                 self.global_rank_data = ranking
