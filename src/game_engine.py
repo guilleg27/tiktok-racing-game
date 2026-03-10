@@ -48,6 +48,12 @@ from .config import (
     FLOATING_TEXT_FONT_SIZE,
     LIKES_GOAL_INITIAL,
     LIKES_SIMULATED_PER_KEY,
+    HYPE_THRESHOLD_CPM,
+    HYPE_COOLDOWN_DURATION,
+    HYPE_PHYSICS_MULTIPLIER,
+    LIGA_C5_GOAL_DIAMONDS,
+    LIGA_C5_BAR_WIDTH,
+    LIGA_C5_BAR_HEIGHT,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -56,6 +62,7 @@ from .asset_manager import AssetManager
 from .audio_manager import AudioManager, SoundType, create_tts_provider, Pyttsx3Provider
 from .camera import ScreenShaker
 from .background_manager import BackgroundManager
+from .hype_manager import HypeManager
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +94,24 @@ def _get_font(name: Optional[str], size: int, bold: bool = False) -> "pygame.fon
             except Exception:
                 _font_cache[key] = pygame.font.Font(None, size)
     return _font_cache[key]
+
+
+_mono_font_cache: dict[tuple, "pygame.font.Font"] = {}
+
+
+def _get_mono_font(size: int, bold: bool = False) -> "pygame.font.Font":
+    """Return a cached monospace font for hacker-aesthetic HUD elements."""
+    key = (size, bold)
+    if key not in _mono_font_cache:
+        for name in ["Courier New", "Courier", "Consolas", "Monaco", "monospace"]:
+            try:
+                _mono_font_cache[key] = pygame.font.SysFont(name, size, bold=bold)
+                break
+            except Exception:
+                continue
+        else:
+            _mono_font_cache[key] = pygame.font.Font(None, size)
+    return _mono_font_cache[key]
 
 
 @dataclass
@@ -499,7 +524,7 @@ class GameEngine:
         self._ray_layer: Optional[pygame.Surface] = None
         self._lanes_surface: Optional[pygame.Surface] = None
         
-        self.header_height = 30          # era 70, ahora 70 * 0.42 ≈ 30
+        self.header_height = 36          # 36px — fits "1st:" left + Liga C5 right with 13px font
         self.message_area_height = 70   # Reducido de 105 a 70
         
         # Rendering surfaces
@@ -678,6 +703,17 @@ class GameEngine:
         self._physics_accumulator = 0.0
         self._max_physics_catchup = self._fixed_dt * 5  # Cap to avoid spiral of death
 
+        # 🔥 Hype Mode
+        self.hype_manager = HypeManager(
+            threshold_cpm=HYPE_THRESHOLD_CPM,
+            cooldown_duration=HYPE_COOLDOWN_DURATION,
+        )
+        self._hype_micro_shake_timer: float = 0.0  # Countdown to next micro-shake
+
+        # 🏆 Misión Liga C5 HUD
+        self.session_diamonds_total: int = 0
+        self._liga_glow_timer: float = 0.0  # Seconds remaining for bar glow effect
+
         # 🔊 Audio toast HUD (shown on M/N key press)
         self._audio_toast_text = ""
         self._audio_toast_timer = 0.0
@@ -822,38 +858,36 @@ class GameEngine:
         return outer_surf
 
     def _render_flag_emojis(self) -> None:
-        """Render flag emojis as sprites for countries without PNG sprites."""
-        import platform
-        
-        emoji_map = {
-            "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Mexico": "🇲🇽",
-            "España": "🇪🇸", "Colombia": "🇨🇴", "Chile": "🇨🇱",
-            "Peru": "🇵🇪", "Venezuela": "🇻🇪", "Uruguay": "🇺🇾",
-            "Ecuador": "🇪🇨"
-        }
-        
-        # Fuente de emojis según el sistema operativo
-        if platform.system() == "Darwin":  # macOS
-            emoji_font_name = "Apple Color Emoji"
-        elif platform.system() == "Windows":
-            emoji_font_name = "Segoe UI Emoji"
-        else:  # Linux
-            emoji_font_name = "Noto Color Emoji"
-        
+        """Render text abbreviation sprites for countries without PNG sprites.
+
+        Emoji flags (🇦🇷 etc.) are not supported by pygame's FreeType renderer —
+        they render as empty squares. Instead, we draw a colored circle with the
+        country abbreviation (ARG, BRA...) as a crisp text sprite.
+        """
+        from .config import COUNTRY_ABBREV, GIFT_COLORS, FLAG_RADIUS
+
         for country, racer in self.physics_world.racers.items():
-            # Skip if already has sprite
             if racer.sprite is not None:
                 continue
-            
-            # Try to render emoji
-            if country in emoji_map:
-                try:
-                    font = pygame.font.SysFont(emoji_font_name, 40)
-                    surf = font.render(emoji_map[country], True, (255, 255, 255))
-                    racer.sprite = surf
-                    logger.info(f"🚩 Rendered emoji for {country}")
-                except Exception as e:
-                    logger.warning(f"Could not render emoji {emoji_map[country]}: {e}")
+
+            abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
+            color = GIFT_COLORS.get(country, (180, 180, 220))
+            size = FLAG_RADIUS * 2 + 4
+
+            # Draw a filled circle with abbreviation text
+            surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            pygame.draw.circle(surf, color, (size // 2, size // 2), size // 2)
+            pygame.draw.circle(surf, (255, 255, 255), (size // 2, size // 2), size // 2, 1)
+            try:
+                abbrev_font = pygame.font.SysFont("Arial", max(7, size // 3), bold=True)
+                abbrev_surf = abbrev_font.render(abbrev, False, (255, 255, 255))
+                ax = (size - abbrev_surf.get_width()) // 2
+                ay = (size - abbrev_surf.get_height()) // 2
+                surf.blit(abbrev_surf, (ax, ay))
+            except Exception:
+                pass
+            racer.sprite = surf
+            logger.info(f"Created text sprite for {country} ({abbrev})")
     
     def emit_explosion(
         self, 
@@ -1179,7 +1213,12 @@ class GameEngine:
             
             # 🏆 CAPTAIN SYSTEM: Track points
             self._update_captain_points(username, country, diamond_count)
-            
+
+            # 🔥 HYPE: Register engagement event + accumulate session diamonds
+            self.hype_manager.register_event()
+            self.session_diamonds_total += diamond_count
+            self._liga_glow_timer = 1.0  # Trigger bar glow on each diamond increment
+
             # 🔥 COMBO SYSTEM: Register this gift (count each gift_count as separate)
             for _ in range(min(gift_count, 5)):  # Cap at 5 to prevent abuse
                 self.register_combo_event(country)
@@ -1252,27 +1291,32 @@ class GameEngine:
                 if target in self.physics_world.racers:
                     # Play freeze sound effect
                     self.audio_manager.play_freeze_sound()
-                    
+
                     # 🎥 Trigger screen shake for impact
                     self.screen_shaker.impact_shake()
-                    
-                    # Spawn floating text on the frozen target
+
                     target_racer = self.physics_world.racers[target]
-                    self.spawn_floating_text(
-                        "FREEZE!", 
-                        target_racer.body.position.x, 
-                        target_racer.body.position.y,
-                        COLOR_TEXT_FREEZE
-                    )
-                    
+                    pos = (target_racer.body.position.x, target_racer.body.position.y)
+
+                    # Global alert floating text (centered, long-lived ~3s)
+                    self.floating_texts.append(FloatingText(
+                        text=f"** {target} FROZEN! **",
+                        x=SCREEN_WIDTH / 2,
+                        y=FLOATING_TEXT_TOP_Y,
+                        color=COLOR_TEXT_FREEZE,
+                        dy=-0.8,
+                        lifespan=180,
+                        max_lifespan=180,
+                        font_size=18,
+                    ))
+
                     # Emit freeze particles (blue ice effect)
-                    self.emit_explosion(
-                        pos=(target_racer.body.position.x, target_racer.body.position.y),
-                        color=(100, 200, 255),  # Azul hielo
-                        count=30,
-                        power=1.0,
-                        diamond_count=0
-                    )
+                    self.emit_explosion(pos=pos, color=(100, 200, 255), count=35, power=1.0, diamond_count=0)
+
+                    # Hype + Liga C5 — freeze is a high-value interaction (+10 diamonds)
+                    self.hype_manager.register_event()
+                    self.session_diamonds_total += 10
+                    self._liga_glow_timer = 1.0
             
             # Handle setback/pesa effect
             elif combat_result['effect'] == 'setback':
@@ -1479,7 +1523,10 @@ class GameEngine:
         if not hasattr(self, '_last_vote_time'):
             self._last_vote_time = {}
         self._last_vote_time[username] = current_time
-        
+
+        # 🔥 HYPE: Register engagement event
+        self.hype_manager.register_event()
+
         # 🎥 Register vote for burst detection (micro-shake on vote bursts)
         self.screen_shaker.register_vote()
         
@@ -1581,6 +1628,9 @@ class GameEngine:
                         diamond_count=diamonds
                     )
                     self._on_real_activity()
+                    self.hype_manager.register_event()
+                    self.session_diamonds_total += diamonds
+                    self._liga_glow_timer = 1.0
 
                     logger.info(f"TEST: {country} received {diamonds}💎")
                     
@@ -1600,6 +1650,9 @@ class GameEngine:
                         diamond_count=diamonds
                     )
                     self._on_real_activity()
+                    self.hype_manager.register_event()
+                    self.session_diamonds_total += diamonds
+                    self._liga_glow_timer = 1.0
 
                     logger.info(f"TEST BIG: {country} received {diamonds}💎")
 
@@ -1718,20 +1771,31 @@ class GameEngine:
                             logger.error(f"Error adding test vote: {e}")
                     else:
                         # Test Helado effect (GIFT mode)
+                        from .config import FLOATING_TEXT_TOP_Y
                         result = self.physics_world.apply_gift_effect("Helado", country)
                         logger.info(f"TEST HELADO: freezing leader")
-                        
-                        # Spawn floating text on the frozen target
+
                         if result['effect'] == 'freeze':
                             target = result['target']
                             if target in self.physics_world.racers:
-                                racer = self.physics_world.racers[target]
-                                self.spawn_floating_text(
-                                    "FREEZE!", 
-                                    racer.body.position.x, 
-                                    racer.body.position.y,
-                                    COLOR_TEXT_FREEZE
-                                )
+                                self.screen_shaker.impact_shake()
+                                self.audio_manager.play_freeze_sound()
+                                target_racer = self.physics_world.racers[target]
+                                pos = (target_racer.body.position.x, target_racer.body.position.y)
+                                self.emit_explosion(pos=pos, color=(100, 200, 255), count=35, power=1.0, diamond_count=0)
+                                self.floating_texts.append(FloatingText(
+                                    text=f"** {target} FROZEN! **",
+                                    x=SCREEN_WIDTH / 2,
+                                    y=FLOATING_TEXT_TOP_Y,
+                                    color=COLOR_TEXT_FREEZE,
+                                    dy=-0.8,
+                                    lifespan=180,
+                                    max_lifespan=180,
+                                    font_size=18,
+                                ))
+                                self.hype_manager.register_event()
+                                self.session_diamonds_total += 10
+                                self._liga_glow_timer = 1.0
     
                 elif event.key == pygame.K_w:  # W = Test Room Join (Visual Welcome)
                     test_usernames = [
@@ -1811,6 +1875,7 @@ class GameEngine:
                                     gift_name="ComboTest",
                                     diamond_count=1
                                 )
+                                self.hype_manager.register_event()
                             self._on_real_activity()
                             logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
                         except Exception as e:
@@ -2006,9 +2071,46 @@ class GameEngine:
         while self._physics_accumulator >= self._fixed_dt:
             self.physics_world.update(self._fixed_dt)
             self._physics_accumulator -= self._fixed_dt
+
+        # ❄️ Process unfreeze events — ice block 'shatter' on timer end
+        for country in self.physics_world.just_unfrozen:
+            racer = self.physics_world.racers.get(country)
+            if racer:
+                pos = (racer.body.position.x, racer.body.position.y)
+                self.screen_shaker.impact_shake()
+                self.emit_explosion(pos=pos, color=(180, 240, 255), count=40, power=1.2, diamond_count=0)
+                self.spawn_floating_text(f"{country} THAWED!", 0, 0, (180, 240, 255))
+
         self.update_particles(dt)
         self.update_floating_texts()
-        
+
+        # 🔥 Hype Mode state machine
+        prev_hype = self.hype_manager.is_hype_active
+        self.hype_manager.update(dt)
+        if self.hype_manager.is_hype_active and not prev_hype:
+            # Hype just activated
+            self.physics_world.hype_speed_multiplier = HYPE_PHYSICS_MULTIPLIER
+            if self.background_manager:
+                self.background_manager.activate_hype_mode()
+            self.screen_shaker.impact_shake()
+            self._emit_hype_activation_text()
+        elif not self.hype_manager.is_hype_active and prev_hype:
+            # Hype just ended → cooldown
+            self.physics_world.hype_speed_multiplier = 1.0
+            if self.background_manager:
+                self.background_manager.deactivate_hype_mode()
+
+        # Hype micro-shake every ~3 seconds while active
+        if self.hype_manager.is_hype_active:
+            self._hype_micro_shake_timer -= dt
+            if self._hype_micro_shake_timer <= 0.0:
+                self._hype_micro_shake_timer = 3.0
+                self.screen_shaker.micro_shake()
+
+        # Liga glow timer decay
+        if self._liga_glow_timer > 0.0:
+            self._liga_glow_timer = max(0.0, self._liga_glow_timer - dt)
+
         # 👻 Ghost Participation: generate ghost votes when inactive
         self._update_ghost_participation()
         
@@ -2238,6 +2340,7 @@ class GameEngine:
         self._render_likes_bar()
         self._render_leaderboard()
         self._render_ghost_mode_indicator()
+        self._render_liga_c5_hud()
 
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
@@ -2442,13 +2545,16 @@ class GameEngine:
         y = float(y) if math.isfinite(y) else (racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2)
         radius = float(radius) if math.isfinite(radius) else 30
         
-        # 🔥 ON FIRE jitter effect
-        if racer.country in self.on_fire_countries:
-            jitter_x = random.uniform(-2, 2)
-            jitter_y = random.uniform(-2, 2)
-            x += jitter_x
-            y += jitter_y
-        
+        # ❄️ FREEZE shiver (takes priority over ON FIRE; flag can't be both)
+        is_frozen = self.physics_world.is_country_frozen(racer.country)
+        if is_frozen:
+            x += random.uniform(-3, 3)
+            y += random.uniform(-2, 2)
+        elif racer.country in self.on_fire_countries:
+            # 🔥 ON FIRE jitter effect
+            x += random.uniform(-2, 2)
+            y += random.uniform(-2, 2)
+
         # Winner gets scaled up
         if is_winner:
             scale = self.winner_scale_pulse
@@ -2470,9 +2576,24 @@ class GameEngine:
             pygame.draw.circle(self.render_surface, racer.color, (ix, iy), ir)
             pygame.draw.circle(self.render_surface, (0, 0, 0), (ix, iy), ir, 2)
         
-        # Draw number on LEFT and abbreviation on RIGHT of the flag
+        # ❄️ ICE BLOCK overlay when frozen
         ix = self._safe_int(x, self.physics_world.start_x)
         iy = self._safe_int(y, SCREEN_HEIGHT // 2)
+        ir = self._safe_int(radius, 10)
+        if is_frozen:
+            size = ir * 2 + 4
+            ice_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            ice_surf.fill((80, 210, 255, 100))          # Cyan fill, semi-transparent
+            pygame.draw.rect(ice_surf, (200, 240, 255, 200), (0, 0, size, size), 2)  # Bright border
+            self.render_surface.blit(ice_surf, (ix - ir - 2, iy - ir - 2))
+            # Timer countdown above the block
+            remaining = self.physics_world.frozen_countries.get(racer.country, 0.0)
+            timer_font = _get_font("Arial", 10, bold=True)
+            timer_surf = timer_font.render(f"{remaining:.1f}s", True, (180, 235, 255))
+            self.render_surface.blit(timer_surf, (ix - timer_surf.get_width() // 2, iy - ir - 16))
+
+        # Draw number on LEFT and abbreviation on RIGHT of the flag
+        # ix/iy already computed above
         
         # Get country number (1-12 based on lane position)
         country_number = racer.lane + 1  # Lanes are 0-indexed
@@ -2632,9 +2753,9 @@ class GameEngine:
                 leader_text, self.font, (255, 255, 255), shadow_offset=2
             )
         
-        # Centrar el texto en el header
+        # Leader text: left-aligned in header
         text_rect = count_surface.get_rect()
-        text_rect.right = SCREEN_WIDTH - 10
+        text_rect.left = 10
         text_rect.centery = self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
     
@@ -3305,6 +3426,88 @@ class GameEngine:
         # Keep floating texts under the configured limit
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
+    def _emit_hype_activation_text(self) -> None:
+        """Spawn 'HYPE MODE!' floating text when hype activates."""
+        self.spawn_floating_text(
+            ">> HYPE MODE! <<",
+            x=0,   # spawn_floating_text centers horizontally
+            y=0,
+            color=(255, 50, 180),
+        )
+
+    def _render_liga_c5_hud(self) -> None:
+        """
+        Render the Misión Liga C5 progress bar inside the header, right-aligned.
+
+        Shows accumulated session diamonds vs. a goal, with a color gradient
+        from red (empty) to cyan (full) and a brief glow on each diamond increment.
+        "1st:" is left-aligned in the header; Liga C5 is right-aligned — no overlap.
+        """
+        if self.render_surface is None:
+            return
+
+        from .config import SCREEN_WIDTH, LIGA_C5_GOAL_DIAMONDS, LIGA_C5_BAR_WIDTH
+
+        bar_w = LIGA_C5_BAR_WIDTH
+        bar_h = 12  # Fits inside 36px header with 13px font
+        pad = 4     # Horizontal padding from screen edge
+
+        progress = min(self.session_diamonds_total / LIGA_C5_GOAL_DIAMONDS, 1.0)
+
+        # Color: Red → Cyan as progress increases (fully saturated)
+        bar_r = int(255 * (1.0 - progress))
+        bar_g = int(220 * progress)
+        bar_b = int(255 * progress)
+        bar_color = (bar_r, bar_g, bar_b)
+
+        # Font — bold 13px for readability; antialiased for smooth rendering at this size
+        font = _get_mono_font(13, bold=True)
+        label_text = "LIGA C5"
+        count_text = f"{min(self.session_diamonds_total, LIGA_C5_GOAL_DIAMONDS)}/{LIGA_C5_GOAL_DIAMONDS}"
+        label_surf = font.render(label_text, True, (255, 255, 255))
+        count_surf = font.render(count_text, True, bar_color)
+
+        # Layout: label on left, count on right, bar below — all inside header height
+        label_h = label_surf.get_height()
+        total_h = label_h + 2 + bar_h
+        x = SCREEN_WIDTH - bar_w - pad
+        y = (self.header_height - total_h) // 2  # Vertically centered in header
+
+        # Dark semi-transparent background card for readability
+        bg_rect = pygame.Rect(x - 4, 0, bar_w + 8, self.header_height)
+        bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        bg_surf.fill((10, 10, 25, 160))
+        self.render_surface.blit(bg_surf, (bg_rect.x, bg_rect.y))
+
+        # Label row
+        self.render_surface.blit(label_surf, (x, y))
+        count_x = x + bar_w - count_surf.get_width()
+        self.render_surface.blit(count_surf, (count_x, y))
+
+        bar_y = y + label_h + 2
+
+        # Track (dark background)
+        pygame.draw.rect(self.render_surface, (30, 30, 50), (x, bar_y, bar_w, bar_h))
+
+        # Fill
+        fill_w = int(bar_w * progress)
+        if fill_w > 0:
+            pygame.draw.rect(self.render_surface, bar_color, (x, bar_y, fill_w, bar_h))
+
+        # Always-visible border (1px, dim)
+        pygame.draw.rect(self.render_surface, (80, 80, 100), (x, bar_y, bar_w, bar_h), 1)
+
+        # Glow outline when recently incremented (brighter, 1.0s duration)
+        if self._liga_glow_timer > 0.0:
+            glow_alpha = int(255 * self._liga_glow_timer / 1.0)
+            glow_alpha = min(255, max(0, glow_alpha))
+            glow_color = (
+                min(255, bar_r + glow_alpha // 3),
+                min(255, bar_g + glow_alpha // 3),
+                min(255, bar_b + glow_alpha // 3),
+            )
+            pygame.draw.rect(self.render_surface, glow_color, (x - 1, bar_y - 1, bar_w + 2, bar_h + 2), 2)
 
     def _render_victory_flash(self) -> None:
         """
@@ -4481,6 +4684,9 @@ class GameEngine:
         # ☁️ Reset cloud sync flag for next race
         self.race_synced = False
 
+        # Liga C5 session_diamonds_total is intentionally NOT reset here —
+        # it accumulates across all races for the entire stream session.
+
         # Invalidate leaderboard cache for next race
         self._leaderboard_cache = None
 
@@ -4542,6 +4748,7 @@ class GameEngine:
         self.captain_change_timer.clear()
         self.race_synced = False
         self._leaderboard_cache = None
+        # session_diamonds_total is NOT reset — cumulative for the whole stream session
         self.winner_animation_time = 0.0
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
