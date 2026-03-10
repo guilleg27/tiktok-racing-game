@@ -9,6 +9,7 @@ from typing import Optional
 from pathlib import Path
 
 from .resources import resource_path
+from .config import HYPE_NEON_COLORS, HYPE_OVERLAY_ALPHA, HYPE_COLOR_CYCLE_SPEED
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,11 @@ class BackgroundManager:
         
         # Tension mode (after crossing final stretch line - red/orange theme)
         self.tension_mode = False
+
+        # Hype Mode neon overlay
+        self.hype_mode = False
+        self._hype_phase = 0.0            # 0.0 – len(HYPE_NEON_COLORS), cycles continuously
+        self._hype_overlay_surf: Optional[pygame.Surface] = None
         
         # Pre-rendered static background (dark gradient, no nebulas)
         self.static_bg: Optional[pygame.Surface] = None
@@ -298,7 +304,23 @@ class BackgroundManager:
     def deactivate_tension_mode(self) -> None:
         """Deactivate tension mode."""
         self.tension_mode = False
-    
+
+    def activate_hype_mode(self) -> None:
+        """Activate Hype Mode neon pulsing overlay."""
+        if not self.hype_mode:
+            self.hype_mode = True
+            self._hype_phase = 0.0
+            self._hype_overlay_surf = pygame.Surface(
+                (self.width, self.height), pygame.SRCALPHA
+            )
+            logger.info("💥 HYPE MODE background activated!")
+
+    def deactivate_hype_mode(self) -> None:
+        """Deactivate Hype Mode neon pulsing overlay."""
+        self.hype_mode = False
+        self._hype_overlay_surf = None
+        logger.info("🌙 HYPE MODE background deactivated")
+
     def update(self, dt: float) -> None:
         """
         Update background animation state.
@@ -341,6 +363,11 @@ class BackgroundManager:
             spawn_count = 3 if self.warp_mode else 1
             for _ in range(spawn_count):
                 self._spawn_speed_line()
+
+        # Advance hype color phase
+        if self.hype_mode:
+            n = len(HYPE_NEON_COLORS)
+            self._hype_phase = (self._hype_phase + HYPE_COLOR_CYCLE_SPEED * dt * n) % n
     
     def render(self, surface: pygame.Surface) -> None:
         """
@@ -356,6 +383,10 @@ class BackgroundManager:
         
         # Always render speed lines on top
         self._render_speed_lines(surface)
+
+        # Hype Mode: subtle neon color-cycling tint
+        if self.hype_mode and self._hype_overlay_surf is not None:
+            self._render_hype_overlay(surface)
     
     def _render_image_background(self, surface: pygame.Surface) -> None:
         """Render scrolling image background with seamless tiling."""
@@ -471,6 +502,22 @@ class BackgroundManager:
                 )
                 pygame.draw.line(surface, faded_color, (x1, y), (x2, y), line.thickness)
     
+    def _render_hype_overlay(self, surface: pygame.Surface) -> None:
+        """Render a neon color-cycling additive overlay for Hype Mode."""
+        n = len(HYPE_NEON_COLORS)
+        idx = int(self._hype_phase) % n
+        next_idx = (idx + 1) % n
+        frac = self._hype_phase - int(self._hype_phase)
+
+        c0 = HYPE_NEON_COLORS[idx]
+        c1 = HYPE_NEON_COLORS[next_idx]
+        r = int(c0[0] + (c1[0] - c0[0]) * frac)
+        g = int(c0[1] + (c1[1] - c0[1]) * frac)
+        b = int(c0[2] + (c1[2] - c0[2]) * frac)
+
+        self._hype_overlay_surf.fill((r, g, b, HYPE_OVERLAY_ALPHA))
+        surface.blit(self._hype_overlay_surf, (0, 0))
+
     def set_scroll_speed(self, speed: float) -> None:
         """
         Set the base scroll speed.

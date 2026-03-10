@@ -88,8 +88,13 @@ class PhysicsWorld:
         # Smooth movement configuration (Lerp) - Improved for smoother motion
         self.smoothing_factor = 0.12  # Increased from 0.08 for smoother interpolation
 
+        # Hype Mode: applied as a multiplier at distance-calculation time
+        self.hype_speed_multiplier: float = 1.0
+
         # Combat system - freeze tracking
         self.frozen_countries: dict[str, float] = {}  # country -> remaining freeze time
+        # Countries that finished their freeze this tick (consumed by game_engine each frame)
+        self.just_unfrozen: list[str] = []
         
         # Combat effect constants
         self.EFFECT_ROSA_ADVANCE = 5.0      # +5 metros (píxeles)
@@ -206,7 +211,7 @@ class PhysicsWorld:
 
         # Direct distance scaling: diamonds = pixels to move
         distance_per_diamond = 0.8  # Each diamond = 0.8 pixels forward
-        distance = diamond_count * distance_per_diamond
+        distance = diamond_count * distance_per_diamond * self.hype_speed_multiplier
         
         # Increment target position (NOT actual position)
         racer.target_x += distance
@@ -481,19 +486,21 @@ class PhysicsWorld:
         return country in self.frozen_countries and self.frozen_countries[country] > 0
     
     def update_freeze_timers(self, dt: float) -> None:
-        """Actualiza los timers de congelamiento."""
+        """Actualiza los timers de congelamiento. Populates just_unfrozen for game_engine."""
+        self.just_unfrozen.clear()
         countries_to_unfreeze = []
-        
+
         for country, remaining_time in self.frozen_countries.items():
             new_time = remaining_time - dt
             if new_time <= 0:
                 countries_to_unfreeze.append(country)
-                logger.info(f"🔥 {country} descongelado!")
+                logger.info(f"Unfreeze: {country}")
             else:
                 self.frozen_countries[country] = new_time
-        
+
         for country in countries_to_unfreeze:
             del self.frozen_countries[country]
+            self.just_unfrozen.append(country)
     
     def reset_race(self) -> None:
         """Reset all racers to starting position."""

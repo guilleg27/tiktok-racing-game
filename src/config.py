@@ -339,7 +339,7 @@ FLOATING_TEXT_LIFESPAN = 90            # Duration in frames (~1.5s at 60 FPS)
 FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
 # CTA banner and likes bar layout (no overlap with first lane)
-CTA_BANNER_Y = 30          # Right below header (header_height 30)
+CTA_BANNER_Y = 36          # Right below header (header_height 36)
 CTA_BANNER_HEIGHT = 54     # Compact CTA box
 CTA_BANNER_WIDTH = 420     # Wide banner (max SCREEN_WIDTH - 20)
 LIKES_BAR_HEIGHT = 12      # Likes goal bar height
@@ -396,3 +396,27 @@ WELCOME_FONT_SIZE = 16           # Compact, non-intrusive
 # Likes goal bar (retention mechanic - Meteor Shower event)
 LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower
 LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)
+
+# ---------------------------------------------------------------------------
+# Hype Mode
+# ---------------------------------------------------------------------------
+HYPE_THRESHOLD_CPM = 30           # Events/min to trigger hype mode
+HYPE_COOLDOWN_DURATION = 120.0    # Seconds in cooldown after hype subsides (2 min)
+HYPE_PHYSICS_MULTIPLIER = 1.15    # 15% speed boost while hype is active
+
+# Neon color cycling overlay (RGBA tuple list, one color per step)
+HYPE_NEON_COLORS = [
+    (255, 0, 120),    # neon pink
+    (0, 120, 255),    # electric blue
+    (0, 255, 220),    # cyan
+    (180, 0, 255),    # violet
+]
+HYPE_OVERLAY_ALPHA = 18           # Very subtle tint (0-255)
+HYPE_COLOR_CYCLE_SPEED = 0.5      # Full color cycle per second
+
+# ---------------------------------------------------------------------------
+# Misión Liga C5 HUD
+# ---------------------------------------------------------------------------
+LIGA_C5_GOAL_DIAMONDS = 5000      # Session diamond goal (streamer can edit)
+LIGA_C5_BAR_WIDTH = 130
+LIGA_C5_BAR_HEIGHT = 14
