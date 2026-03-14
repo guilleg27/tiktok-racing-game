@@ -13,6 +13,7 @@ from TikTokLive.events import (
     CommentEvent,
     LikeEvent,
     JoinEvent,
+    FollowEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -255,6 +256,26 @@ class TikTokManager:
                 ))
             except Exception as e:
                 logger.error(f"Error processing join: {e}")
+
+        @client.on(FollowEvent)
+        async def on_follow(event: FollowEvent) -> None:
+            """Handle new follower: queue banner and hype event."""
+            try:
+                username = (
+                    getattr(event.user, "unique_id", None)
+                    or getattr(event.user, "nickname", None)
+                    or "someone"
+                ) if hasattr(event, "user") and event.user else "someone"
+                follow_game_event = GameEvent(
+                    type=EventType.FOLLOW,
+                    username=username,
+                )
+                try:
+                    self.queue.put_nowait(follow_game_event)
+                except asyncio.QueueFull:
+                    logger.warning("Queue full, dropping follow event")
+            except Exception as e:
+                logger.error(f"Error processing follow: {e}")
 
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:

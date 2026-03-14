@@ -401,6 +401,14 @@ LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)
 TTS_ENABLED = False
 
 # ---------------------------------------------------------------------------
+# Follower Wall
+# ---------------------------------------------------------------------------
+FOLLOWER_BANNER_LIFESPAN  = 150   # frames (~2.5 s at 60 FPS)
+FOLLOWER_BANNER_Y         = 410   # center-y of banner (screen center)
+FOLLOWER_BANNER_WIDTH     = 340   # px
+FOLLOWER_BANNER_HEIGHT    = 64    # px
+
+# ---------------------------------------------------------------------------
 # Hype Mode
 # ---------------------------------------------------------------------------
 HYPE_THRESHOLD_CPM = 30           # Events/min to trigger hype mode

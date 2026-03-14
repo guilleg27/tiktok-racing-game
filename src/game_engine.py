@@ -52,6 +52,10 @@ from .config import (
     HYPE_COOLDOWN_DURATION,
     HYPE_PHYSICS_MULTIPLIER,
     TTS_ENABLED,
+    FOLLOWER_BANNER_LIFESPAN,
+    FOLLOWER_BANNER_Y,
+    FOLLOWER_BANNER_WIDTH,
+    FOLLOWER_BANNER_HEIGHT,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -61,6 +65,7 @@ from .audio_manager import AudioManager, SoundType, create_tts_provider, Pyttsx3
 from .camera import ScreenShaker
 from .background_manager import BackgroundManager
 from .hype_manager import HypeManager
+from .notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -711,6 +716,15 @@ class GameEngine:
         )
         self._hype_micro_shake_timer: float = 0.0  # Countdown to next micro-shake
 
+        # 👥 Follower Wall
+        self.notification_manager = NotificationManager(
+            banner_x=SCREEN_WIDTH // 2,
+            banner_y=FOLLOWER_BANNER_Y,
+            banner_w=FOLLOWER_BANNER_WIDTH,
+            banner_h=FOLLOWER_BANNER_HEIGHT,
+            lifespan=FOLLOWER_BANNER_LIFESPAN,
+        )
+
         # 🔊 Audio toast HUD (shown on M/N key press)
         self._audio_toast_text = ""
         self._audio_toast_timer = 0.0
@@ -1354,7 +1368,10 @@ class GameEngine:
             self.messages.append((msg, event.type))
             if len(self.messages) > MAX_MESSAGES:
                 self.messages = self.messages[-MAX_MESSAGES:]
-        
+
+        elif event.type == EventType.FOLLOW:
+            await self._handle_follow_event(event)
+
         elif event.type == EventType.COMMENT:
             self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
@@ -1481,7 +1498,17 @@ class GameEngine:
                 self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
         logger.debug(f"👋 Welcome displayed for @{username}")
-    
+
+    async def _handle_follow_event(self, event: GameEvent) -> None:
+        """Handle new follower: queue banner, register hype, log message."""
+        username = event.username or "someone"
+        self.notification_manager.enqueue(username)
+        self.hype_manager.register_event()
+        self._on_real_activity()
+        self.messages.append((f"❤ {username} followed!", EventType.FOLLOW))
+        if len(self.messages) > MAX_MESSAGES:
+            self.messages = self.messages[-MAX_MESSAGES:]
+
     async def _handle_vote_event(self, event: GameEvent) -> None:
         """
         Handle vote event in COMMENT mode.
@@ -1913,6 +1940,11 @@ class GameEngine:
                     self._audio_toast_text = f"SFX: {status}"
                     self._audio_toast_timer = 3.0
 
+                elif event.key == pygame.K_o:  # O = Test Follower notification
+                    test_names = ["TikFan", "RacingViewer", "StreamLover", "NewFollower", "Lurker99"]
+                    username = random.choice(test_names) + str(int(time.time() * 1000) % 100)
+                    self.queue.put_nowait(GameEvent(type=EventType.FOLLOW, username=username))
+
                 elif event.key == pygame.K_b:  # B = Toggle ghost/bot mode
                     self.ghost_mode_enabled = not self.ghost_mode_enabled
                     status = "ON" if self.ghost_mode_enabled else "OFF"
@@ -2069,6 +2101,7 @@ class GameEngine:
 
         self.update_particles(dt)
         self.update_floating_texts()
+        self.notification_manager.update()
 
         # 🔥 Hype Mode state machine
         prev_hype = self.hype_manager.is_hype_active
@@ -2314,6 +2347,7 @@ class GameEngine:
         self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
+        self.notification_manager.render(self.render_surface)
         self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
         from .config import GAME_MODE
@@ -2739,7 +2773,17 @@ class GameEngine:
         text_rect.left = 10
         text_rect.centery = self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
-    
+
+        # Last follower: right-aligned in header (gold)
+        if self.notification_manager.last_follower:
+            lf_surf = _get_mono_font(13).render(
+                f"Ultimo seguidor: {self.notification_manager.last_follower}", True, (255, 220, 50)
+            )
+            lf_rect = lf_surf.get_rect()
+            lf_rect.right = SCREEN_WIDTH - 8
+            lf_rect.centery = self.header_height // 2
+            self.render_surface.blit(lf_surf, lf_rect)
+
     def _get_status_color(self) -> tuple[int, int, int]:
         if self.connection_state == ConnectionState.CONNECTED:
             return COLOR_STATUS_CONNECTED
@@ -3803,30 +3847,22 @@ class GameEngine:
         TikTok-style gradient (orange to pink), thin and elegant.
         Text: 'PRÓXIMO EVENTO: LLUVIA DE METEORITOS (actual/meta)'.
         """
-        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT, LIKES_BAR_TOP_GAP
+        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT
         bar_height = LIKES_BAR_HEIGHT
         bar_margin_x = 20
         bar_width = SCREEN_WIDTH - 2 * bar_margin_x
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
-        hint_font = _get_font("Arial", 11)
-        hint = "Dale like o tap en vivo para llenar la barra"
-        hint_surf = hint_font.render(hint, True, (240, 240, 240))
         label_font = _get_font("Arial", 11, bold=True)
         label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
         if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            # Hint strictly below CTA so it is never covered. Order: hint → label → bar.
-            hint_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
-            label_y = hint_y + hint_surf.get_height() + 2
+            label_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
             bar_y = label_y + label_surf.get_height() + 2
         else:
             bar_y = self.header_height + 2
             label_y = bar_y - 2 - label_surf.get_height()
-            hint_y = label_y - 1 - hint_surf.get_height()
-            if hint_y < self.header_height:
-                hint_y = bar_y + bar_height + 2
 
         # Background track (dark)
         track_rect = pygame.Rect(bar_margin_x, bar_y, bar_width, bar_height)
@@ -3843,7 +3879,6 @@ class GameEngine:
             self.render_surface.blit(fill_surf, (bar_margin_x, bar_y))
         pygame.draw.rect(self.render_surface, (255, 180, 180, 120), track_rect, 1)
 
-        self.render_surface.blit(hint_surf, (int(bar_margin_x), int(hint_y)))
         self.render_surface.blit(label_surf, (int(bar_margin_x), int(label_y)))
 
     def _trigger_meteor_shower(self) -> None:
