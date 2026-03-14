@@ -424,3 +424,13 @@ HYPE_NEON_COLORS = [
 ]
 HYPE_OVERLAY_ALPHA = 18           # Very subtle tint (0-255)
 HYPE_COLOR_CYCLE_SPEED = 0.5      # Full color cycle per second
+
+# ---------------------------------------------------------------------------
+# Blackout Mode
+# ---------------------------------------------------------------------------
+BLACKOUT_INITIAL_ALPHA      = 190   # Starting darkness when activated (0–255)
+BLACKOUT_MAX_ALPHA          = 240   # Maximum darkness cap
+BLACKOUT_INCREASE_PER_SEC   = 2     # Alpha units added every second (passive fade)
+BLACKOUT_RECHARGE_DECREASE  = 35    # Alpha units removed per Rosa recharge
+BLACKOUT_HYPE_INTERVAL      = 30.0  # Seconds between auto-trigger rolls during Hype
+BLACKOUT_HYPE_CHANCE        = 0.05  # 5% chance per interval to auto-trigger

@@ -729,6 +729,13 @@ class GameEngine:
         self._audio_toast_text = ""
         self._audio_toast_timer = 0.0
 
+        # 🌑 Blackout Mode
+        self.blackout_active: bool = False
+        self.blackout_alpha: int = 0
+        self._blackout_increase_timer: float = 0.0
+        self._blackout_hype_timer: float = 0.0
+        self._blackout_restored_timer: float = 0.0
+
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
         import os
@@ -1288,6 +1295,10 @@ class GameEngine:
                 if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
                     self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
             
+            # Blackout recharge: Rosa/Rose recharges the lights
+            if self.blackout_active and gift_name.lower() in ("rosa", "rose"):
+                self._recharge_blackout()
+
             # Apply combat effects (Rosa, Pesa, Helado)
             combat_result = self.physics_world.apply_gift_effect(
                 gift_name=gift_name,
@@ -1628,9 +1639,15 @@ class GameEngine:
                         self._esc_quit_requested = True
                         self._esc_quit_time = now
                         logger.info("🚪 Press ESC again within 2s to quit")
-                elif event.key == pygame.K_c or event.key == pygame.K_r:
-                    self._return_to_idle()  # Usar nuevo método
+                elif event.key == pygame.K_c:
+                    self._return_to_idle()
                     logger.info("Race reset to IDLE!")
+                elif event.key == pygame.K_r:
+                    if self.blackout_active:
+                        self._recharge_blackout()
+                    else:
+                        self._return_to_idle()
+                        logger.info("Race reset to IDLE!")
                 elif event.key == pygame.K_t:  # Test mode
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
@@ -1940,7 +1957,14 @@ class GameEngine:
                     self._audio_toast_text = f"SFX: {status}"
                     self._audio_toast_timer = 3.0
 
-                elif event.key == pygame.K_o:  # O = Test Follower notification
+                elif event.key == pygame.K_o:  # O = Toggle Blackout Mode (test)
+                    if self.blackout_active:
+                        self.blackout_active = False
+                        self.blackout_alpha = 0
+                    else:
+                        self._activate_blackout()
+
+                elif event.key == pygame.K_p:  # P = Test Follower notification (was O)
                     test_names = ["TikFan", "RacingViewer", "StreamLover", "NewFollower", "Lurker99"]
                     username = random.choice(test_names) + str(int(time.time() * 1000) % 100)
                     self.queue.put_nowait(GameEvent(type=EventType.FOLLOW, username=username))
@@ -2125,6 +2149,24 @@ class GameEngine:
             if self._hype_micro_shake_timer <= 0.0:
                 self._hype_micro_shake_timer = 3.0
                 self.screen_shaker.micro_shake()
+
+        # 🌑 Blackout Mode update
+        from .config import (BLACKOUT_MAX_ALPHA, BLACKOUT_INCREASE_PER_SEC,
+                             BLACKOUT_HYPE_INTERVAL, BLACKOUT_HYPE_CHANCE)
+        if self.blackout_active:
+            self._blackout_increase_timer += dt
+            if self._blackout_increase_timer >= 1.0:
+                self._blackout_increase_timer -= 1.0
+                self.blackout_alpha = min(BLACKOUT_MAX_ALPHA,
+                                          self.blackout_alpha + BLACKOUT_INCREASE_PER_SEC)
+        if not self.blackout_active and self.hype_manager.is_hype_active:
+            self._blackout_hype_timer += dt
+            if self._blackout_hype_timer >= BLACKOUT_HYPE_INTERVAL:
+                self._blackout_hype_timer = 0.0
+                if random.random() < BLACKOUT_HYPE_CHANCE:
+                    self._activate_blackout()
+        if self._blackout_restored_timer > 0:
+            self._blackout_restored_timer -= dt
 
         # 👻 Ghost Participation: generate ghost votes when inactive
         self._update_ghost_participation()
@@ -2347,6 +2389,7 @@ class GameEngine:
         self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
+        self._render_blackout_overlay()  # 🌑 Blackout Mode (between particles and notifications)
         self.notification_manager.render(self.render_surface)
         self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
@@ -2421,6 +2464,66 @@ class GameEngine:
             self._render_audio_toast()
 
         pygame.display.flip()
+
+    def _activate_blackout(self) -> None:
+        """Activate Blackout Mode at the initial darkness level."""
+        from .config import BLACKOUT_INITIAL_ALPHA
+        self.blackout_active = True
+        self.blackout_alpha = BLACKOUT_INITIAL_ALPHA
+        self._blackout_increase_timer = 0.0
+
+    def _recharge_blackout(self) -> None:
+        """Reduce blackout darkness; deactivate when fully recharged."""
+        from .config import BLACKOUT_RECHARGE_DECREASE
+        self.blackout_alpha = max(0, self.blackout_alpha - BLACKOUT_RECHARGE_DECREASE)
+        if self.blackout_alpha == 0:
+            self.blackout_active = False
+            self._blackout_restored_timer = 3.0
+
+    def _render_blackout_overlay(self) -> None:
+        """Render the Blackout Mode darkness overlay + HUD indicators."""
+        if self.blackout_alpha <= 0 and self._blackout_restored_timer <= 0:
+            return
+
+        if self.blackout_alpha > 0:
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, self.blackout_alpha))
+            self.render_surface.blit(overlay, (0, 0))
+
+            # Flashing warning banner
+            flash_alpha = int(180 + 75 * math.sin(pygame.time.get_ticks() * 0.008))
+            flash_alpha = max(0, min(255, flash_alpha))
+            warn_font = _get_font("Arial", 13, bold=True)
+            warn_surf = warn_font.render(
+                "VISIBILIDAD CRITICA - ACTIVEN LAS LINTERNAS",
+                True, (255, 80, 0)
+            )
+            warn_surf.set_alpha(flash_alpha)
+            warn_rect = warn_surf.get_rect(centerx=SCREEN_WIDTH // 2, y=290)
+            self.render_surface.blit(warn_surf, warn_rect)
+
+            # Energy indicator (below warning banner)
+            pct = int((1.0 - self.blackout_alpha / 240) * 100)
+            energy_font = _get_font("Arial", 15, bold=True)
+            if pct > 40:
+                energy_color = (0, 255, 100)
+            elif pct > 15:
+                energy_color = (255, 160, 0)
+            else:
+                energy_color = (255, 40, 40)
+            energy_surf = energy_font.render(f"ENERGIA LUMINICA: {pct}%", True, energy_color)
+            energy_rect = energy_surf.get_rect(centerx=SCREEN_WIDTH // 2, y=warn_rect.bottom + 8)
+            self.render_surface.blit(energy_surf, energy_rect)
+
+        # "VISION RESTABLECIDA" restored banner
+        if self._blackout_restored_timer > 0:
+            fade = min(1.0, self._blackout_restored_timer)
+            r_alpha = int(255 * fade)
+            r_font = _get_font("Arial", 16, bold=True)
+            r_surf = r_font.render("VISION RESTABLECIDA", True, (255, 255, 150))
+            r_surf.set_alpha(r_alpha)
+            r_rect = r_surf.get_rect(centerx=SCREEN_WIDTH // 2, centery=SCREEN_HEIGHT // 2)
+            self.render_surface.blit(r_surf, r_rect)
 
     def _render_audio_toast(self) -> None:
         """Render a semi-transparent toast in the top-right corner showing BGM/SFX status."""
