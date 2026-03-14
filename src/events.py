@@ -51,26 +51,26 @@ class GameEvent:
         time_str = self.timestamp.strftime("%H:%M:%S")
         
         if self.type == EventType.COMMENT:
-            return f"[{time_str}] 💬 {self.username}: {self.content}"
-        
+            return f"[{time_str}] {self.username}: {self.content}"
+
         elif self.type == EventType.GIFT:
             count = self.extra.get("count", 1) if self.extra else 1
             if count > 1:
-                return f"[{time_str}] 🎁 {self.username} envió {count}x {self.content}"
-            return f"[{time_str}] 🎁 {self.username} envió {self.content}"
-        
+                return f"[{time_str}] {self.username} envió {count}x {self.content}"
+            return f"[{time_str}] {self.username} envió {self.content}"
+
         elif self.type == EventType.VOTE:
             country = self.content
-            return f"[{time_str}] 🗳️ {self.username} votó por {country}"
-        
+            return f"[{time_str}] {self.username} voto: {country}"
+
         elif self.type == EventType.LIKE:
             count = self.extra.get("count", 1) if self.extra else 1
-            return f"[{time_str}] 👍 {count} like(s) en el stream"
+            return f"[{time_str}] {count} like(s) en el stream"
 
         elif self.type == EventType.FOLLOW:
-            return f"[{time_str}] ❤ {self.username} followed!"
+            return f"[{time_str}] {self.username} followed!"
 
         elif self.type == EventType.CONNECTION_STATUS:
-            return f"[{time_str}] ⚡ {self.content}"
+            return f"[{time_str}] >> {self.content}"
         
         return f"[{time_str}] {self.content}"

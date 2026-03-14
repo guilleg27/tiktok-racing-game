@@ -1356,11 +1356,11 @@ class GameEngine:
             # Message with assignment indicator
             assignment_indicator = {
                 "cached": "✓",
-                "flag": "🚩",
-                "balanced": "⚖️"
+                "flag": ">",
+                "balanced": "~"
             }.get(assignment_type, "")
-            
-            message = f"{assignment_indicator} {username} → {country}: {gift_name} x{gift_count} ({diamond_count}💎)"
+
+            message = f"{assignment_indicator} {username} → {country}: {gift_name} x{gift_count} ({diamond_count}d)"
             self.messages.append((message, event.type))
             if len(self.messages) > MAX_MESSAGES:
                 self.messages = self.messages[-MAX_MESSAGES:]
@@ -2480,6 +2480,17 @@ class GameEngine:
             self.blackout_active = False
             self._blackout_restored_timer = 3.0
 
+        # Thaw: each Rosa recharge also reduces all active freeze timers by 1.5 s
+        THAW_REDUCTION = 1.5
+        thawed = [c for c, t in self.physics_world.frozen_countries.items()
+                  if t - THAW_REDUCTION <= 0]
+        for c in thawed:
+            del self.physics_world.frozen_countries[c]
+            self.physics_world.just_unfrozen.append(c)
+        for c in list(self.physics_world.frozen_countries):
+            if c not in thawed:
+                self.physics_world.frozen_countries[c] -= THAW_REDUCTION
+
     def _render_blackout_overlay(self) -> None:
         """Render the Blackout Mode darkness overlay + HUD indicators."""
         if self.blackout_alpha <= 0 and self._blackout_restored_timer <= 0:
@@ -2495,7 +2506,7 @@ class GameEngine:
             flash_alpha = max(0, min(255, flash_alpha))
             warn_font = _get_font("Arial", 13, bold=True)
             warn_surf = warn_font.render(
-                "VISIBILIDAD CRITICA - ACTIVEN LAS LINTERNAS",
+                "\u00a1BAJA VISIBILIDAD - ACTIVEN LINTERNAS!",
                 True, (255, 80, 0)
             )
             warn_surf.set_alpha(flash_alpha)
@@ -2514,6 +2525,22 @@ class GameEngine:
             energy_surf = energy_font.render(f"ENERGIA LUMINICA: {pct}%", True, energy_color)
             energy_rect = energy_surf.get_rect(centerx=SCREEN_WIDTH // 2, y=warn_rect.bottom + 8)
             self.render_surface.blit(energy_surf, energy_rect)
+
+            # Energy bar at bottom
+            bar_w = 200
+            bar_h = 8
+            bar_x = (SCREEN_WIDTH - bar_w) // 2
+            bar_y = SCREEN_HEIGHT - 28
+            fill_w = max(0, int(bar_w * (pct / 100)))
+
+            pygame.draw.rect(self.render_surface, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+            pygame.draw.rect(self.render_surface, energy_color, (bar_x, bar_y, fill_w, bar_h), border_radius=4)
+            pygame.draw.rect(self.render_surface, (120, 120, 120), (bar_x, bar_y, bar_w, bar_h), 1, border_radius=4)
+
+            bar_label_font = _get_font("Arial", 11, bold=False)
+            bar_label_surf = bar_label_font.render("Energ\u00eda", True, (200, 200, 200))
+            bar_label_rect = bar_label_surf.get_rect(centerx=SCREEN_WIDTH // 2, bottom=bar_y - 3)
+            self.render_surface.blit(bar_label_surf, bar_label_rect)
 
         # "VISION RESTABLECIDA" restored banner
         if self._blackout_restored_timer > 0:
@@ -3473,55 +3500,6 @@ class GameEngine:
             sanitized = "Usuario"
         
         return sanitized
-    
-    def _get_emoji_font(self, size: int) -> pygame.font.Font:
-        """Get a cached font that supports emoji rendering."""
-        for name in ("Apple Color Emoji", "Segoe UI Emoji", "Arial"):
-            try:
-                return _get_font(name, size)
-            except Exception:
-                continue
-        return _get_font(None, size)
-
-    def _render_text_with_emoji(
-        self, 
-        text: str, 
-        size: int, 
-        color: tuple, 
-        bold: bool = False
-    ) -> pygame.Surface:
-        """
-        Render text that may contain emojis.
-        Splits text into emoji and non-emoji parts for proper rendering.
-        """
-        import re
-        
-        # Simple approach: use emoji font for everything if text contains emoji
-        emoji_pattern = re.compile(
-            "["
-            "\U0001F1E0-\U0001F1FF"  # flags
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F680-\U0001F6FF"  # transport & map
-            "\U0001F700-\U0001F77F"  # alchemical
-            "\U0001F780-\U0001F7FF"  # geometric
-            "\U0001F800-\U0001F8FF"  # supplemental arrows
-            "\U0001F900-\U0001F9FF"  # supplemental symbols
-            "\U0001FA00-\U0001FA6F"  # chess symbols
-            "\U0001FA70-\U0001FAFF"  # symbols extended
-            "\U00002702-\U000027B0"  # dingbats
-            "\U0001F004-\U0001F0CF"  # playing cards
-            "]+"
-        )
-        
-        has_emoji = emoji_pattern.search(text) is not None
-        
-        if has_emoji:
-            font = self._get_emoji_font(size)
-        else:
-            font = _get_font("Arial", size, bold=bold)
-
-        return font.render(text, True, color)
     
     def spawn_floating_text(
         self, 
