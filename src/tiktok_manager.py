@@ -14,6 +14,7 @@ from TikTokLive.events import (
     LikeEvent,
     JoinEvent,
     FollowEvent,
+    RoomUserSeqEvent,
 )
 
 from .config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
@@ -276,6 +277,22 @@ class TikTokManager:
                     logger.warning("Queue full, dropping follow event")
             except Exception as e:
                 logger.error(f"Error processing follow: {e}")
+
+        @client.on(RoomUserSeqEvent)
+        async def on_room_user_seq(event: RoomUserSeqEvent) -> None:
+            """Emit viewer count updates for milestone tracking."""
+            try:
+                count = getattr(event, "total_user", 0) or 0
+                if count > 0:
+                    await self.queue.put(GameEvent(
+                        type=EventType.VIEWER_COUNT,
+                        username="",
+                        content="",
+                        extra={"count": int(count)},
+                        created_at_sec=time.perf_counter(),
+                    ))
+            except Exception as e:
+                logger.error(f"Error processing viewer count: {e}")
 
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:

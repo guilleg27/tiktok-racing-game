@@ -736,6 +736,14 @@ class GameEngine:
         self._blackout_hype_timer: float = 0.0
         self._blackout_restored_timer: float = 0.0
 
+        # Audience milestone state
+        self.viewer_count: int = 0
+        self._milestones_triggered: set = set()
+        self._highest_milestone_reached: int = 0
+        self._milestone_banner_timer: float = 0.0
+        self._milestone_banner_count: int = 0
+        self._milestone_banner_msg: str = ""
+
     def init_pygame(self) -> None:
         """Initialize Pygame with centered window and gradient background."""
         import os
@@ -1383,6 +1391,12 @@ class GameEngine:
         elif event.type == EventType.FOLLOW:
             await self._handle_follow_event(event)
 
+        elif event.type == EventType.VIEWER_COUNT:
+            count = event.extra.get("count", 0) if event.extra else 0
+            if count > 0:
+                self.viewer_count = count
+                self._check_audience_milestones(count)
+
         elif event.type == EventType.COMMENT:
             self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
@@ -1981,6 +1995,11 @@ class GameEngine:
                         asyncio.create_task(self._fetch_global_ranking())
                     logger.info(f"🏆 Ranking panel: {'ON' if self._show_ranking_panel else 'OFF'}")
 
+                elif event.key == pygame.K_z:  # Z = Test audience milestone
+                    self.viewer_count += 15
+                    self._check_audience_milestones(self.viewer_count)
+                    logger.info(f"TEST: Simulated viewer count -> {self.viewer_count}")
+
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
         Update session points and check for new captain.
@@ -2085,6 +2104,51 @@ class GameEngine:
         # Set timer for captain highlight effect
         self.captain_change_timer[country] = 90  # 1.5 seconds at 60fps
 
+    # --- Audience Milestone constants ---
+    _AUDIENCE_MILESTONES: dict = {
+        15:  "SALA ACTIVA - 15 espectadores",
+        30:  "OBJETIVO ALCANZADO - 30 espectadores",
+        50:  "SALA LLENA - 50 espectadores",
+        100: "RECORD HISTORICO - 100 espectadores",
+    }
+
+    def _check_audience_milestones(self, count: int) -> None:
+        """Fire audience milestone effects when viewer count crosses a threshold."""
+        # Only advance, never retreat
+        if count <= self._highest_milestone_reached:
+            return
+        self._highest_milestone_reached = count
+
+        for threshold, message in sorted(self._AUDIENCE_MILESTONES.items()):
+            if threshold <= count and threshold not in self._milestones_triggered:
+                self._milestones_triggered.add(threshold)
+                self._trigger_audience_milestone(threshold, message)
+
+    def _trigger_audience_milestone(self, count: int, message: str) -> None:
+        """Execute all bonus effects for a milestone trigger."""
+        # Banner
+        self._milestone_banner_count = count
+        self._milestone_banner_msg = message
+        self._milestone_banner_timer = 6.0
+
+        # Bonus: restore blackout
+        self.blackout_alpha = 0
+
+        # Bonus: thaw all frozen countries
+        self.physics_world.frozen_countries.clear()
+
+        # Bonus: haptic shake
+        self.screen_shaker.impact_shake()
+
+        # Bonus: floating text
+        self.spawn_floating_text("BONO DE ENERGIA ACTIVADO", 0, 0, (255, 215, 0))
+
+        # TTS
+        if TTS_ENABLED:
+            self.audio_manager.announce_custom(
+                f"Atencion, hemos alcanzado un hito de {count} cientificos en el laboratorio"
+            )
+
     def update(self, dt: float) -> None:
         """Update physics and particles."""
         # 🚪 Reset ESC “press again to quit” if window expired
@@ -2177,6 +2241,10 @@ class GameEngine:
         
         # 🎥 Update screen shaker
         self.screen_shaker.update(dt)
+
+        # Milestone banner countdown
+        if self._milestone_banner_timer > 0:
+            self._milestone_banner_timer -= dt
 
         # 🌠 Update Meteor Shower meteors (position, trail, flag collisions)
         self._update_meteors(dt)
@@ -2390,6 +2458,7 @@ class GameEngine:
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
         self._render_blackout_overlay()  # 🌑 Blackout Mode (between particles and notifications)
+        self._render_milestone_banner()
         self.notification_manager.render(self.render_surface)
         self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
@@ -2551,6 +2620,39 @@ class GameEngine:
             r_surf.set_alpha(r_alpha)
             r_rect = r_surf.get_rect(centerx=SCREEN_WIDTH // 2, centery=SCREEN_HEIGHT // 2)
             self.render_surface.blit(r_surf, r_rect)
+
+    def _render_milestone_banner(self) -> None:
+        """Render a golden audience milestone banner at screen center."""
+        if self._milestone_banner_timer <= 0:
+            return
+
+        GOLD      = (255, 215,   0)
+        DARK_GOLD = (180, 140,   0)
+        BG_COLOR  = ( 30,  20,   0, 200)
+
+        line1 = f"HITO DE AUDIENCIA: {self._milestone_banner_count} PERSONAS"
+        line2 = self._milestone_banner_msg
+
+        font_big   = _get_font("Arial", 16, bold=True)
+        font_small = _get_font("Arial", 12, bold=False)
+
+        surf1 = font_big.render(line1, True, GOLD)
+        surf2 = font_small.render(line2, True, DARK_GOLD)
+
+        padding = 12
+        w = max(surf1.get_width(), surf2.get_width()) + padding * 2
+        h = surf1.get_height() + surf2.get_height() + padding * 2 + 4
+
+        cx = SCREEN_WIDTH // 2
+        cy = SCREEN_HEIGHT // 2 - 60
+
+        bg = pygame.Surface((w, h), pygame.SRCALPHA)
+        bg.fill(BG_COLOR)
+        pygame.draw.rect(bg, GOLD, bg.get_rect(), 2)
+        self.render_surface.blit(bg, (cx - w // 2, cy - h // 2))
+
+        self.render_surface.blit(surf1, (cx - surf1.get_width() // 2, cy - h // 2 + padding))
+        self.render_surface.blit(surf2, (cx - surf2.get_width() // 2, cy - h // 2 + padding + surf1.get_height() + 4))
 
     def _render_audio_toast(self) -> None:
         """Render a semi-transparent toast in the top-right corner showing BGM/SFX status."""
