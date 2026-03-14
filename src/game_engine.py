@@ -51,9 +51,11 @@ from .config import (
     HYPE_THRESHOLD_CPM,
     HYPE_COOLDOWN_DURATION,
     HYPE_PHYSICS_MULTIPLIER,
-    LIGA_C5_GOAL_DIAMONDS,
-    LIGA_C5_BAR_WIDTH,
-    LIGA_C5_BAR_HEIGHT,
+    TTS_ENABLED,
+    FOLLOWER_BANNER_LIFESPAN,
+    FOLLOWER_BANNER_Y,
+    FOLLOWER_BANNER_WIDTH,
+    FOLLOWER_BANNER_HEIGHT,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -63,6 +65,7 @@ from .audio_manager import AudioManager, SoundType, create_tts_provider, Pyttsx3
 from .camera import ScreenShaker
 from .background_manager import BackgroundManager
 from .hype_manager import HypeManager
+from .notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -450,52 +453,55 @@ class GameEngine:
         self.audio_manager = AudioManager()
         
         # Initialize TTS (Text-to-Speech) if available
-        # Try to find an English voice, fallback to voice_index=106 or default
-        try:
-            # First, try to find an English voice
-            temp_provider = Pyttsx3Provider()
-            if temp_provider.is_available():
-                voices = temp_provider.list_voices()
-                english_voice_id = None
-                
-                # Look for common English voice patterns
-                for voice_id in voices:
-                    voice_lower = voice_id.lower()
-                    # Common English voice names on macOS/Windows
-                    if any(name in voice_lower for name in ['alex', 'samantha', 'victoria', 'daniel', 
-                                                             'karen', 'lee', 'zira', 'david', 'mark', 
-                                                             'richard', 'susan', 'hazel', 'tom']):
-                        english_voice_id = voice_id
-                        break
-                
-                # If no English voice found, use voice_index=106 or first available
-                if english_voice_id:
-                    tts_provider = Pyttsx3Provider(voice_id=english_voice_id)
-                    logger.info(f"🎤 TTS enabled with English voice: {english_voice_id.split('.')[-1]}")
-                else:
-                    # Fallback to voice 106 if available, otherwise first voice
-                    if len(voices) > 106:
-                        tts_provider = Pyttsx3Provider(voice_index=106)
-                        logger.info(f"🎤 TTS enabled with voice index 106")
+        if TTS_ENABLED:
+            # Try to find an English voice, fallback to voice_index=106 or default
+            try:
+                # First, try to find an English voice
+                temp_provider = Pyttsx3Provider()
+                if temp_provider.is_available():
+                    voices = temp_provider.list_voices()
+                    english_voice_id = None
+
+                    # Look for common English voice patterns
+                    for voice_id in voices:
+                        voice_lower = voice_id.lower()
+                        # Common English voice names on macOS/Windows
+                        if any(name in voice_lower for name in ['alex', 'samantha', 'victoria', 'daniel',
+                                                                 'karen', 'lee', 'zira', 'david', 'mark',
+                                                                 'richard', 'susan', 'hazel', 'tom']):
+                            english_voice_id = voice_id
+                            break
+
+                    # If no English voice found, use voice_index=106 or first available
+                    if english_voice_id:
+                        tts_provider = Pyttsx3Provider(voice_id=english_voice_id)
+                        logger.info(f"🎤 TTS enabled with English voice: {english_voice_id.split('.')[-1]}")
                     else:
-                        tts_provider = Pyttsx3Provider(voice_index=0)
-                        logger.info(f"🎤 TTS enabled with default voice")
-                
-                if tts_provider.is_available():
-                    self.audio_manager.set_tts_callback(tts_provider.speak)
+                        # Fallback to voice 106 if available, otherwise first voice
+                        if len(voices) > 106:
+                            tts_provider = Pyttsx3Provider(voice_index=106)
+                            logger.info(f"🎤 TTS enabled with voice index 106")
+                        else:
+                            tts_provider = Pyttsx3Provider(voice_index=0)
+                            logger.info(f"🎤 TTS enabled with default voice")
+
+                    if tts_provider.is_available():
+                        self.audio_manager.set_tts_callback(tts_provider.speak)
+                    else:
+                        raise Exception("TTS provider not available")
                 else:
-                    raise Exception("TTS provider not available")
-            else:
-                raise Exception("Could not initialize TTS")
-        except Exception as e:
-            logger.warning(f"Failed to initialize TTS: {e}, trying fallback...")
-            # Fallback to auto detection
-            tts_provider = create_tts_provider("auto")
-            if tts_provider and tts_provider.is_available():
-                self.audio_manager.set_tts_callback(tts_provider.speak)
-                logger.info("🎤 TTS enabled (fallback to default voice)")
-            else:
-                logger.debug("🎤 TTS not available (install pyttsx3 for voice announcements)")
+                    raise Exception("Could not initialize TTS")
+            except Exception as e:
+                logger.warning(f"Failed to initialize TTS: {e}, trying fallback...")
+                # Fallback to auto detection
+                tts_provider = create_tts_provider("auto")
+                if tts_provider and tts_provider.is_available():
+                    self.audio_manager.set_tts_callback(tts_provider.speak)
+                    logger.info("🎤 TTS enabled (fallback to default voice)")
+                else:
+                    logger.debug("🎤 TTS not available (install pyttsx3 for voice announcements)")
+        else:
+            logger.debug("🎤 TTS disabled via TTS_ENABLED=False in config")
         
         # Physics World
         self.physics_world = PhysicsWorld(
@@ -710,9 +716,14 @@ class GameEngine:
         )
         self._hype_micro_shake_timer: float = 0.0  # Countdown to next micro-shake
 
-        # 🏆 Misión Liga C5 HUD
-        self.session_diamonds_total: int = 0
-        self._liga_glow_timer: float = 0.0  # Seconds remaining for bar glow effect
+        # 👥 Follower Wall
+        self.notification_manager = NotificationManager(
+            banner_x=SCREEN_WIDTH // 2,
+            banner_y=FOLLOWER_BANNER_Y,
+            banner_w=FOLLOWER_BANNER_WIDTH,
+            banner_h=FOLLOWER_BANNER_HEIGHT,
+            lifespan=FOLLOWER_BANNER_LIFESPAN,
+        )
 
         # 🔊 Audio toast HUD (shown on M/N key press)
         self._audio_toast_text = ""
@@ -1214,10 +1225,8 @@ class GameEngine:
             # 🏆 CAPTAIN SYSTEM: Track points
             self._update_captain_points(username, country, diamond_count)
 
-            # 🔥 HYPE: Register engagement event + accumulate session diamonds
+            # 🔥 HYPE: Register engagement event
             self.hype_manager.register_event()
-            self.session_diamonds_total += diamond_count
-            self._liga_glow_timer = 1.0  # Trigger bar glow on each diamond increment
 
             # 🔥 COMBO SYSTEM: Register this gift (count each gift_count as separate)
             for _ in range(min(gift_count, 5)):  # Cap at 5 to prevent abuse
@@ -1313,10 +1322,7 @@ class GameEngine:
                     # Emit freeze particles (blue ice effect)
                     self.emit_explosion(pos=pos, color=(100, 200, 255), count=35, power=1.0, diamond_count=0)
 
-                    # Hype + Liga C5 — freeze is a high-value interaction (+10 diamonds)
                     self.hype_manager.register_event()
-                    self.session_diamonds_total += 10
-                    self._liga_glow_timer = 1.0
             
             # Handle setback/pesa effect
             elif combat_result['effect'] == 'setback':
@@ -1362,7 +1368,10 @@ class GameEngine:
             self.messages.append((msg, event.type))
             if len(self.messages) > MAX_MESSAGES:
                 self.messages = self.messages[-MAX_MESSAGES:]
-        
+
+        elif event.type == EventType.FOLLOW:
+            await self._handle_follow_event(event)
+
         elif event.type == EventType.COMMENT:
             self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
@@ -1489,7 +1498,17 @@ class GameEngine:
                 self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
         logger.debug(f"👋 Welcome displayed for @{username}")
-    
+
+    async def _handle_follow_event(self, event: GameEvent) -> None:
+        """Handle new follower: queue banner, register hype, log message."""
+        username = event.username or "someone"
+        self.notification_manager.enqueue(username)
+        self.hype_manager.register_event()
+        self._on_real_activity()
+        self.messages.append((f"❤ {username} followed!", EventType.FOLLOW))
+        if len(self.messages) > MAX_MESSAGES:
+            self.messages = self.messages[-MAX_MESSAGES:]
+
     async def _handle_vote_event(self, event: GameEvent) -> None:
         """
         Handle vote event in COMMENT mode.
@@ -1629,8 +1648,6 @@ class GameEngine:
                     )
                     self._on_real_activity()
                     self.hype_manager.register_event()
-                    self.session_diamonds_total += diamonds
-                    self._liga_glow_timer = 1.0
 
                     logger.info(f"TEST: {country} received {diamonds}💎")
                     
@@ -1651,8 +1668,6 @@ class GameEngine:
                     )
                     self._on_real_activity()
                     self.hype_manager.register_event()
-                    self.session_diamonds_total += diamonds
-                    self._liga_glow_timer = 1.0
 
                     logger.info(f"TEST BIG: {country} received {diamonds}💎")
 
@@ -1794,9 +1809,7 @@ class GameEngine:
                                     font_size=18,
                                 ))
                                 self.hype_manager.register_event()
-                                self.session_diamonds_total += 10
-                                self._liga_glow_timer = 1.0
-    
+
                 elif event.key == pygame.K_w:  # W = Test Room Join (Visual Welcome)
                     test_usernames = [
                         "NewViewer", "StreamFan", "Lurker", "Curious", "JustJoined"
@@ -1926,6 +1939,11 @@ class GameEngine:
                     status = "OFF" if muted else "ON"
                     self._audio_toast_text = f"SFX: {status}"
                     self._audio_toast_timer = 3.0
+
+                elif event.key == pygame.K_o:  # O = Test Follower notification
+                    test_names = ["TikFan", "RacingViewer", "StreamLover", "NewFollower", "Lurker99"]
+                    username = random.choice(test_names) + str(int(time.time() * 1000) % 100)
+                    self.queue.put_nowait(GameEvent(type=EventType.FOLLOW, username=username))
 
                 elif event.key == pygame.K_b:  # B = Toggle ghost/bot mode
                     self.ghost_mode_enabled = not self.ghost_mode_enabled
@@ -2083,6 +2101,7 @@ class GameEngine:
 
         self.update_particles(dt)
         self.update_floating_texts()
+        self.notification_manager.update()
 
         # 🔥 Hype Mode state machine
         prev_hype = self.hype_manager.is_hype_active
@@ -2106,10 +2125,6 @@ class GameEngine:
             if self._hype_micro_shake_timer <= 0.0:
                 self._hype_micro_shake_timer = 3.0
                 self.screen_shaker.micro_shake()
-
-        # Liga glow timer decay
-        if self._liga_glow_timer > 0.0:
-            self._liga_glow_timer = max(0.0, self._liga_glow_timer - dt)
 
         # 👻 Ghost Participation: generate ghost votes when inactive
         self._update_ghost_participation()
@@ -2332,6 +2347,7 @@ class GameEngine:
         self._render_meteors()
         self._render_floating_texts()
         self._render_combo_flashes()  # ✨ Flash effects on combo level up
+        self.notification_manager.render(self.render_surface)
         self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
         from .config import GAME_MODE
@@ -2340,7 +2356,6 @@ class GameEngine:
         self._render_likes_bar()
         self._render_leaderboard()
         self._render_ghost_mode_indicator()
-        self._render_liga_c5_hud()
 
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
@@ -2758,7 +2773,17 @@ class GameEngine:
         text_rect.left = 10
         text_rect.centery = self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
-    
+
+        # Last follower: right-aligned in header (gold)
+        if self.notification_manager.last_follower:
+            lf_surf = _get_mono_font(13).render(
+                f"Ultimo seguidor: {self.notification_manager.last_follower}", True, (255, 220, 50)
+            )
+            lf_rect = lf_surf.get_rect()
+            lf_rect.right = SCREEN_WIDTH - 8
+            lf_rect.centery = self.header_height // 2
+            self.render_surface.blit(lf_surf, lf_rect)
+
     def _get_status_color(self) -> tuple[int, int, int]:
         if self.connection_state == ConnectionState.CONNECTED:
             return COLOR_STATUS_CONNECTED
@@ -3436,79 +3461,6 @@ class GameEngine:
             color=(255, 50, 180),
         )
 
-    def _render_liga_c5_hud(self) -> None:
-        """
-        Render the Misión Liga C5 progress bar inside the header, right-aligned.
-
-        Shows accumulated session diamonds vs. a goal, with a color gradient
-        from red (empty) to cyan (full) and a brief glow on each diamond increment.
-        "1st:" is left-aligned in the header; Liga C5 is right-aligned — no overlap.
-        """
-        if self.render_surface is None:
-            return
-
-        from .config import SCREEN_WIDTH, LIGA_C5_GOAL_DIAMONDS, LIGA_C5_BAR_WIDTH
-
-        bar_w = LIGA_C5_BAR_WIDTH
-        bar_h = 12  # Fits inside 36px header with 13px font
-        pad = 4     # Horizontal padding from screen edge
-
-        progress = min(self.session_diamonds_total / LIGA_C5_GOAL_DIAMONDS, 1.0)
-
-        # Color: Red → Cyan as progress increases (fully saturated)
-        bar_r = int(255 * (1.0 - progress))
-        bar_g = int(220 * progress)
-        bar_b = int(255 * progress)
-        bar_color = (bar_r, bar_g, bar_b)
-
-        # Font — bold 13px for readability; antialiased for smooth rendering at this size
-        font = _get_mono_font(13, bold=True)
-        label_text = "LIGA C5"
-        count_text = f"{min(self.session_diamonds_total, LIGA_C5_GOAL_DIAMONDS)}/{LIGA_C5_GOAL_DIAMONDS}"
-        label_surf = font.render(label_text, True, (255, 255, 255))
-        count_surf = font.render(count_text, True, bar_color)
-
-        # Layout: label on left, count on right, bar below — all inside header height
-        label_h = label_surf.get_height()
-        total_h = label_h + 2 + bar_h
-        x = SCREEN_WIDTH - bar_w - pad
-        y = (self.header_height - total_h) // 2  # Vertically centered in header
-
-        # Dark semi-transparent background card for readability
-        bg_rect = pygame.Rect(x - 4, 0, bar_w + 8, self.header_height)
-        bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
-        bg_surf.fill((10, 10, 25, 160))
-        self.render_surface.blit(bg_surf, (bg_rect.x, bg_rect.y))
-
-        # Label row
-        self.render_surface.blit(label_surf, (x, y))
-        count_x = x + bar_w - count_surf.get_width()
-        self.render_surface.blit(count_surf, (count_x, y))
-
-        bar_y = y + label_h + 2
-
-        # Track (dark background)
-        pygame.draw.rect(self.render_surface, (30, 30, 50), (x, bar_y, bar_w, bar_h))
-
-        # Fill
-        fill_w = int(bar_w * progress)
-        if fill_w > 0:
-            pygame.draw.rect(self.render_surface, bar_color, (x, bar_y, fill_w, bar_h))
-
-        # Always-visible border (1px, dim)
-        pygame.draw.rect(self.render_surface, (80, 80, 100), (x, bar_y, bar_w, bar_h), 1)
-
-        # Glow outline when recently incremented (brighter, 1.0s duration)
-        if self._liga_glow_timer > 0.0:
-            glow_alpha = int(255 * self._liga_glow_timer / 1.0)
-            glow_alpha = min(255, max(0, glow_alpha))
-            glow_color = (
-                min(255, bar_r + glow_alpha // 3),
-                min(255, bar_g + glow_alpha // 3),
-                min(255, bar_b + glow_alpha // 3),
-            )
-            pygame.draw.rect(self.render_surface, glow_color, (x - 1, bar_y - 1, bar_w + 2, bar_h + 2), 2)
-
     def _render_victory_flash(self) -> None:
         """
         Render white flash effect on victory.
@@ -3895,30 +3847,22 @@ class GameEngine:
         TikTok-style gradient (orange to pink), thin and elegant.
         Text: 'PRÓXIMO EVENTO: LLUVIA DE METEORITOS (actual/meta)'.
         """
-        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT, LIKES_BAR_TOP_GAP
+        from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT
         bar_height = LIKES_BAR_HEIGHT
         bar_margin_x = 20
         bar_width = SCREEN_WIDTH - 2 * bar_margin_x
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
-        hint_font = _get_font("Arial", 11)
-        hint = "Dale like o tap en vivo para llenar la barra"
-        hint_surf = hint_font.render(hint, True, (240, 240, 240))
         label_font = _get_font("Arial", 11, bold=True)
         label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
         if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            # Hint strictly below CTA so it is never covered. Order: hint → label → bar.
-            hint_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
-            label_y = hint_y + hint_surf.get_height() + 2
+            label_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
             bar_y = label_y + label_surf.get_height() + 2
         else:
             bar_y = self.header_height + 2
             label_y = bar_y - 2 - label_surf.get_height()
-            hint_y = label_y - 1 - hint_surf.get_height()
-            if hint_y < self.header_height:
-                hint_y = bar_y + bar_height + 2
 
         # Background track (dark)
         track_rect = pygame.Rect(bar_margin_x, bar_y, bar_width, bar_height)
@@ -3935,7 +3879,6 @@ class GameEngine:
             self.render_surface.blit(fill_surf, (bar_margin_x, bar_y))
         pygame.draw.rect(self.render_surface, (255, 180, 180, 120), track_rect, 1)
 
-        self.render_surface.blit(hint_surf, (int(bar_margin_x), int(hint_y)))
         self.render_surface.blit(label_surf, (int(bar_margin_x), int(label_y)))
 
     def _trigger_meteor_shower(self) -> None:
@@ -4684,9 +4627,6 @@ class GameEngine:
         # ☁️ Reset cloud sync flag for next race
         self.race_synced = False
 
-        # Liga C5 session_diamonds_total is intentionally NOT reset here —
-        # it accumulates across all races for the entire stream session.
-
         # Invalidate leaderboard cache for next race
         self._leaderboard_cache = None
 
@@ -4748,7 +4688,6 @@ class GameEngine:
         self.captain_change_timer.clear()
         self.race_synced = False
         self._leaderboard_cache = None
-        # session_diamonds_total is NOT reset — cumulative for the whole stream session
         self.winner_animation_time = 0.0
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0

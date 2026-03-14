@@ -397,6 +397,17 @@ WELCOME_FONT_SIZE = 16           # Compact, non-intrusive
 LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower
 LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)
 
+# TTS (Text-to-Speech) voice announcer — set to True to re-enable
+TTS_ENABLED = False
+
+# ---------------------------------------------------------------------------
+# Follower Wall
+# ---------------------------------------------------------------------------
+FOLLOWER_BANNER_LIFESPAN  = 150   # frames (~2.5 s at 60 FPS)
+FOLLOWER_BANNER_Y         = 410   # center-y of banner (screen center)
+FOLLOWER_BANNER_WIDTH     = 340   # px
+FOLLOWER_BANNER_HEIGHT    = 64    # px
+
 # ---------------------------------------------------------------------------
 # Hype Mode
 # ---------------------------------------------------------------------------
@@ -413,10 +424,3 @@ HYPE_NEON_COLORS = [
 ]
 HYPE_OVERLAY_ALPHA = 18           # Very subtle tint (0-255)
 HYPE_COLOR_CYCLE_SPEED = 0.5      # Full color cycle per second
-
-# ---------------------------------------------------------------------------
-# Misión Liga C5 HUD
-# ---------------------------------------------------------------------------
-LIGA_C5_GOAL_DIAMONDS = 5000      # Session diamond goal (streamer can edit)
-LIGA_C5_BAR_WIDTH = 130
-LIGA_C5_BAR_HEIGHT = 14
