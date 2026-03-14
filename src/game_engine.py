@@ -1185,7 +1185,7 @@ class GameEngine:
     
     # Max events to process per frame to avoid backlog causing a single frame to stall
     MAX_EVENTS_PER_FRAME = 200
-    LAG_WARNING_THRESHOLD_SEC = 0.5
+    LAG_WARNING_THRESHOLD_SEC = 1.5
 
     async def process_events(self) -> None:
         """Drain the event queue in one frame (burst handling) to avoid backlog on vote spam."""

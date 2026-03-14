@@ -27,6 +27,7 @@ from src.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
 from src.resources import is_frozen
+from src.event_buffer import HumanizedEventBuffer
 
 # Configurar certificados SSL para el ejecutable
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -186,8 +187,10 @@ class Application:
     def __init__(self, username: str, idle_mode: bool = False):
         self.username = username.lstrip("@") if username else ""
         self.idle_mode = idle_mode
-        self.queue: asyncio.Queue[GameEvent] = asyncio.Queue()
-        
+        self._raw_queue: asyncio.Queue[GameEvent] = asyncio.Queue()  # TikTokManager → buffer
+        self.queue:      asyncio.Queue[GameEvent] = asyncio.Queue()  # buffer → GameEngine
+        self._event_buffer: Optional[HumanizedEventBuffer] = None
+
         self.database: Optional[Database] = None
         self.tiktok_manager: Optional[TikTokManager] = None
         self.game_engine: Optional[GameEngine] = None
@@ -231,7 +234,7 @@ class Application:
         if self._connect_requested and not self.tiktok_manager:
             self._connect_requested = False
             try:
-                self.tiktok_manager = TikTokManager(self.queue, self.username)
+                self.tiktok_manager = TikTokManager(self._raw_queue, self.username)
                 self.game_engine.streamer_name = self.username
                 await self.tiktok_manager.start()
                 logger.info(f"✅ Conectado a @{self.username}")
@@ -262,7 +265,13 @@ class Application:
             
             # Pasar referencia de la app al game engine para poder conectar
             self.game_engine.app = self
-            
+
+            self._event_buffer = HumanizedEventBuffer(
+                raw_queue=self._raw_queue,
+                output_queue=self.queue,
+            )
+            self._event_buffer.start()
+
             logger.info("Setting up signal handlers...")
             self.setup_signal_handlers()
             
@@ -277,7 +286,7 @@ class Application:
             
             if not self.idle_mode and self.username:
                 logger.info(f"Connecting to TikTok for @{self.username}...")
-                self.tiktok_manager = TikTokManager(self.queue, self.username)
+                self.tiktok_manager = TikTokManager(self._raw_queue, self.username)
                 await self.tiktok_manager.start()
                 logger.info("Connected to TikTok")
             else:
@@ -367,6 +376,8 @@ class Application:
         logger.info("Cleaning up...")
         if self.tiktok_manager:
             await self.tiktok_manager.stop()
+        if self._event_buffer:
+            await self._event_buffer.stop()
         if self.database:
             await self.database.close()
         if self.game_engine:
