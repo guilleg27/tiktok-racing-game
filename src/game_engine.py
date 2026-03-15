@@ -759,6 +759,7 @@ class GameEngine:
         self.viewer_count: int = 0
         self._milestones_triggered: set = set()
         self._highest_milestone_reached: int = 0
+        self._viewer_count_baseline: int = -1   # -1 = not yet set
         self._milestone_banner_timer: float = 0.0
         self._milestone_banner_count: int = 0
         self._milestone_banner_msg: str = ""
@@ -2135,14 +2136,33 @@ class GameEngine:
 
     # --- Audience Milestone constants ---
     _AUDIENCE_MILESTONES: dict = {
-        15:  "SALA ACTIVA - 15 espectadores",
-        30:  "OBJETIVO ALCANZADO - 30 espectadores",
-        50:  "SALA LLENA - 50 espectadores",
-        100: "RECORD HISTORICO - 100 espectadores",
+        15:  "SALA ACTIVA",
+        30:  "OBJETIVO ALCANZADO",
+        50:  "SALA LLENA",
+        100: "RECORD HISTORICO",
+    }
+
+    # --- Lunar Gravity scaling per milestone ---
+    _LUNAR_MILESTONE_PARAMS: dict = {
+        15:  {"amplitude": 6.0,  "elasticity": 0.85, "duration": 30.0},
+        30:  {"amplitude": 9.0,  "elasticity": 0.88, "duration": 35.0},
+        50:  {"amplitude": 13.0, "elasticity": 0.93, "duration": 40.0},
+        100: {"amplitude": 20.0, "elasticity": 0.97, "duration": 45.0},
     }
 
     def _check_audience_milestones(self, count: int) -> None:
         """Fire audience milestone effects when viewer count crosses a threshold."""
+        # First call: capture baseline and silently mark all pre-existing milestones
+        if self._viewer_count_baseline < 0:
+            self._viewer_count_baseline = count
+            for threshold in self._AUDIENCE_MILESTONES:
+                if threshold <= count:
+                    self._milestones_triggered.add(threshold)
+            self._highest_milestone_reached = count
+            logger.info("[MILESTONE] Baseline set to %d viewers; pre-marked %s",
+                        count, sorted(t for t in self._AUDIENCE_MILESTONES if t <= count))
+            return  # no effects for initial state
+
         # Only advance, never retreat
         if count <= self._highest_milestone_reached:
             return
@@ -2177,6 +2197,16 @@ class GameEngine:
             self.audio_manager.announce_custom(
                 f"Atencion, hemos alcanzado un hito de {count} cientificos en el laboratorio"
             )
+
+        # 🌙 Trigger Lunar Gravity scaled to milestone level
+        params = self._LUNAR_MILESTONE_PARAMS.get(count, {})
+        self._activate_lunar_gravity(
+            duration   = params.get("duration",   self.LUNAR_DURATION),
+            amplitude  = params.get("amplitude",  None),
+            elasticity = params.get("elasticity", None),
+            extend     = True,
+        )
+        self.screen_shaker.meteor_shake()
 
     def update(self, dt: float) -> None:
         """Update physics and particles."""
@@ -2684,15 +2714,29 @@ class GameEngine:
                 power=p_power,
             )
 
-    def _activate_lunar_gravity(self) -> None:
-        """Start the 30-second Lunar Gravity event."""
+    def _activate_lunar_gravity(
+        self,
+        duration: float | None = None,
+        amplitude: float | None = None,
+        elasticity: float | None = None,
+        extend: bool = False,
+    ) -> None:
+        """Start the Lunar Gravity event, or extend/upgrade it if already running."""
+        effective_duration = duration if duration is not None else self.LUNAR_DURATION
+
         if self._lunar_active:
-            return   # already running
+            if extend:
+                self._lunar_timer = max(self._lunar_timer, effective_duration)
+                if self.physics_world and (amplitude is not None or elasticity is not None):
+                    self.physics_world.set_lunar_gravity(True, amplitude=amplitude, elasticity=elasticity)
+                logger.info("[LUNAR] Timer extended to %.0fs", self._lunar_timer)
+            return   # either extended or ignored
+
         self._lunar_active = True
-        self._lunar_timer  = self.LUNAR_DURATION
+        self._lunar_timer  = effective_duration
 
         if self.physics_world:
-            self.physics_world.set_lunar_gravity(True)
+            self.physics_world.set_lunar_gravity(True, amplitude=amplitude, elasticity=elasticity)
 
         self.floating_texts.append(FloatingText(
             text=":: ADVERTENCIA: GRAVEDAD ZERO ::",
@@ -2708,7 +2752,7 @@ class GameEngine:
             self.audio_manager.play_sfx("freeze")
         except Exception:
             pass
-        logger.info("[LUNAR] Lunar Gravity activated (%.0fs)", self.LUNAR_DURATION)
+        logger.info("[LUNAR] Lunar Gravity activated (%.0fs)", effective_duration)
 
     def _deactivate_lunar_gravity(self) -> None:
         """End the Lunar Gravity event and restore normal physics."""
@@ -2821,8 +2865,8 @@ class GameEngine:
         DARK_GOLD = (180, 140,   0)
         BG_COLOR  = ( 30,  20,   0, 200)
 
-        line1 = f"HITO DE AUDIENCIA: {self._milestone_banner_count} PERSONAS"
-        line2 = self._milestone_banner_msg
+        line1 = "HITO DE AUDIENCIA"
+        line2 = self._milestone_banner_msg + "  ::  GRAVEDAD CERO"
 
         font_big   = _get_font("Arial", 16, bold=True)
         font_small = _get_font("Arial", 12, bold=False)

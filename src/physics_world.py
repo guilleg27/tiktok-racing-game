@@ -525,15 +525,26 @@ class PhysicsWorld:
             del self.frozen_countries[country]
             self.just_unfrozen.append(country)
     
-    def set_lunar_gravity(self, active: bool) -> None:
+    def set_lunar_gravity(
+        self,
+        active: bool,
+        amplitude: float | None = None,
+        elasticity: float | None = None,
+    ) -> None:
         """Toggle lunar gravity mode: changes shape elasticity and activates visual bobbing."""
         self.lunar_active = active
         if active:
+            if amplitude is not None:
+                self.LUNAR_AMPLITUDE = amplitude
+            if elasticity is not None:
+                self.LUNAR_ELASTICITY = elasticity
             self._lunar_phase  = 0.0
             self._lunar_launch = self.LUNAR_LAUNCH_DURATION
             for racer in self.racers.values():
                 racer.shape.elasticity = self.LUNAR_ELASTICITY
         else:
+            self.LUNAR_AMPLITUDE  = 6.0
+            self.LUNAR_ELASTICITY = 0.85
             for racer in self.racers.values():
                 racer.shape.elasticity = self._normal_elasticity
                 racer.y_offset = 0.0
