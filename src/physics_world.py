@@ -42,6 +42,7 @@ class FlagRacer:
     lane: int
     sprite: Optional[pygame.Surface] = None
     target_x: float = 0.0  # Target position for smooth interpolation
+    y_offset: float = 0.0  # visual-only: applied at draw time, not in physics
 
 
 class PhysicsWorld:
@@ -91,6 +92,17 @@ class PhysicsWorld:
         # Hype Mode: applied as a multiplier at distance-calculation time
         self.hype_speed_multiplier: float = 1.0
         self.rosa_combo_multiplier: float = 1.0   # set by GameEngine
+
+        # Lunar Gravity event
+        self.lunar_active:  bool  = False
+        self._lunar_phase:  float = 0.0   # advances each frame
+        self._lunar_launch: float = 0.0   # fades launch amplitude
+        self.LUNAR_AMPLITUDE       = 6.0    # steady bobbing px
+        self.LUNAR_LAUNCH_EXTRA    = 18.0   # extra px at activation
+        self.LUNAR_LAUNCH_DURATION = 1.5    # seconds to decay launch amplitude
+        self.LUNAR_BOB_SPEED       = 2.8    # rad/s for sin wave
+        self.LUNAR_ELASTICITY      = 0.85   # shape elasticity during event
+        self._normal_elasticity    = 0.1    # saved value to restore
 
         # Combat system - freeze tracking
         self.frozen_countries: dict[str, float] = {}  # country -> remaining freeze time
@@ -335,6 +347,16 @@ class PhysicsWorld:
                 # Keep velocity at 0 (we control position directly)
                 racer.body.velocity = (0.0, 0.0)
     
+        # Lunar gravity: visual Y bobbing (purely cosmetic, does not affect physics constraints)
+        if self.lunar_active:
+            self._lunar_phase  += self.LUNAR_BOB_SPEED * dt
+            self._lunar_launch  = max(0.0, self._lunar_launch - dt)
+            launch_amp = (self._lunar_launch / self.LUNAR_LAUNCH_DURATION) * self.LUNAR_LAUNCH_EXTRA
+            total_amp  = self.LUNAR_AMPLITUDE + launch_amp
+            for racer in self.racers.values():
+                phase_offset = racer.lane * 0.5   # each lane bobs out of sync
+                racer.y_offset = math.sin(self._lunar_phase + phase_offset) * total_amp
+
         # Run physics simulation (for constraints, collisions if any)
         step_dt = dt / PHYSICS_STEPS
         for _ in range(PHYSICS_STEPS):
@@ -503,6 +525,32 @@ class PhysicsWorld:
             del self.frozen_countries[country]
             self.just_unfrozen.append(country)
     
+    def set_lunar_gravity(
+        self,
+        active: bool,
+        amplitude: float | None = None,
+        elasticity: float | None = None,
+    ) -> None:
+        """Toggle lunar gravity mode: changes shape elasticity and activates visual bobbing."""
+        self.lunar_active = active
+        if active:
+            if amplitude is not None:
+                self.LUNAR_AMPLITUDE = amplitude
+            if elasticity is not None:
+                self.LUNAR_ELASTICITY = elasticity
+            self._lunar_phase  = 0.0
+            self._lunar_launch = self.LUNAR_LAUNCH_DURATION
+            for racer in self.racers.values():
+                racer.shape.elasticity = self.LUNAR_ELASTICITY
+        else:
+            self.LUNAR_AMPLITUDE  = 6.0
+            self.LUNAR_ELASTICITY = 0.85
+            for racer in self.racers.values():
+                racer.shape.elasticity = self._normal_elasticity
+                racer.y_offset = 0.0
+            self._lunar_phase  = 0.0
+            self._lunar_launch = 0.0
+
     def reset_race(self) -> None:
         """Reset all racers to starting position."""
         for racer in self.racers.values():
