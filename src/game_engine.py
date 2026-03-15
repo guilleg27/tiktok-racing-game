@@ -646,6 +646,18 @@ class GameEngine:
         self.combo_threshold = 5  # minimum for "COMBO!" display
         self.on_fire_threshold = 10  # threshold for "ON FIRE" state
         self.on_fire_countries: set[str] = set()  # countries currently on fire
+
+        # 🌹 ROSA COMBO MULTIPLIER
+        ROSA_COMBO_WINDOW     = 2.0   # seconds — shorter than general combo window
+        ROSA_COMBO_THRESHOLDS = [     # (min_count, level, multiplier)
+            (10, 3, 2.0),
+            (6,  2, 1.5),
+            (3,  1, 1.2),
+        ]
+        self.ROSA_COMBO_WINDOW     = ROSA_COMBO_WINDOW
+        self.ROSA_COMBO_THRESHOLDS = ROSA_COMBO_THRESHOLDS
+        self._rosa_tracker:     dict[str, list[float]] = {}  # country → [timestamp, ...]
+        self._rosa_combo_level: dict[str, int]          = {}  # country → 0/1/2/3
         
         # 🌈 MOTION TRAILS (replaces fire_particles for crisp neon effect)
         self.motion_trails: dict[str, list[MotionTrailSegment]] = {}  # {country: [segments]}
@@ -1307,6 +1319,10 @@ class GameEngine:
             if self.blackout_active and gift_name.lower() in ("rosa", "rose"):
                 self._recharge_blackout()
 
+            # Rosa combo multiplier tracking
+            if gift_name.lower() in ("rosa", "rose") and country:
+                self._update_rosa_combo(country, time.perf_counter())
+
             # Apply combat effects (Rosa, Pesa, Helado)
             combat_result = self.physics_world.apply_gift_effect(
                 gift_name=gift_name,
@@ -1662,7 +1678,7 @@ class GameEngine:
                     else:
                         self._return_to_idle()
                         logger.info("Race reset to IDLE!")
-                elif event.key == pygame.K_t:  # Test mode
+                elif event.key == pygame.K_t:  # Test mode — burst of 5 Rosas
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
@@ -1670,17 +1686,17 @@ class GameEngine:
 
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    diamonds = random.randint(1, 10)
-
-                    self.physics_world.apply_gift_impulse(
-                        country=country,
-                        gift_name="Test Gift",
-                        diamond_count=diamonds
-                    )
+                    for _ in range(5):
+                        self.queue.put_nowait(GameEvent(
+                            type=EventType.GIFT,
+                            username=f"test_{country.lower()}",
+                            content="Rosa",
+                            extra={"diamond_count": 1, "count": 1},
+                        ))
                     self._on_real_activity()
                     self.hype_manager.register_event()
 
-                    logger.info(f"TEST: {country} received {diamonds}💎")
+                    logger.info(f"TEST: {country} received 5x Rosa (combo test)")
                     
                 elif event.key == pygame.K_y:  # Y = Test Big Gift
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
@@ -2191,6 +2207,9 @@ class GameEngine:
         self.update_floating_texts()
         self.notification_manager.update()
 
+        # 🌹 Rosa combo multiplier decay
+        self._decay_rosa_combos()
+
         # 🔥 Hype Mode state machine
         prev_hype = self.hype_manager.is_hype_active
         self.hype_manager.update(dt)
@@ -2559,6 +2578,99 @@ class GameEngine:
         for c in list(self.physics_world.frozen_countries):
             if c not in thawed:
                 self.physics_world.frozen_countries[c] -= THAW_REDUCTION
+
+    def _update_rosa_combo(self, country: str, now: float) -> None:
+        """Record a Rosa gift, recalculate combo level, apply multiplier and visuals."""
+        tracker = self._rosa_tracker.setdefault(country, [])
+        tracker.append(now)
+        cutoff = now - self.ROSA_COMBO_WINDOW
+        self._rosa_tracker[country] = [t for t in tracker if t >= cutoff]
+
+        count = len(self._rosa_tracker[country])
+        new_level = 0
+        new_mult  = 1.0
+        for min_count, level, mult in self.ROSA_COMBO_THRESHOLDS:
+            if count >= min_count:
+                new_level = level
+                new_mult  = mult
+                break
+
+        old_level = self._rosa_combo_level.get(country, 0)
+        self._rosa_combo_level[country] = new_level
+
+        if self.physics_world:
+            self.physics_world.rosa_combo_multiplier = new_mult
+
+        if new_level > old_level:
+            self._show_rosa_combo_visuals(country, new_level, new_mult)
+
+    def _show_rosa_combo_visuals(self, country: str, level: int, multiplier: float) -> None:
+        """Spawn FloatingText and optional particles near the country's flag."""
+        racer = self.physics_world.racers.get(country) if self.physics_world else None
+        if racer is None:
+            return
+
+        fx = racer.body.position.x
+        fy = racer.body.position.y
+
+        if level == 3:
+            text    = "COMBO DE ENERGIA X2"
+            color   = (255, 120, 0)
+            fsize   = 22
+            dur     = 90
+            p_count = 15
+            p_power = 1.5
+        elif level == 2:
+            text    = "COMBO X1.5"
+            color   = (255, 200, 0)
+            fsize   = 16
+            dur     = 60
+            p_count = 8
+            p_power = 1.0
+        else:  # level 1
+            text    = "COMBO X1.2"
+            color   = (200, 255, 200)
+            fsize   = 14
+            dur     = 45
+            p_count = 0
+            p_power = 0.0
+
+        self.floating_texts.append(FloatingText(
+            text=text, x=fx, y=fy - 20,
+            color=color, lifespan=dur, max_lifespan=dur,
+            font_size=fsize, dy=-1.2,
+        ))
+
+        if p_count > 0:
+            self.emit_explosion(
+                pos=(fx, fy),
+                color=color,
+                count=p_count,
+                power=p_power,
+            )
+
+    def _decay_rosa_combos(self) -> None:
+        """Remove expired Rosa timestamps and reset multiplier if all combos cleared."""
+        now    = time.perf_counter()
+        cutoff = now - self.ROSA_COMBO_WINDOW
+        any_active = False
+
+        for country in list(self._rosa_tracker.keys()):
+            self._rosa_tracker[country] = [t for t in self._rosa_tracker[country] if t >= cutoff]
+            count = len(self._rosa_tracker[country])
+
+            new_level = 0
+            for min_count, level, _ in self.ROSA_COMBO_THRESHOLDS:
+                if count >= min_count:
+                    new_level = level
+                    break
+
+            self._rosa_combo_level[country] = new_level
+            if new_level > 0:
+                any_active = True
+
+        if not any_active and self.physics_world:
+            self.physics_world.rosa_combo_multiplier = 1.0
 
     def _render_blackout_overlay(self) -> None:
         """Render the Blackout Mode darkness overlay + HUD indicators."""
