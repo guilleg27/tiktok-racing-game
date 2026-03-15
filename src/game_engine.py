@@ -658,6 +658,13 @@ class GameEngine:
         self.ROSA_COMBO_THRESHOLDS = ROSA_COMBO_THRESHOLDS
         self._rosa_tracker:     dict[str, list[float]] = {}  # country → [timestamp, ...]
         self._rosa_combo_level: dict[str, int]          = {}  # country → 0/1/2/3
+
+        # 🌙 Lunar Gravity event
+        self._lunar_active:        bool  = False
+        self._lunar_timer:         float = 0.0
+        self._lunar_overlay_alpha: int   = 0    # 0–55, fades in/out
+        self.LUNAR_DURATION        = 30.0
+        self.LUNAR_FADE_SPEED      = 55    # alpha units/second for overlay fade
         
         # 🌈 MOTION TRAILS (replaces fire_particles for crisp neon effect)
         self.motion_trails: dict[str, list[MotionTrailSegment]] = {}  # {country: [segments]}
@@ -1987,6 +1994,12 @@ class GameEngine:
                     self._audio_toast_text = f"SFX: {status}"
                     self._audio_toast_timer = 3.0
 
+                elif event.key == pygame.K_s:  # S = Lunar Gravity test
+                    if self.game_state == 'IDLE':
+                        self._transition_to_racing()
+                    self._activate_lunar_gravity()
+                    logger.info("[LUNAR] Manually triggered via key S")
+
                 elif event.key == pygame.K_o:  # O = Toggle Blackout Mode (test)
                     if self.blackout_active:
                         self.blackout_active = False
@@ -2209,6 +2222,22 @@ class GameEngine:
 
         # 🌹 Rosa combo multiplier decay
         self._decay_rosa_combos()
+
+        # 🌙 Lunar Gravity timer & overlay fade
+        if self._lunar_active:
+            self._lunar_timer -= dt
+            target_alpha = 55
+            self._lunar_overlay_alpha = min(
+                target_alpha,
+                self._lunar_overlay_alpha + int(self.LUNAR_FADE_SPEED * dt)
+            )
+            if self._lunar_timer <= 0.0:
+                self._deactivate_lunar_gravity()
+        else:
+            self._lunar_overlay_alpha = max(
+                0,
+                self._lunar_overlay_alpha - int(self.LUNAR_FADE_SPEED * dt)
+            )
 
         # 🔥 Hype Mode state machine
         prev_hype = self.hype_manager.is_hype_active
@@ -2469,6 +2498,12 @@ class GameEngine:
             # Fallback to static gradient if no background manager
             self.render_surface.blit(self.gradient_background, (0, 0))
         
+        # 🌙 Lunar Gravity: space atmosphere overlay
+        if self._lunar_overlay_alpha > 0:
+            _lunar_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            _lunar_surf.fill((15, 0, 50, self._lunar_overlay_alpha))
+            self.render_surface.blit(_lunar_surf, (0, 0))
+
         self._render_balls()
         self._render_trails()  # Render trails before particles (behind)
         self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
@@ -2648,6 +2683,50 @@ class GameEngine:
                 count=p_count,
                 power=p_power,
             )
+
+    def _activate_lunar_gravity(self) -> None:
+        """Start the 30-second Lunar Gravity event."""
+        if self._lunar_active:
+            return   # already running
+        self._lunar_active = True
+        self._lunar_timer  = self.LUNAR_DURATION
+
+        if self.physics_world:
+            self.physics_world.set_lunar_gravity(True)
+
+        self.floating_texts.append(FloatingText(
+            text=":: ADVERTENCIA: GRAVEDAD ZERO ::",
+            x=SCREEN_WIDTH / 2,
+            y=SCREEN_HEIGHT / 2 - 30,
+            color=(180, 220, 255),
+            lifespan=150, max_lifespan=150,
+            font_size=22, dy=-0.2,
+        ))
+
+        self.screen_shaker.big_impact_shake()
+        try:
+            self.audio_manager.play_sfx("freeze")
+        except Exception:
+            pass
+        logger.info("[LUNAR] Lunar Gravity activated (%.0fs)", self.LUNAR_DURATION)
+
+    def _deactivate_lunar_gravity(self) -> None:
+        """End the Lunar Gravity event and restore normal physics."""
+        self._lunar_active = False
+        self._lunar_timer  = 0.0
+
+        if self.physics_world:
+            self.physics_world.set_lunar_gravity(False)
+
+        self.floating_texts.append(FloatingText(
+            text="GRAVEDAD RESTABLECIDA",
+            x=SCREEN_WIDTH / 2,
+            y=SCREEN_HEIGHT / 2,
+            color=(100, 255, 160),
+            lifespan=120, max_lifespan=120,
+            font_size=18, dy=-0.5,
+        ))
+        logger.info("[LUNAR] Lunar Gravity deactivated")
 
     def _decay_rosa_combos(self) -> None:
         """Remove expired Rosa timestamps and reset multiplier if all combos cleared."""
@@ -2895,10 +2974,11 @@ class GameEngine:
     
     def _render_racer(self, racer, is_winner: bool = False) -> None:
         """Render a single racer flag with ON FIRE jitter effect."""
-        x, y = racer.body.position
+        x = racer.body.position.x
+        y = racer.body.position.y + (racer.y_offset if hasattr(racer, 'y_offset') else 0.0)
         radius = racer.shape.radius
         angle = racer.body.angle
-        
+
         # Sanitize position values
         x = float(x) if math.isfinite(x) else self.physics_world.start_x
         y = float(y) if math.isfinite(y) else (racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2)
@@ -4945,6 +5025,11 @@ class GameEngine:
         self.motion_trail_history.clear()
         self.combo_flashes.clear()
         
+        # 🌙 Deactivate lunar gravity if still running
+        if self._lunar_active:
+            self._deactivate_lunar_gravity()
+        self._lunar_overlay_alpha = 0
+
         # 🏁 Reset final stretch
         self.final_stretch_triggered = False
         self.final_stretch_time = 0.0
@@ -5413,6 +5498,10 @@ class GameEngine:
             self.audio_manager.announce_final_stretch(leader_country)
         
         logger.info("🏁 FINAL STRETCH triggered with WARP + TENSION MODE!")
+
+        # 20% chance to trigger Lunar Gravity during Final Stretch
+        if not self._lunar_active and random.random() < 0.20:
+            self._activate_lunar_gravity()
     
     def _check_race_events(self, dt: float) -> None:
         """
