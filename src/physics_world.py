@@ -90,6 +90,7 @@ class PhysicsWorld:
 
         # Hype Mode: applied as a multiplier at distance-calculation time
         self.hype_speed_multiplier: float = 1.0
+        self.rosa_combo_multiplier: float = 1.0   # set by GameEngine
 
         # Combat system - freeze tracking
         self.frozen_countries: dict[str, float] = {}  # country -> remaining freeze time
@@ -211,7 +212,7 @@ class PhysicsWorld:
 
         # Direct distance scaling: diamonds = pixels to move
         distance_per_diamond = 0.8  # Each diamond = 0.8 pixels forward
-        distance = diamond_count * distance_per_diamond * self.hype_speed_multiplier
+        distance = diamond_count * distance_per_diamond * self.hype_speed_multiplier * self.rosa_combo_multiplier
         
         # Increment target position (NOT actual position)
         racer.target_x += distance
