@@ -15,6 +15,7 @@ import traceback
 import os
 import time
 import ssl
+import uuid
 import certifi
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from src.game_engine import GameEngine
 from src.database import Database
 from src.resources import is_frozen
 from src.event_buffer import HumanizedEventBuffer
+from src.telemetry import TelemetryManager
 
 # Configurar certificados SSL para el ejecutable
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -195,6 +197,8 @@ class Application:
         self.tiktok_manager: Optional[TikTokManager] = None
         self.game_engine: Optional[GameEngine] = None
         
+        self._session_id: str = str(uuid.uuid4())
+        self._telemetry: Optional[TelemetryManager] = None
         self._shutdown_event = asyncio.Event()
         self._connect_requested = False  # Flag para conectar durante ejecución
     
@@ -271,6 +275,14 @@ class Application:
                 output_queue=self.queue,
             )
             self._event_buffer.start()
+
+            self._telemetry = TelemetryManager(
+                game_engine=self.game_engine,
+                event_buffer=self._event_buffer,
+                cloud_manager=self.game_engine.cloud_manager,
+                session_id=self._session_id,
+            )
+            self._telemetry.start()
 
             logger.info("Setting up signal handlers...")
             self.setup_signal_handlers()
@@ -374,6 +386,8 @@ class Application:
     
     async def _cleanup(self) -> None:
         logger.info("Cleaning up...")
+        if self._telemetry:
+            self._telemetry.stop()
         if self.tiktok_manager:
             await self.tiktok_manager.stop()
         if self._event_buffer:

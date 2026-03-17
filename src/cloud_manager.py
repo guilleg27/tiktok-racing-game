@@ -381,10 +381,45 @@ class CloudManager:
                 .select("*") \
                 .eq("country", country) \
                 .execute()
-            
+
             if response.data and len(response.data) > 0:
                 return response.data[0]
             return None
         except Exception as e:
             logger.error(f"❌ Supabase query error: {e}")
             return None
+
+    def update_telemetry(self, payload: dict) -> bool:
+        """Push a telemetry snapshot to Supabase (synchronous, background-thread safe).
+
+        Args:
+            payload: Metrics dict with a ``session_id`` key.
+
+        Returns:
+            bool: True if the upsert succeeded, False otherwise.
+        """
+        if not self.enabled:
+            return False
+        return self._update_telemetry_blocking(payload)
+
+    def _update_telemetry_blocking(self, payload: dict) -> bool:
+        """Blocking upsert to the ``live_telemetry`` table."""
+        if "last_update" not in payload:
+            from datetime import datetime, timezone
+            payload = {**payload, "last_update": datetime.now(timezone.utc).isoformat()}
+        try:
+            self.client.table("live_telemetry").upsert(
+                payload, on_conflict="session_id"
+            ).execute()
+            logger.debug(
+                "Telemetry pushed: session=%s fps=%.1f",
+                payload.get("session_id", "?"),
+                payload.get("fps", 0.0),
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                "Telemetry push error (possible schema mismatch — check live_telemetry columns): %s",
+                e,
+            )
+            return False
