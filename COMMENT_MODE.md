@@ -20,8 +20,8 @@ GAME_MODE = "COMMENT"  # or "GIFT"
 ### Voting System
 - Each user votes by typing a **country shortcut** in chat
 - Valid shortcuts:
-  - **Numbers**: `1` to `12` (one per country)
-  - **Siglas**: `ARG`, `BRA`, `MEX`, `ESP`, `COL`, `CHI`, `PER`, `VEN`, `USA`, `IDN`, `RUS`, `ITA`
+  - **Numbers**: `1` to `8` (one per country)
+  - **Siglas**: `ARG`, `BRA`, `MEX`, `ESP`, `COL`, `CHI`, `PER`, `VEN`
   - **Full names**: `argentina`, `brasil`, `mexico`, etc.
 
 ### Shortcuts Reference
@@ -36,10 +36,6 @@ GAME_MODE = "COMMENT"  # or "GIFT"
 | 6 | CHI   | Chile     | `6`, `chi`, `chile`          |
 | 7 | PER   | Peru      | `7`, `per`, `peru`, `perú`   |
 | 8 | VEN   | Venezuela | `8`, `ven`, `venezuela`, `vzla` |
-| 9 | USA   | USA       | `9`, `usa`, `us`, `america`  |
-| 10| IDN   | Indonesia | `10`, `idn`, `indonesia`, `indo` |
-| 11| RUS   | Russia    | `11`, `rus`, `russia`, `ru`  |
-| 12| ITA   | Italy     | `12`, `ita`, `italy`, `italia` |
 
 ### Visual UI
 

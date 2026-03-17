@@ -440,10 +440,7 @@ class GameEngine:
             "🇨🇴": "Colombia",
             "🇨🇱": "Chile",
             "🇵🇪": "Peru",
-            "🇻🇪": "Venezuela",
-            "🇮🇩": "Indonesia",
-            "🇷🇺": "Russia",
-            "🇮🇹": "Italy"
+            "🇻🇪": "Venezuela"
         }
         
         # Asset Manager
@@ -4998,9 +4995,6 @@ class GameEngine:
             'Chile': 'CHI',
             'Peru': 'PER',
             'Venezuela': 'VEN',
-            'Indonesia': 'IDN',
-            'Russia': 'RUS',
-            'Italy': 'ITA',
             'Uruguay': 'URU',
         }
         return abbrev_map.get(country, '???')

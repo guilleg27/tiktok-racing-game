@@ -324,8 +324,7 @@ RACE_FINISH_X = 400
 FLAG_RADIUS = 12
 RACE_COUNTRIES = [
     "Argentina", "Brasil", "Mexico", "España",
-    "Colombia", "Chile", "Peru", "Venezuela",
-    "USA", "Indonesia", "Russia", "Italy"
+    "Colombia", "Chile", "Peru", "Venezuela"
 ]
 ```
 

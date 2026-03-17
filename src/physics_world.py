@@ -645,8 +645,7 @@ class PhysicsWorld:
         emoji_map = {
             "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Mexico": "🇲🇽",
             "España": "🇪🇸", "Colombia": "🇨🇴", "Chile": "🇨🇱",
-            "Peru": "🇵🇪", "Venezuela": "🇻🇪",
-            "Indonesia": "🇮🇩", "Russia": "🇷🇺", "Italy": "🇮🇹"
+            "Peru": "🇵🇪", "Venezuela": "🇻🇪"
         }
         
         for country, racer in self.racers.items():
