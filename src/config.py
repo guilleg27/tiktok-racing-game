@@ -316,16 +316,6 @@ VOL_COMBO = 0.6          # Slightly higher for combo emphasis
 VOL_FINAL_STRETCH = 0.7  # Louder for dramatic final stretch
 VOL_VICTORY = 0.65       # Victory fanfare volume
 
-# # Audio volume levels
-# VOL_BGM = 0    
-# VOL_SFX = 0
-
-# # NEW: Event-specific volume levels
-# VOL_VOTE = 0          
-# VOL_COMBO = 0         
-# VOL_FINAL_STRETCH = 0 
-# VOL_VICTORY = 0
-
 # Floating Text Colors (VFX)
 COLOR_TEXT_POSITIVE = (0, 255, 0)      # Verde brillante
 COLOR_TEXT_NEGATIVE = (255, 0, 0)      # Rojo brillante
