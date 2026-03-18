@@ -112,8 +112,20 @@ COUNTRY_ABBREV = {
 COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
 COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
+# Combo system
+# combo_window is intentionally wider than TikTok Live's typical 2–4 s latency so
+# two gifts sent back-to-back always register as a combo.
+COMBO_WINDOW = 5.0      # seconds — rolling window for combo counting
+COMBO_THRESHOLD = 3     # minimum gifts in window to trigger "COMBO!" display
+ON_FIRE_THRESHOLD = 10  # minimum gifts in window to trigger "ON FIRE" state
+
 # Ghost Participation System (keeps race alive during inactivity)
-# Set GHOST_MODE_ENABLED = False to permanently disable ghost bots
+# ⚠️  WARNING — FAKE ENGAGEMENT RISK
+# GHOST_MODE_ENABLED must remain False whenever the game is connected to a real TikTok
+# Live stream.  Enabling it in production generates synthetic votes that are
+# indistinguishable from real user activity, which violates TikTok's Community
+# Guidelines and can result in an immediate account ban.
+# Only enable in --idle / local-only mode for internal testing.
 GHOST_MODE_ENABLED = False
 GHOST_INACTIVITY_THRESHOLD = 12.0  # Seconds without real activity before ghosts activate
 GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
@@ -424,3 +436,4 @@ BLACKOUT_INCREASE_PER_SEC   = 2     # Alpha units added every second (passive fa
 BLACKOUT_RECHARGE_DECREASE  = 35    # Alpha units removed per Rosa recharge
 BLACKOUT_HYPE_INTERVAL      = 30.0  # Seconds between auto-trigger rolls during Hype
 BLACKOUT_HYPE_CHANCE        = 0.05  # 5% chance per interval to auto-trigger
+BLACKOUT_ENABLED            = False  # Set to True to re-enable the blackout event

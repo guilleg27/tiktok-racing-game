@@ -199,44 +199,57 @@ class PhysicsWorld:
             
             logger.info(f"🏁 Created racer: {country} in lane {i+1}")
     
-    def apply_gift_impulse(self, country: str, gift_name: str, diamond_count: int = 1) -> bool:
+    def apply_gift_impulse(
+        self, country: str, gift_name: str, diamond_count: int = 1
+    ) -> tuple[bool, bool]:
         """
         Queue movement for a country's flag based on diamonds received.
         Updates target_x instead of position directly for smooth Lerp movement.
-        
+        Movement is always queued even when the country is frozen; the Lerp
+        update skips frozen racers so the distance is applied once unfrozen.
+
         Args:
             country: Country name (must match racer)
             gift_name: Gift name (for logging)
             diamond_count: Gift value (directly affects distance)
-        
+
         Returns:
-            True if movement queued, False if country not found
+            Tuple (success, was_frozen):
+              success    — False only when country not found or race finished
+              was_frozen — True when the country was frozen at time of the call
+                           (movement queued but not immediately visible)
         """
         # Don't apply movement if race is finished
         if self.race_finished:
-            return False
-            
+            return False, False
+
         if country not in self.racers:
             logger.warning(f"Country '{country}' not found in racers")
-            return False
+            return False, False
 
         racer = self.racers[country]
+        was_frozen = self.is_country_frozen(country)
 
         # Direct distance scaling: diamonds = pixels to move
         distance_per_diamond = 0.8  # Each diamond = 0.8 pixels forward
-        distance = diamond_count * distance_per_diamond * self.hype_speed_multiplier * self.rosa_combo_multiplier
-        
+        distance = (
+            diamond_count
+            * distance_per_diamond
+            * self.hype_speed_multiplier
+            * self.rosa_combo_multiplier
+        )
+
         # Increment target position (NOT actual position)
         racer.target_x += distance
 
         logger.debug(
             f"🚀 {country} received {gift_name} ({diamond_count}💎) - "
             f"Target: +{distance:.1f}px → {racer.target_x:.0f}"
+            + (" [FROZEN — queued]" if was_frozen else "")
         )
 
         # Note: Winner check happens in update() based on visual position
-
-        return True
+        return True, was_frozen
     
     def _declare_winner(self, country: str) -> None:
         """Declare a winner and trigger celebration."""

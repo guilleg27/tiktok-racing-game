@@ -22,8 +22,10 @@ _NORMAL_TYPES = frozenset({EventType.LIKE})
 _VIEWER_TYPES = frozenset({EventType.VIEWER_COUNT})
 _CHAT_TYPES   = frozenset({EventType.COMMENT, EventType.VOTE})
 
-JITTER_MIN          = 0.20   # seconds
-JITTER_MAX          = 0.60   # seconds
+JITTER_MIN          = 0.15   # seconds — hard lower clamp for Gaussian draw
+JITTER_MAX          = 0.70   # seconds — hard upper clamp for Gaussian draw
+JITTER_MU           = 0.35   # seconds — Gaussian mean (peak reaction time)
+JITTER_SIGMA        = 0.08   # seconds — std-dev (natural human variance)
 CHAT_MAX            = 50
 VIEWER_MAX          = 5
 CHAT_WARN_THRESHOLD = 40
@@ -62,8 +64,10 @@ class HumanizedEventBuffer:
     def start(self) -> None:
         self._ingest_task  = asyncio.create_task(self._ingest_loop(),  name="heb_ingest")
         self._process_task = asyncio.create_task(self._process_loop(), name="heb_process")
-        logger.info("HumanizedEventBuffer started (jitter %.0f–%.0f ms)",
-                    JITTER_MIN * 1000, JITTER_MAX * 1000)
+        logger.info(
+            "HumanizedEventBuffer started (jitter Gauss μ=%.0fms σ=%.0fms clamp [%.0f–%.0f]ms)",
+            JITTER_MU * 1000, JITTER_SIGMA * 1000, JITTER_MIN * 1000, JITTER_MAX * 1000,
+        )
 
     async def stop(self) -> None:
         for task in (self._ingest_task, self._process_task):
@@ -88,9 +92,12 @@ class HumanizedEventBuffer:
                 await self._output.put(event)
                 continue
 
+            # Gaussian jitter: human reaction times cluster around JITTER_MU with
+            # natural variance, unlike the suspiciously flat uniform distribution.
+            jitter = max(JITTER_MIN, min(JITTER_MAX, random.gauss(JITTER_MU, JITTER_SIGMA)))
             pending = _Pending(
                 event=event,
-                release_at=time.perf_counter() + random.uniform(JITTER_MIN, JITTER_MAX),
+                release_at=time.perf_counter() + jitter,
             )
 
             if event.type in _HIGH_TYPES:

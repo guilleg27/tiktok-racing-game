@@ -68,7 +68,14 @@ class CloudManager:
         # - Frozen exe: .env sits next to the .exe
         # - Development: .env is at the project root (two levels up from src/)
         if getattr(sys, 'frozen', False):
-            _env_path = os.path.join(os.path.dirname(sys.executable), '.env')
+            exe_dir = os.path.dirname(sys.executable)
+            # On macOS, sys.executable is inside Foo.app/Contents/MacOS/.
+            # The .env lives next to the .app bundle (3 levels up).
+            if sys.platform == 'darwin' and exe_dir.endswith('Contents/MacOS'):
+                _env_dir = os.path.dirname(os.path.dirname(os.path.dirname(exe_dir)))
+            else:
+                _env_dir = exe_dir  # Windows / Linux: .env next to the .exe
+            _env_path = os.path.join(_env_dir, '.env')
         else:
             _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
         load_dotenv(_env_path)

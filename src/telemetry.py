@@ -40,6 +40,7 @@ class TelemetryManager:
         self._session_id = session_id
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pending_retry: dict | None = None  # payload buffered after a network failure
 
     def start(self) -> None:
         """Spawn the daemon background thread."""
@@ -59,14 +60,25 @@ class TelemetryManager:
         logger.info("TelemetryManager stopped")
 
     def _collect(self) -> dict:
-        """Snapshot current game metrics into a dict ready for Supabase."""
+        """Snapshot current game metrics into a dict ready for Supabase.
+
+        session_points is a dict-of-dicts modified by the asyncio game loop.
+        We take a snapshot of the inner values via list() so that a concurrent
+        dict resize during iteration cannot produce incorrect diamond totals.
+        """
         ge = self._ge
 
-        diamonds = sum(
-            pts
-            for country_map in ge.session_points.values()
-            for pts in country_map.values()
-        )
+        # Thread-safe snapshot: copy the outer mapping first, then sum values.
+        try:
+            outer_snapshot = list(ge.session_points.values())
+            diamonds = sum(
+                pts
+                for country_map in outer_snapshot
+                for pts in list(country_map.values())
+            )
+        except RuntimeError:
+            # dict changed size during iteration — skip this cycle's diamond count
+            diamonds = -1
 
         buffer_load = round(len(self._eb._chat) / CHAT_MAX * 100, 1)
 
@@ -84,13 +96,33 @@ class TelemetryManager:
         }
 
     def _run(self) -> None:
-        """Thread target: collect and push on each interval until stopped."""
+        """Thread target: collect and push on each interval until stopped.
+
+        If a push fails (network micro-crash), the payload is buffered and
+        re-attempted on the next cycle before the fresh snapshot is sent.
+        This ensures at most one snapshot is lost per outage regardless of
+        outage duration, without blocking the game loop.
+        """
         while not self._stop_event.is_set():
             self._stop_event.wait(timeout=TELEMETRY_INTERVAL)
             if self._stop_event.is_set():
                 break
+
+            # Retry the previous failed payload first
+            if self._pending_retry is not None:
+                try:
+                    self._cm.update_telemetry(self._pending_retry)
+                    logger.debug("telemetry retry succeeded")
+                    self._pending_retry = None
+                except Exception:
+                    logger.warning("telemetry retry failed — will try again next cycle")
+
+            # Collect and push the current snapshot
+            payload = None
             try:
                 payload = self._collect()
                 self._cm.update_telemetry(payload)
             except Exception:
-                logger.exception("telemetry error")
+                logger.exception("telemetry push failed — buffering for retry")
+                if payload is not None:
+                    self._pending_retry = payload
