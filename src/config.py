@@ -132,6 +132,19 @@ GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
 GHOST_VOTE_INTERVAL_MAX = 7.0  # Max seconds between ghost votes
 GHOST_DISABLE_AFTER_REAL_ACTIVITY = 20.0  # Seconds to disable ghosts after real event
 
+# ---------------------------------------------------------------------------
+# Auto-Pilot (Chaos Loop) — visual activity during stream inactivity
+# Never injects fake events or writes to DB — direct physics/visual calls only
+# ---------------------------------------------------------------------------
+AUTOPILOT_ENABLED              = True   # Master switch (runtime: A key)
+AUTOPILOT_IDLE_THRESHOLD       = 10.0   # Seconds of silence before activation
+AUTOPILOT_COOLDOWN_AFTER_REAL  = 20.0   # Pause after real viewer activity (s)
+AUTOPILOT_INTERVAL_MU          = 5.0    # Gaussian mean for action interval (s)
+AUTOPILOT_INTERVAL_SIGMA       = 1.5    # Gaussian std-dev for action interval (s)
+AUTOPILOT_MIN_INTERVAL         = 3.0    # Minimum seconds between chaos actions
+AUTOPILOT_MAX_INTERVAL         = 9.0    # Maximum seconds between chaos actions
+AUTOPILOT_NEW_RACE_DELAY       = 7.0    # Wait before new race after autopilot victory
+
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
 GRADIENT_BOTTOM = (10, 10, 20)   # Casi negro con toque azul

@@ -345,6 +345,9 @@ class Application:
         max_consecutive_errors = 10
         last_time = time.perf_counter()
         
+        # Start Auto-Pilot chaos loop
+        self.game_engine.start_autopilot()
+
         while self.game_engine.running and not self._shutdown_event.is_set():
             await asyncio.sleep(0)
             frame_start = time.perf_counter()
@@ -394,6 +397,13 @@ class Application:
             await self._event_buffer.stop()
         if self.database:
             await self.database.close()
+        # Cancel autopilot task gracefully
+        if self.game_engine and self.game_engine._autopilot_task:
+            self.game_engine._autopilot_task.cancel()
+            try:
+                await self.game_engine._autopilot_task
+            except asyncio.CancelledError:
+                pass
         if self.game_engine:
             self.game_engine.cleanup()
         logger.info("Cleanup complete")

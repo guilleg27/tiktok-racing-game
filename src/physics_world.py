@@ -112,7 +112,7 @@ class PhysicsWorld:
         # Combat effect constants
         self.EFFECT_ROSA_ADVANCE = 5.0      # +5 metros (píxeles)
         self.EFFECT_PESA_SETBACK = 10.0     # -10 metros al líder
-        self.EFFECT_HELADO_FREEZE = 3.0     # 3 segundos de congelamiento
+        self.EFFECT_HELADO_FREEZE = 5.0     # 5 segundos de congelamiento
         
         self._create_boundaries()
         self._create_racers()
