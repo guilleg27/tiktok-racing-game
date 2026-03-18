@@ -637,11 +637,12 @@ class GameEngine:
         self._cta_cached_index: int = -1  # Index when cache was built
         
         # 🔥 COMBO SYSTEM
+        from .config import COMBO_WINDOW, COMBO_THRESHOLD, ON_FIRE_THRESHOLD
         self.combo_tracker: dict[str, list[float]] = {}  # {country: [timestamps]}
         self.combo_counts: dict[str, int] = {}  # {country: current_combo_count}
-        self.combo_window = 3.0  # seconds to count as combo
-        self.combo_threshold = 5  # minimum for "COMBO!" display
-        self.on_fire_threshold = 10  # threshold for "ON FIRE" state
+        self.combo_window = COMBO_WINDOW        # seconds — see config.py
+        self.combo_threshold = COMBO_THRESHOLD  # minimum gifts for "COMBO!" display
+        self.on_fire_threshold = ON_FIRE_THRESHOLD  # threshold for "ON FIRE" state
         self.on_fire_countries: set[str] = set()  # countries currently on fire
 
         # 🌹 ROSA COMBO MULTIPLIER
@@ -1189,7 +1190,7 @@ class GameEngine:
         if not countries:
             return
         country = random.choice(countries)
-        success = self.physics_world.apply_gift_impulse(
+        success, _ = self.physics_world.apply_gift_impulse(
             country=country,
             gift_name="Ghost",
             diamond_count=COMMENT_POINTS_PER_MESSAGE
@@ -1267,34 +1268,34 @@ class GameEngine:
             logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | regalo: {gift_name}")
             
             # Apply impulse to country's flag
-            success = self.physics_world.apply_gift_impulse(
+            success, was_frozen = self.physics_world.apply_gift_impulse(
                 country=country,
                 gift_name=gift_name,
                 diamond_count=diamond_count
             )
-            
+
             if success:
                 # Play appropriate sound effect based on gift value
                 self.audio_manager.play_gift_sound(
                     gift_name=gift_name,
                     diamond_value=diamond_count
                 )
-                
+
                 # Emit particle effect at flag position
                 racer = self.physics_world.racers[country]
                 pos = (racer.body.position.x, racer.body.position.y)
-                
+
                 # Larger explosions for bigger gifts
                 is_large_gift = diamond_count > 50
                 count = 15 + int(diamond_count / 8) if is_large_gift else 10 + int(diamond_count / 10)
                 power = 1.2 if is_large_gift else 0.8
-                
+
                 # 🎥 Big impact shake for large gifts
                 if diamond_count >= 100:
                     self.screen_shaker.big_impact_shake()
                 elif is_large_gift:
                     self.screen_shaker.impact_shake()
-                
+
                 self.emit_explosion(
                     pos=pos,
                     color=racer.color,
@@ -1302,21 +1303,38 @@ class GameEngine:
                     power=power,
                     diamond_count=diamond_count
                 )
-                
+
                 # Emit floating text feedback at top (respect global limit)
                 from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
-                self.floating_texts.append(
-                    FloatingText(
-                        text=f"{gift_name} x{gift_count}",
-                        x=SCREEN_WIDTH / 2,
-                        y=FLOATING_TEXT_TOP_Y,
-                        color=(255, 255, 255),
-                        lifespan=40,
-                        max_lifespan=40,
-                        font_size=20,
-                        dy=-1.0
+                if was_frozen:
+                    # Country is frozen — movement is queued, not visible yet.
+                    # Show a clear message so the viewer knows their gift was registered.
+                    freeze_remaining = self.physics_world.frozen_countries.get(country, 0.0)
+                    self.floating_texts.append(
+                        FloatingText(
+                            text=f"FROZEN! +{diamond_count}💎 queued ({freeze_remaining:.1f}s)",
+                            x=SCREEN_WIDTH / 2,
+                            y=FLOATING_TEXT_TOP_Y,
+                            color=(0, 200, 255),  # ice-blue matches freeze theme
+                            lifespan=70,
+                            max_lifespan=70,
+                            font_size=18,
+                            dy=-0.8
+                        )
                     )
-                )
+                else:
+                    self.floating_texts.append(
+                        FloatingText(
+                            text=f"{gift_name} x{gift_count}",
+                            x=SCREEN_WIDTH / 2,
+                            y=FLOATING_TEXT_TOP_Y,
+                            color=(255, 255, 255),
+                            lifespan=40,
+                            max_lifespan=40,
+                            font_size=20,
+                            dy=-1.0
+                        )
+                    )
                 if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
                     self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
             
@@ -1607,12 +1625,12 @@ class GameEngine:
         logger.debug(f"🗳️ VOTE: {username} → {country} ({shortcut_used})")
         
         # Apply movement to country's flag
-        success = self.physics_world.apply_gift_impulse(
+        success, _ = self.physics_world.apply_gift_impulse(
             country=country,
             gift_name="Vote",
             diamond_count=COMMENT_POINTS_PER_MESSAGE
         )
-        
+
         if success:
             # Visual feedback: small particle effect
             racer = self.physics_world.racers[country]
@@ -2617,7 +2635,9 @@ class GameEngine:
 
     def _activate_blackout(self) -> None:
         """Activate Blackout Mode at the initial darkness level."""
-        from .config import BLACKOUT_INITIAL_ALPHA
+        from .config import BLACKOUT_ENABLED, BLACKOUT_INITIAL_ALPHA
+        if not BLACKOUT_ENABLED:
+            return
         self.blackout_active = True
         self.blackout_alpha = BLACKOUT_INITIAL_ALPHA
         self._blackout_increase_timer = 0.0
@@ -3711,12 +3731,12 @@ class GameEngine:
             diamond_count = random.randint(1, 100)
             
             # Apply gift
-            success = self.physics_world.apply_gift_impulse(
+            success, _ = self.physics_world.apply_gift_impulse(
                 country=country,
                 gift_name="Auto Test Gift",
                 diamond_count=diamond_count
             )
-            
+
             if success:
                 # Emit particles
                 racer = self.physics_world.racers[country]
