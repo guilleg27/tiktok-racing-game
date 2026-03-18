@@ -137,7 +137,7 @@ GHOST_DISABLE_AFTER_REAL_ACTIVITY = 20.0  # Seconds to disable ghosts after real
 # Never injects fake events or writes to DB — direct physics/visual calls only
 # ---------------------------------------------------------------------------
 AUTOPILOT_ENABLED              = True   # Master switch (runtime: A key)
-AUTOPILOT_IDLE_THRESHOLD       = 10.0   # Seconds of silence before activation
+AUTOPILOT_IDLE_THRESHOLD       = 45.0   # Seconds of silence before activation
 AUTOPILOT_COOLDOWN_AFTER_REAL  = 20.0   # Pause after real viewer activity (s)
 AUTOPILOT_INTERVAL_MU          = 5.0    # Gaussian mean for action interval (s)
 AUTOPILOT_INTERVAL_SIGMA       = 1.5    # Gaussian std-dev for action interval (s)
