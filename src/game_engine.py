@@ -1,6 +1,7 @@
 """Game Engine - Consumer that renders TikTok events using Pygame + Pymunk."""
 
 import asyncio
+import collections
 import logging
 from typing import Optional, Dict
 import math
@@ -703,7 +704,15 @@ class GameEngine:
         self.last_activity_time: float = time.time()
         self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
         self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
-        
+
+        # 🤖 Auto-Pilot (Chaos Loop)
+        from .config import AUTOPILOT_ENABLED
+        self._autopilot_enabled: bool                    = AUTOPILOT_ENABLED
+        self._autopilot_active: bool                     = False
+        self._autopilot_resume_after: float              = 0.0
+        self._autopilot_task: Optional[asyncio.Task]     = None
+        self._autopilot_recent_actions: collections.deque = collections.deque(maxlen=3)
+
         # 🚪 ESC double-press to quit – avoid accidental close when spamming 1/2/3
         self._esc_quit_requested = False
         self._esc_quit_time: float = 0.0
@@ -1146,6 +1155,14 @@ class GameEngine:
         self.ghost_bots_disabled_until = now + GHOST_DISABLE_AFTER_REAL_ACTIVITY
         if was_ghost_active:
             logger.info("👻 Ghost mode DEACTIVATED by real user activity")
+
+        # Preempt Auto-Pilot when a real viewer interacts
+        if self._autopilot_active:
+            from .config import AUTOPILOT_COOLDOWN_AFTER_REAL
+            self._autopilot_active = False
+            self._autopilot_resume_after = now + AUTOPILOT_COOLDOWN_AFTER_REAL
+            logger.info("[AutoPilot] DEACTIVATED by real activity — resumes in %.0fs",
+                        AUTOPILOT_COOLDOWN_AFTER_REAL)
 
     @property
     def _ghost_mode_active(self) -> bool:
@@ -2027,6 +2044,14 @@ class GameEngine:
                     test_names = ["TikFan", "RacingViewer", "StreamLover", "NewFollower", "Lurker99"]
                     username = random.choice(test_names) + str(int(time.time() * 1000) % 100)
                     self.queue.put_nowait(GameEvent(type=EventType.FOLLOW, username=username))
+
+                elif event.key == pygame.K_a:  # A = Toggle Auto-Pilot
+                    self._autopilot_enabled = not self._autopilot_enabled
+                    if not self._autopilot_enabled:
+                        self._autopilot_active = False
+                    status = "ON" if self._autopilot_enabled else "OFF"
+                    logger.info("[AutoPilot] Toggled: %s", status)
+                    self.spawn_floating_text(f"Auto-Pilot {status}", 0, 0, (0, 200, 255))
 
                 elif event.key == pygame.K_b:  # B = Toggle ghost/bot mode
                     self.ghost_mode_enabled = not self.ghost_mode_enabled
@@ -4290,7 +4315,7 @@ class GameEngine:
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
         label_font = _get_font("Arial", 11, bold=True)
-        label = f"PRÓXIMO EVENTO: LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
+        label = f"PRÓXIMA LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
         if GAME_MODE == "COMMENT" and self.game_state == "RACING":
@@ -4329,7 +4354,7 @@ class GameEngine:
             self.audio_manager.play_sfx(SoundType.METEOR_EXPLOSION)
         self.screen_shaker.meteor_shake()
         self.current_likes = 0
-        self.likes_goal = min(self.likes_goal * 2, 10000)
+        self.likes_goal = min(self.likes_goal * 2, 2000)
         self._likes_charge_played = False
 
         # Spawn 15 meteors: cross screen quickly with trail
@@ -4484,9 +4509,8 @@ class GameEngine:
             messages = [
                 "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
                 f"¿Dónde están los de {second or '?'}? ¡Escribe {second_num} para remontar!" if second else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
-                f"¡{leader or '?'} está ganando! ¡Detenlo enviando un helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
+                f"¡{leader or '?'} está ganando! ¡Detenlo enviando algo helado!" if leader else "ESCRIBE [NÚMERO] PARA AYUDAR A TU PAÍS",
                 "¡Escribe el número de tu país para sumar puntos!",
-                "Con regalos avanzas más rápido!",
             ]
             text = messages[self.cta_message_index % len(messages)]
 
@@ -5170,14 +5194,6 @@ class GameEngine:
         # Reset CTA banner to first message for new race
         self.cta_last_rotation_time = 0.0
         self.cta_message_index = 0
-        
-        # Spawn promotional message at top
-        self.spawn_floating_text(
-            "Con regalos avanzas más rápido!",
-            self.physics_world.start_x,
-            self.physics_world.game_area_top,
-            (255, 223, 0)  # Gold
-        )
         
         # Reset combo system
         self.combo_tracker.clear()
@@ -5978,32 +5994,8 @@ class GameEngine:
     
     def _render_monetization_message(self) -> None:
         """Render the call-to-action for gifts (GIFT mode only)."""
-        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
-        
-        # Only show after banner has appeared
-        if self.victory_sequence_time < 2.0:
-            return
-        
-        # Fade in
-        fade_in = min(1.0, (self.victory_sequence_time - 2.0) / 0.5)
-        alpha = int(255 * fade_in)
-        
-        # CTA text
-        cta_font = _get_font("Arial", 16, bold=True)
-        cta_text = "Send a GIFT to claim YOUR crown next race!"
-        
-        cta_surf = self._render_text_with_shadow(
-            cta_text,
-            cta_font,
-            (255, 200, 100),
-            shadow_offset=2
-        )
-        cta_surf.set_alpha(alpha)
-        
-        # Position at bottom of victory banner area
-        cta_rect = cta_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3 + 80))
-        self.render_surface.blit(cta_surf, cta_rect)
-    
+
+
     def _reset_victory_sequence(self) -> None:
         """Reset all victory sequence state."""
         self.victory_sequence_active = False
@@ -6167,3 +6159,252 @@ class GameEngine:
         
         # Fall back to original logic
         return self.assign_country_to_user(username)
+
+    # ------------------------------------------------------------------
+    # 🤖 AUTO-PILOT (CHAOS LOOP)
+    # ------------------------------------------------------------------
+
+    def start_autopilot(self) -> None:
+        """Create the autopilot asyncio task. Call once the event loop is running."""
+        self._autopilot_task = asyncio.create_task(
+            self._autopilot_loop(), name="autopilot_chaos"
+        )
+        logger.info("[AutoPilot] Chaos loop task started")
+
+    async def _autopilot_loop(self) -> None:
+        """
+        Background task: monitors inactivity and fires chaos actions.
+        Uses only await asyncio.sleep() — shares the event loop, zero race conditions.
+        Never writes to DB or injects queue events.
+        """
+        from .config import (
+            AUTOPILOT_IDLE_THRESHOLD, AUTOPILOT_INTERVAL_MU, AUTOPILOT_INTERVAL_SIGMA,
+            AUTOPILOT_MIN_INTERVAL, AUTOPILOT_MAX_INTERVAL, AUTOPILOT_NEW_RACE_DELAY,
+        )
+        logger.info("[AutoPilot] Loop running — waiting for idle window")
+
+        while True:
+            try:
+                await asyncio.sleep(1.0)  # 1-second poll (cheap)
+
+                if not self._autopilot_enabled:
+                    continue
+
+                now = time.time()
+
+                # Respect post-real-activity cooldown
+                if now < self._autopilot_resume_after:
+                    continue
+
+                # Check inactivity threshold
+                if now - self.last_activity_time < AUTOPILOT_IDLE_THRESHOLD:
+                    continue
+
+                # Activate
+                if not self._autopilot_active:
+                    self._autopilot_active = True
+                    logger.info("[AutoPilot] ACTIVATED after %.0fs of inactivity",
+                                now - self.last_activity_time)
+                    self.spawn_floating_text("AUTO PILOT", 0, 0, (0, 200, 255))
+
+                # Ensure RACING state
+                if self.game_state == 'IDLE':
+                    self._transition_to_racing()
+
+                # Wait out victory/reset cycle
+                if self.physics_world.race_finished:
+                    await asyncio.sleep(AUTOPILOT_NEW_RACE_DELAY)
+                    continue
+
+                # Fire one chaos action
+                await self._execute_chaos_action()
+
+                # Gaussian sleep until next action
+                raw = random.gauss(AUTOPILOT_INTERVAL_MU, AUTOPILOT_INTERVAL_SIGMA)
+                interval = max(AUTOPILOT_MIN_INTERVAL, min(AUTOPILOT_MAX_INTERVAL, raw))
+
+                # Sliced sleep: check preemption every 250 ms
+                elapsed = 0.0
+                while elapsed < interval:
+                    await asyncio.sleep(0.25)
+                    elapsed += 0.25
+                    if not self._autopilot_active:
+                        break
+
+            except asyncio.CancelledError:
+                self._autopilot_active = False
+                logger.info("[AutoPilot] Task cancelled")
+                raise
+            except Exception as exc:
+                logger.exception("[AutoPilot] Error in chaos loop: %s", exc)
+                await asyncio.sleep(5.0)  # brief back-off before retry
+
+    async def _execute_chaos_action(self) -> None:
+        """Select and run one chaos action from a weighted pool, avoiding recent repeats."""
+        if not self._autopilot_active or self.physics_world.race_finished:
+            return
+
+        POOL = [
+            (25, "particles",    self._autopilot_particle_chaos),
+            (20, "combat",       self._autopilot_combat_event),
+            (20, "terremoto",    self._autopilot_terremoto),
+            (15, "arcoiris",     self._autopilot_arcoiris),
+            (10, "tormenta",     self._autopilot_tormenta),
+            (10, "destello",     self._autopilot_destello),
+            (10, "lunar",        self._autopilot_lunar_event),
+        ]
+
+        recent = set(self._autopilot_recent_actions)
+        available = [(w, n, fn) for w, n, fn in POOL if n not in recent] or POOL
+
+        total = sum(w for w, _, _ in available)
+        r = random.uniform(0, total)
+        cumulative = 0.0
+        chosen_name, chosen_fn = available[-1][1], available[-1][2]
+        for w, name, fn in available:
+            cumulative += w
+            if r <= cumulative:
+                chosen_name, chosen_fn = name, fn
+                break
+
+        self._autopilot_recent_actions.append(chosen_name)
+        logger.debug("[AutoPilot] action: %s", chosen_name)
+        try:
+            await chosen_fn()
+        except Exception as exc:
+            logger.exception("[AutoPilot] Error in action '%s': %s", chosen_name, exc)
+
+    async def _autopilot_impulse_burst(self) -> None:
+        """Move 2-4 random countries; mix moderate pushes with one large guaranteed push."""
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+        num = random.randint(2, min(4, len(countries)))
+        targets = random.sample(countries, num)
+        for country in targets[:-1]:
+            if random.random() < 0.30:
+                self.physics_world.apply_gift_effect("Pesa", country)
+            else:
+                d = max(5, min(150, int(abs(random.gauss(30, 25)))))
+                self.physics_world.apply_gift_impulse(country, "AutoPilot", d)
+        # Final target always gets a big guaranteed push
+        big = max(50, min(150, int(abs(random.gauss(80, 20)))))
+        self.physics_world.apply_gift_impulse(targets[-1], "AutoPilot", big)
+
+    async def _autopilot_particle_chaos(self) -> None:
+        """2-3 particle explosions at random flag positions + screen shake."""
+        VIVID = [(255, 80, 0), (0, 220, 255), (255, 0, 200), (80, 255, 60), (255, 220, 0), (180, 0, 255)]
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+        num = random.randint(2, 3)
+        for country in random.sample(countries, min(num, len(countries))):
+            racer = self.physics_world.racers[country]
+            pos = (float(racer.body.position.x), float(racer.body.position.y))
+            count = max(25, min(50, int(random.gauss(35, 8))))
+            power = max(1.2, min(2.0, random.gauss(1.5, 0.25)))
+            self.emit_explosion(pos=pos, color=random.choice(VIVID), count=count, power=power)
+        if num >= 3:
+            self.screen_shaker.big_impact_shake()
+        else:
+            self.screen_shaker.impact_shake()
+
+    async def _autopilot_combat_event(self) -> None:
+        """Freeze or setback the current race leader."""
+        if self.physics_world.race_finished:
+            return
+        lb = self.physics_world.get_leaderboard()
+        if not lb:
+            return
+        leader = lb[0][1]
+        if random.random() < 0.50:
+            result = self.physics_world.apply_gift_effect("Helado", leader)
+            if result['effect'] == 'freeze':
+                self.spawn_floating_text(f"{leader} CONGELADO!", 0, 0, (130, 220, 255))
+        else:
+            result = self.physics_world.apply_gift_effect("Pesa", leader)
+            if result['effect'] == 'setback':
+                self.spawn_floating_text(f"STOP a {result.get('target', leader)}!", 0, 0, (255, 100, 80))
+        self.screen_shaker.impact_shake()
+
+    async def _autopilot_terremoto(self) -> None:
+        """Global earthquake: all flags explode simultaneously, 2 random countries get setback."""
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+        self.screen_shaker.meteor_shake()
+        VIVID = [(255, 80, 0), (0, 220, 255), (255, 0, 200), (80, 255, 60), (255, 220, 0)]
+        for country in countries:
+            racer = self.physics_world.racers[country]
+            pos = (float(racer.body.position.x), float(racer.body.position.y))
+            self.emit_explosion(pos=pos, color=random.choice(VIVID), count=30, power=1.8)
+        leader = self.physics_world.get_leader_country()
+        if leader:
+            self.physics_world.apply_gift_effect("Pesa", leader)
+        self.spawn_floating_text("¡TERREMOTO!", 0, 0, (255, 200, 0))
+
+    async def _autopilot_arcoiris(self) -> None:
+        """Rainbow cascade: sequential explosions on each racer in leaderboard order."""
+        lb = self.physics_world.get_leaderboard()
+        if not lb:
+            return
+        RAINBOW = [
+            (255, 0, 0), (255, 127, 0), (255, 215, 0),
+            (0, 200, 60), (0, 180, 255), (100, 0, 255), (255, 0, 200),
+        ]
+        for i, (_, country, *_rest) in enumerate(lb):
+            racer = self.physics_world.racers.get(country)
+            if racer is None:
+                continue
+            pos = (float(racer.body.position.x), float(racer.body.position.y))
+            self.emit_explosion(pos=pos, color=RAINBOW[i % len(RAINBOW)], count=28, power=1.6)
+            await asyncio.sleep(0.06)
+        self.screen_shaker.big_impact_shake()
+        self.spawn_floating_text("¡ARCOÍRIS!", 0, 0, (255, 80, 220))
+
+    async def _autopilot_tormenta(self) -> None:
+        """Activate warp + tension background modes for 6 seconds."""
+        self.background_manager.activate_warp_mode()
+        self.background_manager.activate_tension_mode()
+        self.screen_shaker.meteor_shake()
+        self.spawn_floating_text("¡TORMENTA!", 0, 0, (0, 200, 255))
+        await asyncio.sleep(6.0)
+        self.background_manager.deactivate_warp_mode()
+        self.background_manager.deactivate_tension_mode()
+
+    async def _autopilot_destello(self) -> None:
+        """Stroboscopic flashes on 5 random racers in quick succession."""
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+        FLASH = [
+            (255, 255, 255), (200, 220, 255), (180, 180, 255),
+            (220, 255, 220), (255, 220, 200),
+        ]
+        targets = random.choices(countries, k=5)
+        for country in targets:
+            racer = self.physics_world.racers.get(country)
+            if racer is None:
+                continue
+            pos = (float(racer.body.position.x), float(racer.body.position.y))
+            self.emit_explosion(pos=pos, color=random.choice(FLASH), count=20, power=1.4)
+            self.screen_shaker.impact_shake()
+            await asyncio.sleep(0.10)
+        self.spawn_floating_text("¡DESTELLO!", 0, 0, (220, 220, 255))
+
+    async def _autopilot_lunar_event(self) -> None:
+        """Activate Lunar Gravity with randomized duration/amplitude."""
+        if self._lunar_active:
+            return
+        duration  = max(8.0,  min(20.0, random.gauss(14.0, 3.0)))
+        amplitude = max(6.0,  min(12.0, random.gauss(9.0,  1.5)))
+        self._activate_lunar_gravity(duration=duration, amplitude=amplitude)
+
+    async def _autopilot_on_fire_event(self) -> None:
+        """Trigger neon ON FIRE trails on a random country."""
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+        country = random.choice(countries)
+        self._trigger_on_fire(country)
+        self.spawn_floating_text(f"{country.upper()} ON FIRE!", 0, 0, (255, 120, 0))
