@@ -482,23 +482,17 @@ class PhysicsWorld:
                 }
                 logger.info(result['message'])
         
-        # 🏋️ PESA/WEIGHTS: Resta -10m al país en 1er lugar
+        # 🏋️ PESA/WEIGHTS: Avanza +10m al país del sender
         elif 'pesa' in gift_lower or 'weight' in gift_lower:
-            leader = self.get_leader_country()
-            if leader and leader in self.racers:
-                # No puede retroceder más allá del inicio
-                current_x = self.racers[leader].target_x
-                new_x = max(self.start_x, current_x - self.EFFECT_PESA_SETBACK)
-                self.racers[leader].target_x = new_x
-                
+            if sender_country in self.racers:
+                self.racers[sender_country].target_x += self.EFFECT_PESA_SETBACK
                 result = {
-                    'effect': 'setback',
-                    'target': leader,
+                    'effect': 'advance',
+                    'target': sender_country,
                     'value': self.EFFECT_PESA_SETBACK,
-                    'message': f'🏋️ Attacking leader: {leader}! -{self.EFFECT_PESA_SETBACK}m'
+                    'message': f'🏋️ {sender_country} charges forward +{self.EFFECT_PESA_SETBACK}m!'
                 }
                 logger.info(result['message'])
-                print(f"Attacking leader: {leader}")  # Debug console
         
         # 🍦 HELADO/ICE CREAM: Congela al país en 1er lugar por 3 segundos
         elif 'helado' in gift_lower or 'ice cream' in gift_lower or 'ice' in gift_lower:

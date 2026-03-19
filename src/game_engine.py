@@ -6332,21 +6332,16 @@ class GameEngine:
             self.screen_shaker.impact_shake()
 
     async def _autopilot_combat_event(self) -> None:
-        """Freeze or setback the current race leader."""
+        """Freeze the current race leader."""
         if self.physics_world.race_finished:
             return
         lb = self.physics_world.get_leaderboard()
         if not lb:
             return
         leader = lb[0][1]
-        if random.random() < 0.50:
-            result = self.physics_world.apply_gift_effect("Helado", leader)
-            if result['effect'] == 'freeze':
-                self.spawn_floating_text(f"{leader} CONGELADO!", 0, 0, (130, 220, 255))
-        else:
-            result = self.physics_world.apply_gift_effect("Pesa", leader)
-            if result['effect'] == 'setback':
-                self.spawn_floating_text(f"STOP a {result.get('target', leader)}!", 0, 0, (255, 100, 80))
+        result = self.physics_world.apply_gift_effect("Helado", leader)
+        if result['effect'] == 'freeze':
+            self.spawn_floating_text(f"{leader} CONGELADO!", 0, 0, (130, 220, 255))
         self.screen_shaker.impact_shake()
 
     # ─── HYPE TIMER ────────────────────────────────────────────────────────────
@@ -6409,12 +6404,12 @@ class GameEngine:
             self.background_manager.deactivate_warp_mode()
             self.background_manager.deactivate_tension_mode()
 
-        # 5. 2 Pesa setbacks on top leaders after 1s
+        # 5. Boost last-2 countries after 1s (stimulate laggards, no setbacks)
         await asyncio.sleep(1.0)
         lb = self.physics_world.get_leaderboard()
-        for _, leader_country, *_ in lb[:2]:
+        for _, last_country, *_ in lb[-2:]:
             if not self.physics_world.race_finished:
-                self.physics_world.apply_gift_effect("Pesa", leader_country)
+                self.physics_world.apply_gift_impulse(last_country, "SAMBA", 30)
                 self.screen_shaker.impact_shake()
                 await asyncio.sleep(0.3)
 
@@ -6439,9 +6434,6 @@ class GameEngine:
             racer = self.physics_world.racers[country]
             pos = (float(racer.body.position.x), float(racer.body.position.y))
             self.emit_explosion(pos=pos, color=random.choice(VIVID), count=30, power=1.8)
-        leader = self.physics_world.get_leader_country()
-        if leader:
-            self.physics_world.apply_gift_effect("Pesa", leader)
         self.spawn_floating_text("¡TERREMOTO!", 0, 0, (255, 200, 0))
 
     async def _autopilot_arcoiris(self) -> None:
