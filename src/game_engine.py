@@ -3918,15 +3918,12 @@ class GameEngine:
             return
         alpha = min(255, int(self._disaster_title_timer * 200))
         font = _get_font("Arial", 52, bold=True)
-        text_surf = font.render("💥 SAMBA 💥", True, (255, 60, 60))
-        sub_font = _get_font("Arial", 20, bold=False)
-        sub_surf = sub_font.render("TODOS LOS RACERS AFECTADOS", True, (255, 200, 80))
+        text_surf = font.render("SAMBA", True, (255, 60, 60))
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((10, 0, 0, 140))
         cx = SCREEN_WIDTH // 2
         cy = SCREEN_HEIGHT // 2
-        overlay.blit(text_surf, text_surf.get_rect(center=(cx, cy - 20)))
-        overlay.blit(sub_surf, sub_surf.get_rect(center=(cx, cy + 38)))
+        overlay.blit(text_surf, text_surf.get_rect(center=(cx, cy)))
         overlay.set_alpha(alpha)
         self.render_surface.blit(overlay, (0, 0))
 
@@ -6405,7 +6402,7 @@ class GameEngine:
             self.background_manager.activate_tension_mode()
 
         # 4. "CAOS TOTAL" floating text
-        self.spawn_floating_text("💥 SAMBA 💥", 0, 0, (255, 50, 50))
+        self.spawn_floating_text("SAMBA", 0, 0, (255, 50, 50))
 
         await asyncio.sleep(8.0)
         if self.background_manager:
