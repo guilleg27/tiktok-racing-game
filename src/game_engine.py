@@ -583,6 +583,7 @@ class GameEngine:
         # 3D Visualization animation state
         self.ranking_3d_animation_time = 0.0  # For animated effects
         self._show_ranking_panel: bool = False  # Toggle with H key
+        self.hud_visible: bool = True  # Toggle with B key (Broadcast mode)
         
         # Victory flash effect (white screen flash on win)
         self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
@@ -1654,8 +1655,7 @@ class GameEngine:
                         self._esc_quit_time = now
                         logger.info("🚪 Press ESC again within 2s to quit")
                 elif event.key == pygame.K_c:
-                    self._return_to_idle()
-                    logger.info("Race reset to IDLE!")
+                    pass  # disabled (use R to reset)
                 elif event.key == pygame.K_r:
                     if self.blackout_active:
                         self._recharge_blackout()
@@ -1841,120 +1841,22 @@ class GameEngine:
                                 ))
                                 self.hype_manager.register_event()
 
-                elif event.key == pygame.K_w:  # W = Test Room Join (Visual Welcome)
-                    test_usernames = [
-                        "NewViewer", "StreamFan", "Lurker", "Curious", "JustJoined"
-                    ]
-                    base_username = random.choice(test_usernames)
-                    unique_username = f"{base_username}{int(time.time() * 1000) % 1000}"
-                    room_join_event = GameEvent(
-                        type=EventType.JOIN,
-                        username=unique_username,
-                        content="",
-                        extra={"room_join": True},
-                    )
-                    try:
-                        self.queue.put_nowait(room_join_event)
-                        logger.info(f"TEST ROOM JOIN (Welcome): @{unique_username}")
-                    except Exception as e:
-                        logger.error(f"Error adding test room join: {e}")
+                elif event.key == pygame.K_w:  # disabled
+                    pass
 
-                elif event.key == pygame.K_j:  # J = Test JoinEvent (team join)
-                    # Generate random test join
-                    # Random username with timestamp to make it unique
-                    test_usernames = [
-                        "TestUser", "Viewer", "Fan", "Supporter", "Player", 
-                        "Streamer", "Watcher", "Usuario", "Espectador"
-                    ]
-                    base_username = random.choice(test_usernames)
-                    unique_username = f"{base_username}{int(time.time() * 1000) % 1000}"
-                    
-                    # Random country
-                    countries = list(self.physics_world.racers.keys())
-                    random_country = random.choice(countries)
-                    
-                    # Random keyword that would trigger this country
-                    from .config import COUNTRY_KEYWORDS
-                    # Find a keyword for this country
-                    matching_keywords = [k for k, v in COUNTRY_KEYWORDS.items() if v == random_country]
-                    keyword_used = random.choice(matching_keywords) if matching_keywords else random_country.lower()
-                    
-                    # Create fake JoinEvent and put it in queue
-                    join_event = GameEvent(
-                        type=EventType.JOIN,
-                        username=unique_username,
-                        content=random_country,
-                        extra={
-                            "keyword": keyword_used,
-                            "original_message": f"¡Vamos {keyword_used}!"
-                        }
-                    )
-                    
-                    # Add to queue for processing
-                    try:
-                        self.queue.put_nowait(join_event)
-                        logger.info(f"TEST JOIN: {unique_username} → {random_country} (keyword: {keyword_used})")
-                    except Exception as e:
-                        logger.error(f"Error adding test join to queue: {e}")
+                elif event.key == pygame.K_j:  # disabled
+                    pass
 
                 # K (stress test) disabled
                 
-                elif event.key == pygame.K_f:  # F = Test FIRE (rapid combo)
-                    # Cooldown to avoid crash when spamming F (TTS/audio flood)
-                    now = time.time()
-                    if now - self._last_test_fire_time >= self._test_fire_cooldown:
-                        self._last_test_fire_time = now
-                        # CAMBIAR A RACING SI ESTÁ EN IDLE
-                        if self.game_state == 'IDLE':
-                            self._transition_to_racing()
-                            logger.info("🏁 Game state: RACING (test mode)")
-                        try:
-                            self._test_fire_active = True
-                            countries = list(self.physics_world.racers.keys())
-                            test_country = random.choice(countries)
-                            for _ in range(12):
-                                self.register_combo_event(test_country)
-                                self.physics_world.apply_gift_impulse(
-                                    country=test_country,
-                                    gift_name="ComboTest",
-                                    diamond_count=1
-                                )
-                                self.hype_manager.register_event()
-                            self._on_real_activity()
-                            logger.info(f"🔥 TEST FIRE: {test_country} - triggered ON FIRE state!")
-                        except Exception as e:
-                            logger.exception("🔥 TEST FIRE failed: %s", e)
-                        finally:
-                            self._test_fire_active = False
-                    else:
-                        logger.debug("🔥 TEST FIRE: cooldown %.1fs", self._test_fire_cooldown - (now - self._last_test_fire_time))
+                elif event.key == pygame.K_f:  # disabled
+                    pass
                 
-                elif event.key == pygame.K_g:  # G = Test Final Stretch
-                    # CAMBIAR A RACING SI ESTÁ EN IDLE
-                    if self.game_state == 'IDLE':
-                        self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
-                    
-                    # Force trigger final stretch
-                    if not self.final_stretch_triggered:
-                        self._trigger_final_stretch()
-                        logger.info("🏁 TEST: Final Stretch triggered!")
+                elif event.key == pygame.K_g:  # disabled
+                    pass
                 
-                elif event.key == pygame.K_v:  # V = Test Victory Sequence
-                    # CAMBIAR A RACING SI ESTÁ EN IDLE
-                    if self.game_state == 'IDLE':
-                        self._transition_to_racing()
-                        logger.info("🏆 Game state: RACING (test mode)")
-                    
-                    # Force trigger victory
-                    test_countries = list(self.physics_world.racers.keys())
-                    if test_countries:
-                        winner = random.choice(test_countries)
-                        self.physics_world.winner = winner
-                        self.physics_world.race_finished = True
-                        captain = self.current_captains.get(winner, "TestKing")
-                        self._trigger_victory_sequence(winner, captain)
-                        logger.info(f"🏆 TEST VICTORY: {winner} wins! Captain: {captain}")
+                elif event.key == pygame.K_v:  # disabled
+                    pass
 
                 elif event.key == pygame.K_l:  # L = Simulate likes (retention bar; production uses real LIKE events)
                     self.add_likes(LIKES_SIMULATED_PER_KEY)
@@ -1984,10 +1886,8 @@ class GameEngine:
                     else:
                         self._activate_blackout()
 
-                elif event.key == pygame.K_p:  # P = Test Follower notification (was O)
-                    test_names = ["TikFan", "RacingViewer", "StreamLover", "NewFollower", "Lurker99"]
-                    username = random.choice(test_names) + str(int(time.time() * 1000) % 100)
-                    self.queue.put_nowait(GameEvent(type=EventType.FOLLOW, username=username))
+                elif event.key == pygame.K_p:  # disabled
+                    pass
 
                 elif event.key == pygame.K_a:  # A = Toggle Auto-Pilot
                     self._autopilot_enabled = not self._autopilot_enabled
@@ -2003,10 +1903,12 @@ class GameEngine:
                         asyncio.create_task(self._fetch_global_ranking())
                     logger.info(f"🏆 Ranking panel: {'ON' if self._show_ranking_panel else 'OFF'}")
 
-                elif event.key == pygame.K_z:  # Z = Test audience milestone
-                    self.viewer_count += 15
-                    self._check_audience_milestones(self.viewer_count)
-                    logger.info(f"TEST: Simulated viewer count -> {self.viewer_count}")
+                elif event.key == pygame.K_b:  # B = Toggle HUD (Broadcast mode)
+                    self.hud_visible = not self.hud_visible
+                    logger.info("📺 HUD: %s", "ON" if self.hud_visible else "OFF")
+
+                elif event.key == pygame.K_z:  # disabled
+                    pass
 
     def _update_captain_points(self, username: str, country: str, points: int) -> None:
         """
@@ -2536,7 +2438,8 @@ class GameEngine:
         self._render_blackout_overlay()  # 🌑 Blackout Mode (between particles and notifications)
         self._render_milestone_banner()
         self.notification_manager.render(self.render_surface)
-        self._render_header()
+        if self.hud_visible:
+            self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
         from .config import GAME_MODE
         if GAME_MODE == "COMMENT" and self.game_state == 'RACING' and not HYPE_TIMER_ENABLED:
@@ -2551,8 +2454,8 @@ class GameEngine:
         if self._stress_test_active:
             self._render_stress_test_banner()
 
-        # ⚡ Hype Timer overlay (always visible)
-        if HYPE_TIMER_ENABLED:
+        # ⚡ Hype Timer overlay (respects HUD visibility)
+        if HYPE_TIMER_ENABLED and self.hud_visible:
             self._render_hype_timer(self.render_surface)
 
         # Render shortcuts panel in COMMENT mode (solo durante RACING)
@@ -3144,11 +3047,11 @@ class GameEngine:
             # Special highlight if just became captain
             if country in self.captain_change_timer:
                 color = (255, 223, 0)  # Golden yellow for new captain
-                font_size = 15
+                font_size = 12
             else:
                 # Improved: Golden/white color for better visibility
                 color = (255, 245, 200)  # Soft golden-white for better readability
-                font_size = 12
+                font_size = 10
 
             # Render with enhanced text (outline) - stronger outline for cross-platform visibility
             try:
@@ -3216,19 +3119,21 @@ class GameEngine:
                          (self._safe_int(ix - size*0.7), self._safe_int(iy + size*0.7)), 
                          (self._safe_int(ix + size*0.7), self._safe_int(iy - size*0.7)), 1)
 
+    @property
+    def _hud_offset(self) -> int:
+        """Vertical offset so the HUD sits flush against the first lane."""
+        return self.physics_world.lane_y_offset
+
     def _render_header(self) -> None:
         """Render header with leader info and drop shadow for visibility."""
-        header_surface = pygame.Surface((SCREEN_WIDTH, self.header_height), pygame.SRCALPHA)
-        header_surface.fill((20, 20, 20, 200))  # Slightly more transparent
-        self.render_surface.blit(header_surface, (0, 0))
-        
-        # Leader info (centrado en el header)
+        off = self._hud_offset
+
+        # Leader info
         leader_info = self.physics_world.get_leader()
         leader_text = f"1st: {leader_info[0]}" if leader_info else "1st: ---"
-        
+
         # 🎯 EFECTO POP cuando cambia el líder
         if self.leader_pop_timer > 0:
-            # Escala 1.1x durante el pop
             pop_scale = 1.1
             pop_font = _get_font("Arial", int(FONT_SIZE * pop_scale), bold=True)
             count_surface = self._render_text_with_shadow(
@@ -3238,21 +3143,31 @@ class GameEngine:
             count_surface = self._render_text_with_shadow(
                 leader_text, self.font, (255, 255, 255), shadow_offset=2
             )
-        
-        # Leader text: left-aligned in header
+
+        # Compact gold badge sized to text
+        pad_x, pad_y = 10, 3
+        badge_x = 6
+        badge_y = off + self.header_height // 2 - count_surface.get_height() // 2 - pad_y
+        badge_w = count_surface.get_width() + pad_x * 2
+        badge_h = count_surface.get_height() + pad_y * 2
+        badge_surf = pygame.Surface((badge_w, badge_h), pygame.SRCALPHA)
+        pygame.draw.rect(badge_surf, (190, 150, 45, 220), (0, 0, badge_w, badge_h), border_radius=8)
+        self.render_surface.blit(badge_surf, (badge_x, badge_y))
+
+        # Leader text: left-aligned with badge
         text_rect = count_surface.get_rect()
-        text_rect.left = 10
-        text_rect.centery = self.header_height // 2
+        text_rect.left = badge_x + pad_x
+        text_rect.centery = off + self.header_height // 2
         self.render_surface.blit(count_surface, text_rect)
 
         # Last follower: right-aligned in header (gold)
         if self.notification_manager.last_follower:
             lf_surf = _get_mono_font(13).render(
-                f"Ultimo seguidor: {self.notification_manager.last_follower}", True, (255, 220, 50)
+                f"Ultimo seguidor: {self.notification_manager.last_follower}", True, (255, 255, 255)
             )
             lf_rect = lf_surf.get_rect()
             lf_rect.right = SCREEN_WIDTH - 8
-            lf_rect.centery = self.header_height // 2
+            lf_rect.centery = off + self.header_height // 2
             self.render_surface.blit(lf_surf, lf_rect)
 
     def _get_status_color(self) -> tuple[int, int, int]:
@@ -3908,7 +3823,7 @@ class GameEngine:
         if self._disaster_flash_alpha <= 0:
             return
         surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
-        surf.fill((220, 30, 30, int(self._disaster_flash_alpha)))
+        surf.fill((30, 200, 60, int(self._disaster_flash_alpha)))
         self.render_surface.blit(surf, (0, 0))
 
     def _render_disaster_title(self) -> None:
@@ -3918,9 +3833,9 @@ class GameEngine:
             return
         alpha = min(255, int(self._disaster_title_timer * 200))
         font = _get_font("Arial", 52, bold=True)
-        text_surf = font.render("SAMBA", True, (255, 60, 60))
+        text_surf = font.render("SAMBA", True, (50, 220, 80))
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((10, 0, 0, 140))
+        overlay.fill((0, 40, 10, 130))
         cx = SCREEN_WIDTH // 2
         cy = SCREEN_HEIGHT // 2
         overlay.blit(text_surf, text_surf.get_rect(center=(cx, cy)))
@@ -4274,31 +4189,38 @@ class GameEngine:
         bar_width = SCREEN_WIDTH - 2 * bar_margin_x
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
-        label_font = _get_font("Arial", 11, bold=True)
+        label_font = _get_font("Arial Black", 12, bold=False)
         label = f"PRÓXIMA LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
         if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            label_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2
+            label_y = CTA_BANNER_Y + CTA_BANNER_HEIGHT + 2 + self._hud_offset
             bar_y = label_y + label_surf.get_height() + 2
         else:
-            bar_y = self.header_height + 2
+            bar_y = self.header_height + 2 + self._hud_offset
             label_y = bar_y - 2 - label_surf.get_height()
 
-        # Background track (dark)
+        # Background track (dark, pill-shaped)
         track_rect = pygame.Rect(bar_margin_x, bar_y, bar_width, bar_height)
         track_surf = pygame.Surface((bar_width, bar_height), pygame.SRCALPHA)
-        track_surf.fill((30, 30, 40, 220))
+        track_surf.fill((0, 0, 0, 0))
+        pygame.draw.rect(track_surf, (30, 30, 40, 220),
+                         (0, 0, bar_width, bar_height), border_radius=bar_height // 2)
         self.render_surface.blit(track_surf, (bar_margin_x, bar_y))
         if progress > 0.001:
-            fill_w = max(2, int(bar_width * progress))
-            fill_surf = pygame.Surface((fill_w, bar_height), pygame.SRCALPHA)
-            for i in range(fill_w):
-                t = i / fill_w
+            fill_w = max(bar_height, int(bar_width * progress))
+            grad_surf = pygame.Surface((fill_w, bar_height), pygame.SRCALPHA)
+            for col in range(fill_w):
+                t = col / bar_width
                 r, g, b = 255, int(120 * (1 - t) + 105 * t), int(50 * (1 - t) + 180 * t)
-                pygame.draw.line(fill_surf, (r, g, b, 255), (i, 0), (i, bar_height))
-            self.render_surface.blit(fill_surf, (bar_margin_x, bar_y))
-        pygame.draw.rect(self.render_surface, (255, 180, 180, 120), track_rect, 1)
+                pygame.draw.line(grad_surf, (r, g, b, 255), (col, 0), (col, bar_height - 1))
+            clip_surf = pygame.Surface((fill_w, bar_height), pygame.SRCALPHA)
+            pygame.draw.rect(clip_surf, (255, 255, 255, 255),
+                             (0, 0, fill_w, bar_height), border_radius=bar_height // 2)
+            grad_surf.blit(clip_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+            self.render_surface.blit(grad_surf, (bar_margin_x, bar_y))
+        pygame.draw.rect(self.render_surface, (255, 180, 180, 120),
+                         track_rect, 1, border_radius=bar_height // 2)
 
         self.render_surface.blit(label_surf, (int(bar_margin_x), int(label_y)))
 
@@ -5650,7 +5572,7 @@ class GameEngine:
 
         # Glow effect (multiple layers)
         glow_color = (255, int(100 + 100 * pulse), 0)  # Orange pulsing
-        text = "🏁 FINAL STRETCH! 🏁"
+        text = "FINAL STRETCH!"
         
         text_surf = self._render_text_enhanced(
             text,
@@ -5720,7 +5642,7 @@ class GameEngine:
         gap = 10
         banner_w = padding + label_surf.get_width() + gap + time_surf.get_width() + padding
         banner_x = (SCREEN_WIDTH - banner_w) // 2
-        banner_y = CTA_BANNER_Y
+        banner_y = CTA_BANNER_Y + self._hud_offset
         banner_h = CTA_BANNER_HEIGHT
 
         # Background
@@ -6397,7 +6319,7 @@ class GameEngine:
             self.background_manager.activate_tension_mode()
 
         # 4. "CAOS TOTAL" floating text
-        self.spawn_floating_text("SAMBA", 0, 0, (255, 50, 50))
+        self.spawn_floating_text("SAMBA", 0, 0, (50, 220, 80))
 
         await asyncio.sleep(8.0)
         if self.background_manager:
