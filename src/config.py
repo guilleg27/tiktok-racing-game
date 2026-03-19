@@ -54,13 +54,15 @@ BALL_ELASTICITY = 0.85
 WALL_FRICTION = 0.3
 WALL_ELASTICITY = 0.7
 
+LANE_HEIGHT = 50  # Max px per lane; track is centered vertically when this caps the computed value
+
 # Race Configuration - Safe zone for TikTok Live layout
 SAFE_ZONE_LEFT_MARGIN = 0.20   # 20% - flags must not touch left edge (TikTok comments)
 SAFE_ZONE_FINISH_RATIO = 0.90  # 90% - finish line avoids Share/Like buttons on right
 RACE_OFFSET_X = int(SCREEN_WIDTH * SAFE_ZONE_LEFT_MARGIN)   # Start after comments zone
 RACE_FINISH_X = int(SCREEN_WIDTH * SAFE_ZONE_FINISH_RATIO)  # Meta avoids right-side buttons
 RACE_START_X = RACE_OFFSET_X
-FLAG_RADIUS = 10         # Reduced for spacious, professional look in safe zone
+FLAG_RADIUS = 8          # Reduced for spacious, professional look in safe zone
 
 # Race countries (used for flag sprites)
 RACE_COUNTRIES = [
@@ -348,7 +350,7 @@ FLOATING_TEXT_FONT_SIZE = 16           # Font size for effects
 
 # CTA banner and likes bar layout (no overlap with first lane)
 CTA_BANNER_Y = 36          # Right below header (header_height 36)
-CTA_BANNER_HEIGHT = 54     # Compact CTA box
+CTA_BANNER_HEIGHT = 42     # Compact CTA box
 CTA_BANNER_WIDTH = 420     # Wide banner (max SCREEN_WIDTH - 20)
 LIKES_BAR_HEIGHT = 12      # Likes goal bar height
 LIKES_BAR_TOP_GAP = 20     # Used only when not COMMENT+RACING

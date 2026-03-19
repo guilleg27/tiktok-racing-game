@@ -17,13 +17,14 @@ from .config import (
     WALL_FRICTION,
     WALL_ELASTICITY,
     GIFT_COLORS,
-    RACE_START_X,      
-    RACE_FINISH_X,     
-    FLAG_RADIUS,       
-    VOL_BGM,           
-    GAME_AREA_TOP,      
+    RACE_START_X,
+    RACE_FINISH_X,
+    FLAG_RADIUS,
+    VOL_BGM,
+    GAME_AREA_TOP,
     GAME_AREA_BOTTOM,
     RACE_COUNTRIES,
+    LANE_HEIGHT,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +72,11 @@ class PhysicsWorld:
         self.game_area_bottom = GAME_AREA_BOTTOM # 65px for legend
         self.game_area_height = SCREEN_HEIGHT - self.game_area_top - self.game_area_bottom
 
-        self.lane_height = self.game_area_height // self.num_lanes
+        computed_lane_height = self.game_area_height // self.num_lanes
+        self.lane_height = min(computed_lane_height, LANE_HEIGHT)
+        num_racers = len(RACE_COUNTRIES)
+        total_race_height = self.lane_height * num_racers
+        self.lane_y_offset = (self.game_area_height - total_race_height) // 2
         self.start_x = RACE_START_X
         self.finish_line_x = RACE_FINISH_X
 
@@ -149,8 +154,8 @@ class PhysicsWorld:
     def _create_racers(self) -> None:
         """Create flag racers in each lane."""
         for i, country in enumerate(self.countries):
-            # Calculate lane center Y position (con offset del header)
-            lane_y = self.game_area_top + (i * self.lane_height) + (self.lane_height // 2)
+            # Calculate lane center Y position (with header offset and vertical centering)
+            lane_y = self.game_area_top + self.lane_y_offset + (i * self.lane_height) + (self.lane_height // 2)
             
             # Create dynamic body usando FLAG_RADIUS de config
             mass = 1.0
