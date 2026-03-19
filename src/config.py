@@ -134,7 +134,7 @@ AUTOPILOT_NEW_RACE_DELAY       = 7.0    # Wait before new race after autopilot v
 
 # ─── HYPE TIMER (Disaster Countdown) ────────────────────────────────────────
 HYPE_TIMER_ENABLED          = True
-HYPE_TIMER_INTERVAL         = 15.0   # seconds between disasters (2 min)
+HYPE_TIMER_INTERVAL         = 120.0   # seconds between disasters (2 min)
 HYPE_TIMER_URGENCY_SECS     = 10.0    # below this → red/flashing
 HYPE_TIMER_HOST_CUE_SECS    = 30.0   # console cue for streamer
 
