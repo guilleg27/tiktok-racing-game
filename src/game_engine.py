@@ -57,6 +57,10 @@ from .config import (
     FOLLOWER_BANNER_Y,
     FOLLOWER_BANNER_WIDTH,
     FOLLOWER_BANNER_HEIGHT,
+    HYPE_TIMER_ENABLED,
+    HYPE_TIMER_INTERVAL,
+    HYPE_TIMER_URGENCY_SECS,
+    HYPE_TIMER_HOST_CUE_SECS,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -664,6 +668,11 @@ class GameEngine:
         self._lunar_overlay_alpha: int   = 0    # 0–55, fades in/out
         self.LUNAR_DURATION        = 30.0
         self.LUNAR_FADE_SPEED      = 55    # alpha units/second for overlay fade
+
+        # ⚡ Hype Timer (Disaster Countdown)
+        self._hype_timer_start: float = time.time()
+        self._hype_timer_fired: bool  = False
+        self._hype_cue_printed: bool  = False  # host 30s cue printed flag
         
         # 🌈 MOTION TRAILS (replaces fire_particles for crisp neon effect)
         self.motion_trails: dict[str, list[MotionTrailSegment]] = {}  # {country: [segments]}
@@ -698,12 +707,7 @@ class GameEngine:
         self._stress_test_active = False
         self._stress_test_last_inject: float = 0.0
         
-        # 👻 Ghost Participation System (keeps race alive during inactivity)
-        from .config import GHOST_MODE_ENABLED
-        self.ghost_mode_enabled: bool = GHOST_MODE_ENABLED  # Can be toggled at runtime with B key
         self.last_activity_time: float = time.time()
-        self.ghost_bots_disabled_until: float = 0.0  # Timestamp until bots are off after real event
-        self.ghost_next_vote_time: float = 0.0  # When to emit next ghost vote
 
         # 🤖 Auto-Pilot (Chaos Loop)
         from .config import AUTOPILOT_ENABLED
@@ -1140,21 +1144,9 @@ class GameEngine:
             text.draw(self.render_surface)
     
     def _on_real_activity(self) -> None:
-        """
-        Reset ghost participation timers when real user activity occurs.
-        Called on GIFT, VOTE, LIKE, COMMENT, JOIN events.
-        """
-        from .config import GHOST_DISABLE_AFTER_REAL_ACTIVITY, GHOST_INACTIVITY_THRESHOLD
+        """Reset activity timer and deactivate Auto-Pilot when real user activity occurs."""
         now = time.time()
-        # Log only when ghost mode was actually active (avoids log spam)
-        was_ghost_active = (
-            now >= self.ghost_bots_disabled_until
-            and now - self.last_activity_time >= GHOST_INACTIVITY_THRESHOLD
-        )
         self.last_activity_time = now
-        self.ghost_bots_disabled_until = now + GHOST_DISABLE_AFTER_REAL_ACTIVITY
-        if was_ghost_active:
-            logger.info("👻 Ghost mode DEACTIVATED by real user activity")
 
         # Preempt Auto-Pilot when a real viewer interacts
         if self._autopilot_active:
@@ -1164,60 +1156,6 @@ class GameEngine:
             logger.info("[AutoPilot] DEACTIVATED by real activity — resumes in %.0fs",
                         AUTOPILOT_COOLDOWN_AFTER_REAL)
 
-    @property
-    def _ghost_mode_active(self) -> bool:
-        """True when ghost bots are currently eligible to generate votes."""
-        now = time.time()
-        from .config import GHOST_INACTIVITY_THRESHOLD
-        return (
-            self.ghost_mode_enabled
-            and self.game_state == 'RACING'
-            and not self.physics_world.race_finished
-            and now >= self.ghost_bots_disabled_until
-            and now - self.last_activity_time >= GHOST_INACTIVITY_THRESHOLD
-        )
-
-    def _update_ghost_participation(self) -> None:
-        """
-        Generate ghost votes when inactive to keep the race alive.
-        Ghost votes apply impulse only (no FloatingText, no username).
-        Disabled for GHOST_DISABLE_AFTER_REAL_ACTIVITY seconds after real events.
-        """
-        from .config import (
-            RACE_COUNTRIES,
-            COMMENT_POINTS_PER_MESSAGE,
-            GHOST_INACTIVITY_THRESHOLD,
-            GHOST_VOTE_INTERVAL_MIN,
-            GHOST_VOTE_INTERVAL_MAX,
-        )
-        if not self.ghost_mode_enabled:
-            return
-        if self.game_state != 'RACING':
-            return
-        if self.physics_world.race_finished:
-            return
-        now = time.time()
-        if now < self.ghost_bots_disabled_until:
-            return
-        if now - self.last_activity_time < GHOST_INACTIVITY_THRESHOLD:
-            return
-        if now < self.ghost_next_vote_time:
-            return
-        countries = [c for c in RACE_COUNTRIES if c in self.physics_world.racers]
-        if not countries:
-            return
-        country = random.choice(countries)
-        success, _ = self.physics_world.apply_gift_impulse(
-            country=country,
-            gift_name="Ghost",
-            diamond_count=COMMENT_POINTS_PER_MESSAGE
-        )
-        if success:
-            logger.debug(f"👻 Ghost vote fired → {country}")
-            self.ghost_next_vote_time = now + random.uniform(
-                GHOST_VOTE_INTERVAL_MIN, GHOST_VOTE_INTERVAL_MAX
-            )
-    
     # Max events to process per frame to avoid backlog causing a single frame to stall
     MAX_EVENTS_PER_FRAME = 200
     LAG_WARNING_THRESHOLD_SEC = 1.5
@@ -2053,12 +1991,6 @@ class GameEngine:
                     logger.info("[AutoPilot] Toggled: %s", status)
                     self.spawn_floating_text(f"Auto-Pilot {status}", 0, 0, (0, 200, 255))
 
-                elif event.key == pygame.K_b:  # B = Toggle ghost/bot mode
-                    self.ghost_mode_enabled = not self.ghost_mode_enabled
-                    status = "ON" if self.ghost_mode_enabled else "OFF"
-                    logger.info(f"👻 Ghost mode toggled: {status}")
-                    self._audio_toast_text = f"Modo Auto: {status}"
-                    self._audio_toast_timer = 3.0
                 elif event.key == pygame.K_h:  # H = Toggle ranking panel + refresh
                     self._show_ranking_panel = not self._show_ranking_panel
                     if self._show_ranking_panel:
@@ -2350,9 +2282,6 @@ class GameEngine:
         if self._blackout_restored_timer > 0:
             self._blackout_restored_timer -= dt
 
-        # 👻 Ghost Participation: generate ghost votes when inactive
-        self._update_ghost_participation()
-        
         # 🌌 Update parallax background
         if self.background_manager:
             self.background_manager.update(dt)
@@ -2537,6 +2466,10 @@ class GameEngine:
         if self._audio_toast_timer > 0:
             self._audio_toast_timer = max(0.0, self._audio_toast_timer - dt)
 
+        # ⚡ Hype Timer (Disaster Countdown)
+        if HYPE_TIMER_ENABLED:
+            self._update_hype_timer()
+
     def render(self) -> None:
         """Render all visual elements."""
         # Track frame for FPS calculation
@@ -2587,11 +2520,10 @@ class GameEngine:
         self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
         from .config import GAME_MODE
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING':
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING' and not HYPE_TIMER_ENABLED:
             self._draw_permanent_cta(self.render_surface)
         self._render_likes_bar()
         self._render_leaderboard()
-        self._render_ghost_mode_indicator()
 
         # 🏁 Render FINAL STRETCH announcement
         self._render_final_stretch_announcement()
@@ -2599,7 +2531,11 @@ class GameEngine:
         # 🧪 Stress test indicator (key K)
         if self._stress_test_active:
             self._render_stress_test_banner()
-        
+
+        # ⚡ Hype Timer overlay (always visible)
+        if HYPE_TIMER_ENABLED:
+            self._render_hype_timer(self.render_surface)
+
         # Render shortcuts panel in COMMENT mode (solo durante RACING)
         import time as time_module
         
@@ -4276,32 +4212,6 @@ class GameEngine:
         pygame.draw.line(self.render_surface, (255, 215, 0, 100), (0, ticker_y), (SCREEN_WIDTH, ticker_y), 1)
         pygame.draw.line(self.render_surface, (255, 215, 0, 50), (0, ticker_y + ticker_height - 1), (SCREEN_WIDTH, ticker_y + ticker_height - 1), 1)
 
-    def _render_ghost_mode_indicator(self) -> None:
-        """Render a small badge showing ghost mode state (active or manually disabled)."""
-        if self.game_state != 'RACING' or self.physics_world.race_finished:
-            return
-        now = time.time()
-        if not self.ghost_mode_enabled:
-            # Static dim badge: ghost mode OFF
-            label, color = "👻 OFF", (120, 120, 120)
-            alpha = 160
-        elif self._ghost_mode_active:
-            # Pulsing badge: ghost mode actively firing
-            alpha = int(150 + 105 * abs(((now % 1.0) - 0.5) * 2))
-            label, color = "👻 AUTO", (180, 180, 255)
-        else:
-            return  # Ghost mode enabled but inactive (real users present) — hide badge
-        font = _get_font("Arial", 11, bold=True)
-        text_surf = font.render(label, True, color)
-        badge = pygame.Surface(
-            (text_surf.get_width() + 10, text_surf.get_height() + 6),
-            pygame.SRCALPHA,
-        )
-        badge.fill((20, 20, 60, min(alpha, 200)))
-        badge.blit(text_surf, (5, 3))
-        badge.set_alpha(alpha)
-        self.render_surface.blit(badge, (4, self.header_height + 4))
-
     def _render_likes_bar(self) -> None:
         """
         Render the likes goal bar below the CTA banner and above the first lane.
@@ -5181,7 +5091,7 @@ class GameEngine:
         self.audio_manager.stop_victory_sound()
 
         self.game_state = 'RACING'
-        self._on_real_activity()  # Reset ghost timer at race start
+        self._on_real_activity()  # Reset activity timer at race start
         self.race_start_time = time.time()
 
         # Initialize spotlight position to first racer
@@ -5720,8 +5630,66 @@ class GameEngine:
         overlay.blit(text, r)
         self.render_surface.blit(overlay, (0, 0))
     
+    def _render_hype_timer(self, surface: pygame.Surface) -> None:
+        """Render the hype timer countdown in the CTA banner slot (Y=36-90)."""
+        from .config import SCREEN_WIDTH, CTA_BANNER_Y, CTA_BANNER_HEIGHT, CTA_BANNER_WIDTH
+
+        elapsed = time.time() - self._hype_timer_start
+        remaining = max(0.0, HYPE_TIMER_INTERVAL - elapsed)
+        mins = int(remaining) // 60
+        secs = int(remaining) % 60
+
+        urgency = remaining <= HYPE_TIMER_URGENCY_SECS
+
+        # Blink at 2 Hz when urgent
+        if urgency and int(time.time() * 2) % 2 == 0:
+            return
+
+        # Color ramp
+        if remaining > 30:
+            color = (80, 255, 80)
+        elif remaining > 10:
+            color = (255, 200, 0)
+        else:
+            color = (255, 40, 40)
+
+        # Pulse scale when urgent
+        base_scale = 1.0
+        if urgency:
+            base_scale = 1.0 + abs(0.12 * math.sin(time.time() * 10))
+
+        # Banner geometry — matches CTA slot exactly
+        banner_w = min(SCREEN_WIDTH - 20, CTA_BANNER_WIDTH)
+        banner_x = (SCREEN_WIDTH - banner_w) // 2
+        banner_y = CTA_BANNER_Y
+        banner_h = CTA_BANNER_HEIGHT
+
+        # Background
+        bg = pygame.Surface((banner_w, banner_h), pygame.SRCALPHA)
+        bg.fill((10, 10, 20, 180))
+        surface.blit(bg, (banner_x, banner_y))
+
+        # Colored border
+        pygame.draw.rect(surface, color, (banner_x, banner_y, banner_w, banner_h),
+                         width=2, border_radius=6)
+
+        # Small label "CAOS EN" — left side, vertically centered
+        label_font = pygame.font.SysFont("monospace", 13, bold=False)
+        label_surf = label_font.render("SHAKE EN", True, (160, 160, 160))
+        lx = banner_x + 12
+        ly = banner_y + (banner_h - label_surf.get_height()) // 2
+        surface.blit(label_surf, (lx, ly))
+
+        # Big countdown "M:SS" — right side, vertically centered
+        time_font_size = max(22, int(30 * base_scale))
+        time_font = pygame.font.SysFont("monospace", time_font_size, bold=True)
+        time_surf = time_font.render(f"{mins:01d}:{secs:02d}", True, color)
+        tx = banner_x + banner_w - time_surf.get_width() - 12
+        ty = banner_y + (banner_h - time_surf.get_height()) // 2
+        surface.blit(time_surf, (tx, ty))
+
     # ==================== EPIC VICTORY SEQUENCE ====================
-    
+
     def _trigger_victory_sequence(self, winner_country: str, winner_captain: str) -> None:
         """
         Trigger the epic victory sequence with all effects.
@@ -6326,6 +6294,80 @@ class GameEngine:
             if result['effect'] == 'setback':
                 self.spawn_floating_text(f"STOP a {result.get('target', leader)}!", 0, 0, (255, 100, 80))
         self.screen_shaker.impact_shake()
+
+    # ─── HYPE TIMER ────────────────────────────────────────────────────────────
+
+    def _update_hype_timer(self) -> None:
+        """Update Hype Timer state each frame — prints host cue and fires disaster."""
+        elapsed = time.time() - self._hype_timer_start
+        remaining = HYPE_TIMER_INTERVAL - elapsed
+
+        # 30s host cue (once per cycle)
+        if remaining <= HYPE_TIMER_HOST_CUE_SECS and not self._hype_cue_printed:
+            self._hype_cue_printed = True
+            print(f"\n{'='*50}")
+            print(f"  ⚡ HYPE CUE: DISASTER IN {int(remaining)}s — START HYPING! ⚡")
+            print(f"{'='*50}\n")
+
+        # Zero — trigger disaster once
+        if remaining <= 0 and not self._hype_timer_fired:
+            self._hype_timer_fired = True
+            asyncio.create_task(self._trigger_hype_disaster())
+
+        # Reset for next cycle (1s grace lets task start cleanly)
+        if remaining <= -1.0:
+            self._hype_timer_start = time.time()
+            self._hype_timer_fired = False
+            self._hype_cue_printed = False
+
+    async def _trigger_hype_disaster(self) -> None:
+        """Periodic guaranteed disaster — bigger than any autopilot action."""
+        countries = list(self.physics_world.racers.keys())
+        if not countries:
+            return
+
+        COLORS = [(255, 50, 50), (255, 200, 0), (255, 100, 255), (0, 200, 255)]
+
+        # 1. Massive screen shake
+        self.screen_shaker.shake(intensity=35, duration=2.0, decay=True)
+
+        # 2. All racers explode simultaneously
+        for country in countries:
+            racer = self.physics_world.racers[country]
+            pos = (float(racer.body.position.x), float(racer.body.position.y))
+            self.emit_explosion(pos=pos, color=random.choice(COLORS), count=25, power=2.5)
+
+        # 3. Warp + Tension background for 8s
+        if self.background_manager:
+            self.background_manager.activate_warp_mode()
+            self.background_manager.activate_tension_mode()
+
+        # 4. "CAOS TOTAL" floating text
+        self.spawn_floating_text("💥 CAOS TOTAL 💥", 0, 0, (255, 50, 50))
+
+        await asyncio.sleep(8.0)
+        if self.background_manager:
+            self.background_manager.deactivate_warp_mode()
+            self.background_manager.deactivate_tension_mode()
+
+        # 5. 2 Pesa setbacks on top leaders after 1s
+        await asyncio.sleep(1.0)
+        lb = self.physics_world.get_leaderboard()
+        for _, leader_country, *_ in lb[:2]:
+            if not self.physics_world.race_finished:
+                self.physics_world.apply_gift_effect("Pesa", leader_country)
+                self.screen_shaker.impact_shake()
+                await asyncio.sleep(0.3)
+
+        # 6. Second explosion wave
+        await asyncio.sleep(1.5)
+        sample = random.sample(countries, min(4, len(countries)))
+        for country in sample:
+            racer = self.physics_world.racers.get(country)
+            if racer:
+                pos = (float(racer.body.position.x), float(racer.body.position.y))
+                self.emit_explosion(pos=pos, color=(255, 255, 100), count=20, power=1.8)
+        self.screen_shaker.shake(intensity=20, duration=0.8, decay=True)
 
     async def _autopilot_terremoto(self) -> None:
         """Global earthquake: all flags explode simultaneously, 2 random countries get setback."""

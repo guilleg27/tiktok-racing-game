@@ -119,19 +119,6 @@ COMBO_WINDOW = 5.0      # seconds — rolling window for combo counting
 COMBO_THRESHOLD = 3     # minimum gifts in window to trigger "COMBO!" display
 ON_FIRE_THRESHOLD = 10  # minimum gifts in window to trigger "ON FIRE" state
 
-# Ghost Participation System (keeps race alive during inactivity)
-# ⚠️  WARNING — FAKE ENGAGEMENT RISK
-# GHOST_MODE_ENABLED must remain False whenever the game is connected to a real TikTok
-# Live stream.  Enabling it in production generates synthetic votes that are
-# indistinguishable from real user activity, which violates TikTok's Community
-# Guidelines and can result in an immediate account ban.
-# Only enable in --idle / local-only mode for internal testing.
-GHOST_MODE_ENABLED = False
-GHOST_INACTIVITY_THRESHOLD = 12.0  # Seconds without real activity before ghosts activate
-GHOST_VOTE_INTERVAL_MIN = 4.0  # Min seconds between ghost votes
-GHOST_VOTE_INTERVAL_MAX = 7.0  # Max seconds between ghost votes
-GHOST_DISABLE_AFTER_REAL_ACTIVITY = 20.0  # Seconds to disable ghosts after real event
-
 # ---------------------------------------------------------------------------
 # Auto-Pilot (Chaos Loop) — visual activity during stream inactivity
 # Never injects fake events or writes to DB — direct physics/visual calls only
@@ -144,6 +131,12 @@ AUTOPILOT_INTERVAL_SIGMA       = 1.5    # Gaussian std-dev for action interval (
 AUTOPILOT_MIN_INTERVAL         = 3.0    # Minimum seconds between chaos actions
 AUTOPILOT_MAX_INTERVAL         = 9.0    # Maximum seconds between chaos actions
 AUTOPILOT_NEW_RACE_DELAY       = 7.0    # Wait before new race after autopilot victory
+
+# ─── HYPE TIMER (Disaster Countdown) ────────────────────────────────────────
+HYPE_TIMER_ENABLED          = True
+HYPE_TIMER_INTERVAL         = 120.0   # seconds between disasters (2 min)
+HYPE_TIMER_URGENCY_SECS     = 10.0    # below this → red/flashing
+HYPE_TIMER_HOST_CUE_SECS    = 30.0   # console cue for streamer
 
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
