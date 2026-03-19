@@ -588,6 +588,12 @@ class GameEngine:
         self.victory_flash_alpha = 0.0  # 0.0 = no flash, 255.0 = full white
         self.victory_flash_duration = 0.3  # Seconds to fade out
         self.victory_flash_time = 0.0  # Time elapsed since flash started
+
+        # Hype Disaster flash (full-screen crimson burst on detonation)
+        self._disaster_flash_alpha: float = 0.0
+        self._disaster_flash_time: float = 0.0
+        self._disaster_flash_dur: float = 0.6   # seconds to fade
+        self._disaster_title_timer: float = 0.0  # counts down from 2.5s
         
         # 🏆 EPIC VICTORY SEQUENCE
         self.victory_sequence_active = False
@@ -2342,6 +2348,19 @@ class GameEngine:
             # 🎤 Check for overtakes and close races (TTS announcements)
             self._check_race_events(dt)
         
+        # Update disaster flash + title card
+        if self._disaster_flash_alpha > 0:
+            self._disaster_flash_time += dt
+            progress = self._disaster_flash_time / self._disaster_flash_dur
+            if progress >= 1.0:
+                self._disaster_flash_alpha = 0.0
+                self._disaster_flash_time = 0.0
+            else:
+                self._disaster_flash_alpha = 220.0 * (1.0 - progress)
+
+        if self._disaster_title_timer > 0:
+            self._disaster_title_timer -= dt
+
         # Update victory flash effect (fade out) - non-blocking, runs independently
         if self.victory_flash_alpha > 0:
             self.victory_flash_time += dt
@@ -2560,6 +2579,12 @@ class GameEngine:
             _overlay.fill((0, 0, 0, 160))
             self.render_surface.blit(_overlay, (0, 0))
             self._render_global_ranking_futuristic()
+
+        # Render disaster flash + title card (crimson burst on hype detonation)
+        if self._disaster_flash_alpha > 0:
+            self._render_disaster_flash()
+        if self._disaster_title_timer > 0:
+            self._render_disaster_title()
 
         # Render victory flash effect (white screen flash)
         if self.victory_flash_alpha > 0:
@@ -3877,6 +3902,34 @@ class GameEngine:
         # Blit flash overlay on top of everything
         self.render_surface.blit(flash_surface, (0, 0))
     
+    def _render_disaster_flash(self) -> None:
+        """Full-screen crimson flash that fires on Hype Disaster detonation."""
+        from .config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        if self._disaster_flash_alpha <= 0:
+            return
+        surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
+        surf.fill((220, 30, 30, int(self._disaster_flash_alpha)))
+        self.render_surface.blit(surf, (0, 0))
+
+    def _render_disaster_title(self) -> None:
+        """Centered title card shown for 2.5s after Hype Disaster detonation."""
+        from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+        if self._disaster_title_timer <= 0:
+            return
+        alpha = min(255, int(self._disaster_title_timer * 200))
+        font = _get_font("Arial", 52, bold=True)
+        text_surf = font.render("💥 SAMBA 💥", True, (255, 60, 60))
+        sub_font = _get_font("Arial", 20, bold=False)
+        sub_surf = sub_font.render("TODOS LOS RACERS AFECTADOS", True, (255, 200, 80))
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 0, 0, 140))
+        cx = SCREEN_WIDTH // 2
+        cy = SCREEN_HEIGHT // 2
+        overlay.blit(text_surf, text_surf.get_rect(center=(cx, cy - 20)))
+        overlay.blit(sub_surf, sub_surf.get_rect(center=(cx, cy + 38)))
+        overlay.set_alpha(alpha)
+        self.render_surface.blit(overlay, (0, 0))
+
     def _render_text_enhanced(
         self,
         text: str,
@@ -5658,8 +5711,17 @@ class GameEngine:
         if urgency:
             base_scale = 1.0 + abs(0.12 * math.sin(time.time() * 10))
 
-        # Banner geometry — matches CTA slot exactly
-        banner_w = min(SCREEN_WIDTH - 20, CTA_BANNER_WIDTH)
+        # Measure content to size the box tightly
+        label_font = pygame.font.SysFont("monospace", 15, bold=True)
+        label_surf = label_font.render("SAMBA EN", True, (220, 220, 255))
+        time_font_size = max(22, int(30 * base_scale))
+        time_font = pygame.font.SysFont("monospace", time_font_size, bold=True)
+        time_surf = time_font.render(f"{mins:01d}:{secs:02d}", True, color)
+
+        # Banner geometry — compact width based on content
+        padding = 14
+        gap = 10
+        banner_w = padding + label_surf.get_width() + gap + time_surf.get_width() + padding
         banner_x = (SCREEN_WIDTH - banner_w) // 2
         banner_y = CTA_BANNER_Y
         banner_h = CTA_BANNER_HEIGHT
@@ -5673,18 +5735,13 @@ class GameEngine:
         pygame.draw.rect(surface, color, (banner_x, banner_y, banner_w, banner_h),
                          width=2, border_radius=6)
 
-        # Small label "CAOS EN" — left side, vertically centered
-        label_font = pygame.font.SysFont("monospace", 13, bold=False)
-        label_surf = label_font.render("SHAKE EN", True, (160, 160, 160))
-        lx = banner_x + 12
+        # Label "SAMBA EN" — left side, vertically centered
+        lx = banner_x + padding
         ly = banner_y + (banner_h - label_surf.get_height()) // 2
         surface.blit(label_surf, (lx, ly))
 
         # Big countdown "M:SS" — right side, vertically centered
-        time_font_size = max(22, int(30 * base_scale))
-        time_font = pygame.font.SysFont("monospace", time_font_size, bold=True)
-        time_surf = time_font.render(f"{mins:01d}:{secs:02d}", True, color)
-        tx = banner_x + banner_w - time_surf.get_width() - 12
+        tx = banner_x + banner_w - time_surf.get_width() - padding
         ty = banner_y + (banner_h - time_surf.get_height()) // 2
         surface.blit(time_surf, (tx, ty))
 
@@ -6328,6 +6385,11 @@ class GameEngine:
 
         COLORS = [(255, 50, 50), (255, 200, 0), (255, 100, 255), (0, 200, 255)]
 
+        # Trigger full-screen crimson flash + title card
+        self._disaster_flash_alpha = 220.0
+        self._disaster_flash_time = 0.0
+        self._disaster_title_timer = 2.5
+
         # 1. Massive screen shake
         self.screen_shaker.shake(intensity=35, duration=2.0, decay=True)
 
@@ -6343,7 +6405,7 @@ class GameEngine:
             self.background_manager.activate_tension_mode()
 
         # 4. "CAOS TOTAL" floating text
-        self.spawn_floating_text("💥 CAOS TOTAL 💥", 0, 0, (255, 50, 50))
+        self.spawn_floating_text("💥 SAMBA 💥", 0, 0, (255, 50, 50))
 
         await asyncio.sleep(8.0)
         if self.background_manager:
