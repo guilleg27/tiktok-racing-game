@@ -1227,6 +1227,7 @@ class GameEngine:
                 if mapped_country and mapped_country in self.physics_world.racers:
                     country = mapped_country
                     assignment_type = "gift_map"
+                    self.user_assignments[username] = mapped_country
                 else:
                     country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
             else:
@@ -6184,8 +6185,12 @@ class GameEngine:
             
             return country, "auto_joined_gift"
         
-        # Fall back to original logic
-        return self.assign_country_to_user(username)
+        # No prior vote — assign randomly
+        countries = list(self.physics_world.racers.keys())
+        country = random.choice(countries)
+        self.user_assignments[username] = country
+        logger.info(f"🎲 {username} → {country} (random, no prior vote)")
+        return country, "random"
 
     # ------------------------------------------------------------------
     # 🤖 AUTO-PILOT (CHAOS LOOP)
