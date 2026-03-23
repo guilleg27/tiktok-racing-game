@@ -16,7 +16,7 @@ STRESS_TEST_INTERVAL = 0.5
 GAME_MODE = "COMMENT"  # Change to "GIFT" for traditional mode
 
 # Game settings
-FPS = 60
+FPS = 30  # MotoGP weekend: keep CPU headroom for Live Studio
 MAX_MESSAGES = 15
 MAX_BALLS = 50
 
@@ -62,7 +62,7 @@ SAFE_ZONE_FINISH_RATIO = 0.90  # 90% - finish line avoids Share/Like buttons on 
 RACE_OFFSET_X = int(SCREEN_WIDTH * SAFE_ZONE_LEFT_MARGIN)   # Start after comments zone
 RACE_FINISH_X = int(SCREEN_WIDTH * SAFE_ZONE_FINISH_RATIO)  # Meta avoids right-side buttons
 RACE_START_X = RACE_OFFSET_X
-FLAG_RADIUS = 8          # Reduced for spacious, professional look in safe zone
+FLAG_RADIUS = 12          # Reduced for spacious, professional look in safe zone
 
 # Race countries (used for flag sprites)
 RACE_COUNTRIES = [
@@ -141,13 +141,13 @@ HYPE_TIMER_URGENCY_SECS     = 10.0    # below this → red/flashing
 HYPE_TIMER_HOST_CUE_SECS    = 30.0   # console cue for streamer
 
 # Background colors - Elegant TikTok-style gradient
-GRADIENT_TOP = (25, 30, 60)      # Azul medianoche
-GRADIENT_BOTTOM = (10, 10, 20)   # Casi negro con toque azul
+GRADIENT_TOP = (100, 105, 125)   # Azul pizarra claro
+GRADIENT_BOTTOM = (75, 78, 95)   # Azul pizarra medio
 COLOR_LANE_LINE = (80, 100, 140, 80)  # Líneas azuladas visibles pero sutiles
 
 # Outer background (window margin)
-OUTER_GRADIENT_TOP = (70, 80, 110)
-OUTER_GRADIENT_BOTTOM = (45, 50, 80)
+OUTER_GRADIENT_TOP = (135, 140, 160)
+OUTER_GRADIENT_BOTTOM = (105, 108, 128)
 
 # UI Colors
 COLOR_BACKGROUND = (0, 0, 0)                # Black background (fallback)
@@ -445,3 +445,50 @@ BLACKOUT_RECHARGE_DECREASE  = 35    # Alpha units removed per Rosa recharge
 BLACKOUT_HYPE_INTERVAL      = 30.0  # Seconds between auto-trigger rolls during Hype
 BLACKOUT_HYPE_CHANCE        = 0.05  # 5% chance per interval to auto-trigger
 BLACKOUT_ENABLED            = False  # Set to True to re-enable the blackout event
+
+# ---------------------------------------------------------------------------
+# MotoGP Special Edition — Weekend Mode
+# Set MOTOGP_MODE = False to restore all default behavior.
+# ---------------------------------------------------------------------------
+MOTOGP_MODE = True
+
+# Disable hype timer (samba disaster) in MotoGP edition
+if MOTOGP_MODE:
+    HYPE_TIMER_ENABLED = False
+
+# 1.5x combat force for Rosa advance and Pesa setback
+COMBAT_FORCE_MULTIPLIER = 1.5
+
+# Gate neon motion trails and combo burst particles
+MOTOGP_LITE_PARTICLES = True
+
+# Hype Timer label overrides
+HYPE_TIMER_LABEL = "VUELTA FINAL EN"
+HYPE_DISASTER_TITLE = "🚨 ¡ÚLTIMA VUELTA! MAX CHAOS!"
+
+# ---------------------------------------------------------------------------
+# Gift → Country direct mapping (MotoGP edition)
+# Keys are lowercase + stripped at runtime — include ES and EN variants.
+# ⚠️ = English name unconfirmed; verify via "[Gift raw]" console log in live stream.
+# ---------------------------------------------------------------------------
+MOTOGP_GIFT_COUNTRY_MAP = {
+    # Argentina
+    "rosa": "Argentina",
+    "rose": "Argentina",        # EN confirmed
+    # Brasil
+    "tiktok": "Brasil",
+    # Mexico
+    "creeper": "Mexico",
+    # Colombia
+    "pop": "Colombia",
+    # Chile
+    "cono de helado": "Chile",
+    "ice cream cone": "Chile",  # EN confirmed
+    # Peru
+    "te adoro": "Peru",         # ⚠️ verify EN name via console log
+    "Love you so much": "Peru",
+    # Venezuela
+    "maracas": "Venezuela",     # ⚠️ verify EN name via console log
+    # Uruguay
+    "gg": "Uruguay",
+}
