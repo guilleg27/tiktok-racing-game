@@ -61,6 +61,11 @@ from .config import (
     HYPE_TIMER_INTERVAL,
     HYPE_TIMER_URGENCY_SECS,
     HYPE_TIMER_HOST_CUE_SECS,
+    MOTOGP_MODE,
+    MOTOGP_LITE_PARTICLES,
+    MOTOGP_GIFT_COUNTRY_MAP,
+    HYPE_TIMER_LABEL,
+    HYPE_DISASTER_TITLE,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -735,7 +740,7 @@ class GameEngine:
         self._perf_log_interval = 10.0  # Log performance every 10 seconds
         self._last_perf_log_time: float = time.time()
         self._low_fps_start_time: Optional[float] = None  # When low FPS started
-        self._low_fps_threshold = 40.0  # FPS threshold for lag warning
+        self._low_fps_threshold = float(FPS) * 0.6  # 18.0 @ 30 FPS, 36.0 @ 60 FPS
         self._low_fps_duration_threshold = 2.0  # Seconds of low FPS before warning
         self._frame_count = 0
         self._last_fps_check_time = time.time()
@@ -804,7 +809,7 @@ class GameEngine:
             )
             logger.info(f"🔧 Config loaded: {ACTUAL_WIDTH}x{ACTUAL_HEIGHT}")
             
-            pygame.display.set_caption("TikTokGameWindow")
+            pygame.display.set_caption("Moto Race")
             logger.info("🔧 Caption set")
             
             # Display flags: double buffer + hardware surface for smooth 60 FPS; SCALED for high-DPI
@@ -1215,7 +1220,18 @@ class GameEngine:
             username = self.sanitize_username(event.username)
             
             # SMART COUNTRY ASSIGNMENT
-            country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
+            # MOTOGP: si el regalo está mapeado a un país, ese país avanza directamente
+            if MOTOGP_MODE:
+                gift_key = gift_name.strip().lower()
+                mapped_country = MOTOGP_GIFT_COUNTRY_MAP.get(gift_key)
+                if mapped_country and mapped_country in self.physics_world.racers:
+                    country = mapped_country
+                    assignment_type = "gift_map"
+                    self.user_assignments[username] = mapped_country
+                else:
+                    country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
+            else:
+                country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
             
             # 🏆 CAPTAIN SYSTEM: Track points
             self._update_captain_points(username, country, diamond_count)
@@ -2234,8 +2250,9 @@ class GameEngine:
                 self.spotlight_current_pos[1] + (self.spotlight_target_pos[1] - self.spotlight_current_pos[1]) * lerp_factor
             )
             
-            # 🌈 Update motion trails for ON FIRE countries
-            self._update_motion_trails(dt)
+            # 🌈 Update motion trails for ON FIRE countries (disabled in lite-particle mode)
+            if not MOTOGP_LITE_PARTICLES:
+                self._update_motion_trails(dt)
             
             # Update combo flashes
             self._update_combo_flashes(dt)
@@ -2430,7 +2447,8 @@ class GameEngine:
 
         self._render_balls()
         self._render_trails()  # Render trails before particles (behind)
-        self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
+        if not MOTOGP_LITE_PARTICLES:
+            self._render_motion_trails()  # 🌈 Neon motion trails for ON FIRE state
         self._render_particles()
         self._render_meteors()
         self._render_floating_texts()
@@ -2442,7 +2460,7 @@ class GameEngine:
             self._render_header()
         # Draw CTA first (when COMMENT+RACING) so likes bar hint "Dale like o tap..." is drawn on top and visible
         from .config import GAME_MODE
-        if GAME_MODE == "COMMENT" and self.game_state == 'RACING' and not HYPE_TIMER_ENABLED:
+        if GAME_MODE == "COMMENT" and self.game_state == 'RACING' and not HYPE_TIMER_ENABLED and not MOTOGP_MODE:
             self._draw_permanent_cta(self.render_surface)
         self._render_likes_bar()
         self._render_leaderboard()
@@ -2842,6 +2860,10 @@ class GameEngine:
         leader_info = self.physics_world.get_leader()
         current_leader = leader_info[0] if leader_info else None
         
+        # 🏍️ Fixed neon lane labels (behind everything)
+        if MOTOGP_MODE:
+            self._render_neon_lane_labels()
+
         # 🌟 Render leader spotlight FIRST (behind the leader flag)
         if current_leader and current_leader in self.physics_world.racers and not winner:
             self._render_leader_spotlight(self.physics_world.racers[current_leader])
@@ -2859,6 +2881,10 @@ class GameEngine:
             winner_racer = self.physics_world.racers[winner]
             self._render_winner_spotlight(winner_racer)
             self._render_racer(winner_racer, is_winner=True)
+
+        # 🏍️ Podium tags at lane start (MOTOGP_MODE only)
+        if MOTOGP_MODE and not winner:
+            self._render_podium_tags()
     
     def _render_leader_spotlight(self, racer) -> None:
         """
@@ -2926,7 +2952,7 @@ class GameEngine:
         """Render a single racer flag with ON FIRE jitter effect."""
         x = racer.body.position.x
         y = racer.body.position.y + (racer.y_offset if hasattr(racer, 'y_offset') else 0.0)
-        radius = racer.shape.radius
+        radius = racer.draw_radius
         angle = racer.body.angle
 
         # Sanitize position values
@@ -2981,50 +3007,106 @@ class GameEngine:
             timer_surf = timer_font.render(f"{remaining:.1f}s", True, (180, 235, 255))
             self.render_surface.blit(timer_surf, (ix - timer_surf.get_width() // 2, iy - ir - 16))
 
-        # Draw number on LEFT and abbreviation on RIGHT of the flag
-        # ix/iy already computed above
-        
-        # Get country number (1-12 based on lane position)
-        country_number = racer.lane + 1  # Lanes are 0-indexed
-        
-        # Get country abbreviation
-        country_abbrev = self._get_country_abbrev(racer.country)
-        
-        # Font for labels
-        label_font = _get_font("Arial", 11, bold=True)
-
-        # === NUMBER on LEFT side ===
-        number_x = ix - radius - 18  # To the left of flag edge
-        number_y = iy
-        
-        # Number with yellow color for visibility
-        number_surface = self._render_text_enhanced(
-            str(country_number),
-            label_font,
-            (255, 255, 100),  # Yellow for numbers
-            outline_color=(0, 0, 0),
-            outline_width=1
-        )
-        number_rect = number_surface.get_rect(center=(number_x, number_y))
-        self.render_surface.blit(number_surface, number_rect)
-        
-        # === ABBREVIATION on RIGHT side ===
-        abbrev_x = ix + radius + 20  # To the right of flag edge
-        abbrev_y = iy
-        
-        # Abbreviation with country color
-        abbrev_surface = self._render_text_enhanced(
-            country_abbrev,
-            label_font,
-            racer.color,  # Use country's color
-            outline_color=(0, 0, 0),
-            outline_width=1
-        )
-        abbrev_rect = abbrev_surface.get_rect(center=(abbrev_x, abbrev_y))
-        self.render_surface.blit(abbrev_surface, abbrev_rect)
-
         # 👑 CAPTAIN LABEL
         self._render_captain_label(racer, ix, iy)
+
+    def _render_neon_lane_labels(self) -> None:
+        """Render fixed country name labels centered horizontally in each lane with 80s neon glow."""
+        label_x = SCREEN_WIDTH // 2
+        font = _get_font("Arial", 10, bold=True)
+        # Subtle flicker: fast sine at 7 Hz, range 85%–100% brightness
+        flicker = 0.85 + 0.15 * math.sin(self.leader_glow_time * 7.3)
+
+        for country, racer in self.physics_world.get_racers().items():
+            lane_y = int(racer.body.position.y + (racer.y_offset if hasattr(racer, 'y_offset') else 0.0))
+            neon_col = racer.color
+
+            # Measure text
+            text_w, text_h = font.size(country)
+            pad_x, pad_y = 8, 3
+            pill_w = text_w + pad_x * 2
+            pill_h = text_h + pad_y * 2
+            margin = 14  # room for outermost glow halo
+
+            surf_w = pill_w + margin * 2
+            surf_h = pill_h + margin * 2
+            s = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
+            cx, cy = surf_w // 2, surf_h // 2
+
+            # Neon glow layers: outermost (diffuse) → innermost (bright rim)
+            for extra, base_alpha in ((12, 18), (8, 38), (5, 65), (3, 105)):
+                alpha = int(base_alpha * flicker)
+                glow_rect = pygame.Rect(
+                    cx - pill_w // 2 - extra,
+                    cy - pill_h // 2 - extra,
+                    pill_w + extra * 2,
+                    pill_h + extra * 2,
+                )
+                pygame.draw.rect(s, (*neon_col, alpha), glow_rect,
+                                 border_radius=pill_h // 2 + extra)
+
+            # Dark translucent pill background
+            bg_rect = pygame.Rect(cx - pill_w // 2, cy - pill_h // 2, pill_w, pill_h)
+            pygame.draw.rect(s, (8, 4, 20, 200), bg_rect, border_radius=pill_h // 2)
+
+            # Bright neon border line
+            border_alpha = int(210 * flicker)
+            pygame.draw.rect(s, (*neon_col, border_alpha), bg_rect,
+                             width=1, border_radius=pill_h // 2)
+
+            # Text boosted toward white for neon look
+            bright = tuple(min(255, c + 110) for c in neon_col)
+            text_surf = font.render(country, True, bright)
+            s.blit(text_surf, (cx - text_w // 2, cy - text_h // 2))
+
+            self.render_surface.blit(s, (label_x - surf_w // 2, lane_y - surf_h // 2))
+
+    def _render_podium_tags(self) -> None:
+        """Render '1st/2nd/3rd' gold/silver/bronze badges fixed at the start of each podium lane."""
+        lb = self.physics_world.get_leaderboard()[:3]
+        podium = [
+            ("1st", (255, 215,   0), (255, 245, 180)),  # gold
+            ("2nd", (192, 192, 192), (230, 230, 230)),  # silver
+            ("3rd", (176, 107,  42), (220, 165, 100)),  # bronze
+        ]
+        tag_x = max(4, self.physics_world.start_x - 18)
+        font = _get_font("Arial", 11, bold=True)
+        pulse = 0.7 + 0.3 * math.sin(self.leader_glow_time * 4.0)
+
+        for (label, glow_col, text_col), (_, country, *_rest) in zip(podium, lb):
+            racer = self.physics_world.racers.get(country)
+            if racer is None:
+                continue
+            y = float(racer.body.position.y) + (racer.y_offset if hasattr(racer, 'y_offset') else 0.0)
+            tag_y = int(y)
+
+            text_w, text_h = font.size(label)
+            pad_x, pad_y = 5, 2
+            badge_w = text_w + pad_x * 2
+            badge_h = text_h + pad_y * 2
+            margin = 6
+
+            s = pygame.Surface((badge_w + margin * 2, badge_h + margin * 2), pygame.SRCALPHA)
+            cx, cy = (badge_w + margin * 2) // 2, (badge_h + margin * 2) // 2
+
+            # Outer glow
+            for extra, base_a in ((6, 30), (4, 60), (2, 100)):
+                a = int(base_a * pulse)
+                gr = pygame.Rect(cx - badge_w // 2 - extra, cy - badge_h // 2 - extra,
+                                 badge_w + extra * 2, badge_h + extra * 2)
+                pygame.draw.rect(s, (*glow_col, a), gr, border_radius=badge_h // 2 + extra)
+
+            # Dark pill background
+            br = pygame.Rect(cx - badge_w // 2, cy - badge_h // 2, badge_w, badge_h)
+            pygame.draw.rect(s, (20, 12, 0, 210), br, border_radius=badge_h // 2)
+            pygame.draw.rect(s, (*glow_col, int(220 * pulse)), br, width=1, border_radius=badge_h // 2)
+
+            # Text
+            text_surf = font.render(label, True, text_col)
+            s.blit(text_surf, (cx - text_w // 2, cy - text_h // 2))
+
+            self.render_surface.blit(s, (tag_x - (badge_w + margin * 2) // 2,
+                                         tag_y - (badge_h + margin * 2) // 2))
 
     def _render_captain_label(self, racer, flag_x: int, flag_y: int) -> None:
         """
@@ -3126,6 +3208,8 @@ class GameEngine:
 
     def _render_header(self) -> None:
         """Render header with leader info and drop shadow for visibility."""
+        if MOTOGP_MODE:
+            return  # Leader tag rendered inline in _render_balls instead
         off = self._hud_offset
 
         # Leader info
@@ -3287,7 +3371,7 @@ class GameEngine:
         x = float(raw_x) if math.isfinite(raw_x) else self.physics_world.start_x
         y = float(raw_y) if math.isfinite(raw_y) else (winner_racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2)
         
-        raw_radius = winner_racer.shape.radius * self.winner_scale_pulse
+        raw_radius = winner_racer.draw_radius * self.winner_scale_pulse
         radius = float(raw_radius) if math.isfinite(raw_radius) else 30.0
 
         # Glow rings
@@ -3833,7 +3917,7 @@ class GameEngine:
             return
         alpha = min(255, int(self._disaster_title_timer * 200))
         font = _get_font("Arial", 52, bold=True)
-        text_surf = font.render("SAMBA", True, (50, 220, 80))
+        text_surf = font.render(HYPE_DISASTER_TITLE, True, (50, 220, 80))
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 40, 10, 130))
         cx = SCREEN_WIDTH // 2
@@ -4181,7 +4265,7 @@ class GameEngine:
         """
         Render the likes goal bar below the CTA banner and above the first lane.
         TikTok-style gradient (orange to pink), thin and elegant.
-        Text: 'PRÓXIMO EVENTO: LLUVIA DE METEORITOS (actual/meta)'.
+        Text: 'PRÓXIMO NITRO BOOST (actual/meta)'.
         """
         from .config import GAME_MODE, CTA_BANNER_Y, CTA_BANNER_HEIGHT, LIKES_BAR_HEIGHT
         bar_height = LIKES_BAR_HEIGHT
@@ -4190,7 +4274,7 @@ class GameEngine:
         progress = min(1.0, self.current_likes / self.likes_goal) if self.likes_goal > 0 else 0.0
 
         label_font = _get_font("Arial Black", 12, bold=False)
-        label = f"PRÓXIMA LLUVIA DE METEORITOS ({self.current_likes}/{self.likes_goal})"
+        label = f"PRÓXIMO NITRO BOOST ({self.current_likes}/{self.likes_goal})"
         label_surf = label_font.render(label, True, (255, 255, 255))
 
         if GAME_MODE == "COMMENT" and self.game_state == "RACING":
@@ -5632,7 +5716,7 @@ class GameEngine:
 
         # Measure content to size the box tightly
         label_font = pygame.font.SysFont("monospace", 15, bold=True)
-        label_surf = label_font.render("SAMBA EN", True, (220, 220, 255))
+        label_surf = label_font.render(HYPE_TIMER_LABEL, True, (220, 220, 255))
         time_font_size = max(22, int(30 * base_scale))
         time_font = pygame.font.SysFont("monospace", time_font_size, bold=True)
         time_surf = time_font.render(f"{mins:01d}:{secs:02d}", True, color)
@@ -6101,8 +6185,12 @@ class GameEngine:
             
             return country, "auto_joined_gift"
         
-        # Fall back to original logic
-        return self.assign_country_to_user(username)
+        # No prior vote — assign randomly
+        countries = list(self.physics_world.racers.keys())
+        country = random.choice(countries)
+        self.user_assignments[username] = country
+        logger.info(f"🎲 {username} → {country} (random, no prior vote)")
+        return country, "random"
 
     # ------------------------------------------------------------------
     # 🤖 AUTO-PILOT (CHAOS LOOP)
@@ -6188,15 +6276,26 @@ class GameEngine:
         if not self._autopilot_active or self.physics_world.race_finished:
             return
 
-        POOL = [
-            (25, "particles",    self._autopilot_particle_chaos),
-            (20, "combat",       self._autopilot_combat_event),
-            (20, "terremoto",    self._autopilot_terremoto),
-            (15, "arcoiris",     self._autopilot_arcoiris),
-            (10, "tormenta",     self._autopilot_tormenta),
-            (10, "destello",     self._autopilot_destello),
-            (10, "lunar",        self._autopilot_lunar_event),
-        ]
+        if MOTOGP_MODE:
+            POOL = [
+                (10, "particles",    self._autopilot_particle_chaos),  # 25 → 10
+                (45, "combat",       self._autopilot_combat_event),    # 20 → 45
+                (30, "terremoto",    self._autopilot_terremoto),       # 20 → 30
+                ( 5, "arcoiris",     self._autopilot_arcoiris),        # 15 → 5
+                (10, "tormenta",     self._autopilot_tormenta),
+                (10, "destello",     self._autopilot_destello),
+                (10, "lunar",        self._autopilot_lunar_event),
+            ]
+        else:
+            POOL = [
+                (25, "particles",    self._autopilot_particle_chaos),
+                (20, "combat",       self._autopilot_combat_event),
+                (20, "terremoto",    self._autopilot_terremoto),
+                (15, "arcoiris",     self._autopilot_arcoiris),
+                (10, "tormenta",     self._autopilot_tormenta),
+                (10, "destello",     self._autopilot_destello),
+                (10, "lunar",        self._autopilot_lunar_event),
+            ]
 
         recent = set(self._autopilot_recent_actions)
         available = [(w, n, fn) for w, n, fn in POOL if n not in recent] or POOL

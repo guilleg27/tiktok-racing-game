@@ -188,6 +188,7 @@ class TikTokManager:
                     gift_proto = getattr(event._proto, 'gift', None)
                     if gift_proto:
                         gift_name = getattr(gift_proto, 'name', None) or "Regalo"
+                        logger.info("[Gift raw] %r", gift_name)
                 elif hasattr(event, 'gift') and event.gift:
                     try:
                         gift_name = event.gift.name
