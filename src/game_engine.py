@@ -549,6 +549,9 @@ class GameEngine:
         self.winner_scale_pulse = 1.0
         self.winner_glow_alpha = 0
         
+        # MOTOGP gift cycle test index (M key)
+        self._motogp_gift_cycle_idx = 0
+
         # Auto stress test system
         self.stress_test_timer = 0.0
         self.frame_count = 0
@@ -1165,7 +1168,7 @@ class GameEngine:
             from .config import AUTOPILOT_COOLDOWN_AFTER_REAL
             self._autopilot_active = False
             self._autopilot_resume_after = now + AUTOPILOT_COOLDOWN_AFTER_REAL
-            logger.info("[AutoPilot] DEACTIVATED by real activity — resumes in %.0fs",
+            logger.debug("[AutoPilot] DEACTIVATED by real activity — resumes in %.0fs",
                         AUTOPILOT_COOLDOWN_AFTER_REAL)
 
     # Max events to process per frame to avoid backlog causing a single frame to stall
@@ -1229,12 +1232,16 @@ class GameEngine:
                     assignment_type = "gift_map"
                     self.user_assignments[username] = mapped_country
                 else:
+                    logger.warning(
+                        f"[MOTOGP] Regalo '{gift_name}' (key='{gift_key}') no está en "
+                        f"MOTOGP_GIFT_COUNTRY_MAP — asignando país por usuario"
+                    )
                     country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
             else:
                 country, assignment_type = self._get_user_country_with_autojoin(username, gift_name)
             
-            # 🏆 CAPTAIN SYSTEM: Track points
-            self._update_captain_points(username, country, diamond_count)
+            # 🏆 CAPTAIN SYSTEM: Track points (full combo value)
+            self._update_captain_points(username, country, diamond_count * gift_count)
 
             # 🔥 HYPE: Register engagement event
             self.hype_manager.register_event()
@@ -1243,13 +1250,14 @@ class GameEngine:
             for _ in range(min(gift_count, 5)):  # Cap at 5 to prevent abuse
                 self.register_combo_event(country)
 
-            logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | regalo: {gift_name}")
-            
-            # Apply impulse to country's flag
+            total_diamonds = diamond_count * gift_count
+            logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | {gift_name} x{gift_count} = {total_diamonds}💎")
+
+            # Apply impulse to country's flag (full combo value)
             success, was_frozen = self.physics_world.apply_gift_impulse(
                 country=country,
                 gift_name=gift_name,
-                diamond_count=diamond_count
+                diamond_count=total_diamonds
             )
 
             if success:
@@ -1418,9 +1426,9 @@ class GameEngine:
             self._on_real_activity()
             # TRANSICIÓN: IDLE -> RACING al primer comentario (incluso sin shortcut)
             if self.game_state == 'IDLE':
-                logger.info(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
+                logger.debug(f"🏁 First comment received from {event.username}: '{event.content}' - Starting race!")
                 self._transition_to_racing()
-                logger.info("🏁 Game state: RACING (first comment received!)")
+                logger.debug("🏁 Game state: RACING (first comment received!)")
             
             # Display comment in message log
             message = event.format_message()
@@ -1448,7 +1456,7 @@ class GameEngine:
                 return
             else:
                 # User wants to switch teams
-                logger.info(f"🔄 {username} switching from {current_country} to {requested_country}")
+                logger.debug(f"🔄 {username} switching from {current_country} to {requested_country}")
         
         # Anti-spam check
         import time
@@ -1480,7 +1488,7 @@ class GameEngine:
             (220, 220, 220)
         )
         
-        logger.info(f"✅ {username} joined {requested_country} (keyword: {keyword})")
+        logger.debug(f"✅ {username} joined {requested_country} (keyword: {keyword})")
 
     def _handle_user_join(self, username: str) -> None:
         """
@@ -1565,7 +1573,7 @@ class GameEngine:
         # TRANSICIÓN: IDLE -> RACING al primer voto
         if self.game_state == 'IDLE':
             self._transition_to_racing()
-            logger.info("🏁 Game state: RACING (first vote received!)")
+            logger.debug("🏁 Game state: RACING (first vote received!)")
         
         username = self.sanitize_username(event.username)
         country = event.content
@@ -1682,7 +1690,7 @@ class GameEngine:
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
+                        logger.debug("🏁 Game state: RACING (test mode)")
 
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
@@ -1696,13 +1704,13 @@ class GameEngine:
                     self._on_real_activity()
                     self.hype_manager.register_event()
 
-                    logger.info(f"TEST: {country} received 5x Rosa (combo test)")
+                    logger.debug(f"TEST: {country} received 5x Rosa (combo test)")
                     
                 elif event.key == pygame.K_y:  # Y = Test Big Gift
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
+                        logger.debug("🏁 Game state: RACING (test mode)")
 
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
@@ -1716,15 +1724,35 @@ class GameEngine:
                     self._on_real_activity()
                     self.hype_manager.register_event()
 
-                    logger.info(f"TEST BIG: {country} received {diamonds}💎")
+                    logger.debug(f"TEST BIG: {country} received {diamonds}💎")
+
+                elif event.key == pygame.K_m:  # M = Test next MOTOGP mapped gift (cycles)
+                    if self.game_state == 'IDLE':
+                        self._transition_to_racing()
+                        logger.debug("🏁 Game state: RACING (test mode)")
+                    gift_entries = list(MOTOGP_GIFT_COUNTRY_MAP.items())
+                    idx = self._motogp_gift_cycle_idx % len(gift_entries)
+                    test_gift_key, target_country = gift_entries[idx]
+                    self._motogp_gift_cycle_idx += 1
+                    self.queue.put_nowait(GameEvent(
+                        type=EventType.GIFT,
+                        username=f"test_{target_country.lower()}",
+                        content=test_gift_key,
+                        extra={"diamond_count": 50, "count": 1},
+                    ))
+                    self._on_real_activity()
+                    logger.debug(
+                        f"[TEST MOTOGP] ({idx + 1}/{len(gift_entries)}) "
+                        f"Enviado regalo '{test_gift_key}' → país esperado: {target_country}"
+                    )
 
                 elif event.key == pygame.K_1:  # 1 = Test Vote/Rosa (depends on mode)
                     from .config import GAME_MODE
-                    
+
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
+                        logger.debug("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
@@ -1742,13 +1770,13 @@ class GameEngine:
                         
                         try:
                             self.queue.put_nowait(vote_event)
-                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                            logger.debug(f"TEST VOTE: {test_username} → {country}")
                         except Exception as e:
                             logger.error(f"Error adding test vote: {e}")
                     else:
                         # Test Rosa effect (GIFT mode)
                         result = self.physics_world.apply_gift_effect("Rosa", country)
-                        logger.info(f"TEST ROSA: {country}")
+                        logger.debug(f"TEST ROSA: {country}")
                         
                         # Spawn floating text
                         if result['effect'] == 'advance':
@@ -1766,7 +1794,7 @@ class GameEngine:
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
+                        logger.debug("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
@@ -1784,13 +1812,13 @@ class GameEngine:
                         
                         try:
                             self.queue.put_nowait(vote_event)
-                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                            logger.debug(f"TEST VOTE: {test_username} → {country}")
                         except Exception as e:
                             logger.error(f"Error adding test vote: {e}")
                     else:
                         # Test Pesa effect (GIFT mode)
                         result = self.physics_world.apply_gift_effect("Pesa", country)
-                        logger.info(f"TEST PESA: attacking leader")
+                        logger.debug(f"TEST PESA: attacking leader")
                         
                         # Spawn floating text on the affected target (leader)
                         if result['effect'] == 'setback':
@@ -1810,7 +1838,7 @@ class GameEngine:
                     # CAMBIAR A RACING SI ESTÁ EN IDLE
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
-                        logger.info("🏁 Game state: RACING (test mode)")
+                        logger.debug("🏁 Game state: RACING (test mode)")
     
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
@@ -1828,14 +1856,14 @@ class GameEngine:
                         
                         try:
                             self.queue.put_nowait(vote_event)
-                            logger.info(f"TEST VOTE: {test_username} → {country}")
+                            logger.debug(f"TEST VOTE: {test_username} → {country}")
                         except Exception as e:
                             logger.error(f"Error adding test vote: {e}")
                     else:
                         # Test Helado effect (GIFT mode)
                         from .config import FLOATING_TEXT_TOP_Y
                         result = self.physics_world.apply_gift_effect("Helado", country)
-                        logger.info(f"TEST HELADO: freezing leader")
+                        logger.debug(f"TEST HELADO: freezing leader")
 
                         if result['effect'] == 'freeze':
                             target = result['target']
@@ -1893,7 +1921,7 @@ class GameEngine:
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
                     self._activate_lunar_gravity()
-                    logger.info("[LUNAR] Manually triggered via key S")
+                    logger.debug("[LUNAR] Manually triggered via key S")
 
                 elif event.key == pygame.K_o:  # O = Toggle Blackout Mode (test)
                     if self.blackout_active:
@@ -1910,18 +1938,18 @@ class GameEngine:
                     if not self._autopilot_enabled:
                         self._autopilot_active = False
                     status = "ON" if self._autopilot_enabled else "OFF"
-                    logger.info("[AutoPilot] Toggled: %s", status)
+                    logger.debug("[AutoPilot] Toggled: %s", status)
                     self.spawn_floating_text(f"Auto-Pilot {status}", 0, 0, (0, 200, 255))
 
                 elif event.key == pygame.K_h:  # H = Toggle ranking panel + refresh
                     self._show_ranking_panel = not self._show_ranking_panel
                     if self._show_ranking_panel:
                         asyncio.create_task(self._fetch_global_ranking())
-                    logger.info(f"🏆 Ranking panel: {'ON' if self._show_ranking_panel else 'OFF'}")
+                    logger.debug(f"🏆 Ranking panel: {'ON' if self._show_ranking_panel else 'OFF'}")
 
                 elif event.key == pygame.K_b:  # B = Toggle HUD (Broadcast mode)
                     self.hud_visible = not self.hud_visible
-                    logger.info("📺 HUD: %s", "ON" if self.hud_visible else "OFF")
+                    logger.debug("📺 HUD: %s", "ON" if self.hud_visible else "OFF")
 
                 elif event.key == pygame.K_z:  # disabled
                     pass
@@ -1952,7 +1980,7 @@ class GameEngine:
         if new_captain and new_captain != old_captain:
             self.current_captains[country] = new_captain
             self._announce_new_captain(country, new_captain, old_captain)
-            logger.info(f"👑 NEW CAPTAIN: {new_captain} leads {country} with {self.session_points[country][new_captain]}💎")
+            logger.debug(f"👑 NEW CAPTAIN: {new_captain} leads {country} with {self.session_points[country][new_captain]}💎")
 
     def get_mvp_for_country(self, country: str) -> str:
         """
@@ -2653,7 +2681,7 @@ class GameEngine:
                 self._lunar_timer = max(self._lunar_timer, effective_duration)
                 if self.physics_world and (amplitude is not None or elasticity is not None):
                     self.physics_world.set_lunar_gravity(True, amplitude=amplitude, elasticity=elasticity)
-                logger.info("[LUNAR] Timer extended to %.0fs", self._lunar_timer)
+                logger.debug("[LUNAR] Timer extended to %.0fs", self._lunar_timer)
             return   # either extended or ignored
 
         self._lunar_active = True
@@ -2676,7 +2704,7 @@ class GameEngine:
             self.audio_manager.play_sfx("freeze")
         except Exception:
             pass
-        logger.info("[LUNAR] Lunar Gravity activated (%.0fs)", effective_duration)
+        logger.debug("[LUNAR] Lunar Gravity activated (%.0fs)", effective_duration)
 
     def _deactivate_lunar_gravity(self) -> None:
         """End the Lunar Gravity event and restore normal physics."""
@@ -2694,7 +2722,7 @@ class GameEngine:
             lifespan=120, max_lifespan=120,
             font_size=18, dy=-0.5,
         ))
-        logger.info("[LUNAR] Lunar Gravity deactivated")
+        logger.debug("[LUNAR] Lunar Gravity deactivated")
 
     def _decay_rosa_combos(self) -> None:
         """Remove expired Rosa timestamps and reset multiplier if all combos cleared."""
