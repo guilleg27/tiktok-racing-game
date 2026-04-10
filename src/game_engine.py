@@ -1438,9 +1438,8 @@ class GameEngine:
     
     async def _handle_join_event(self, event: GameEvent) -> None:
         """Handle user joining: either room join (welcome) or team join (keyword)."""
-        # Room join: viewer entered the livestream → Visual Welcome
+        # Room join: viewer entered the livestream — no visual, TikTok handles it natively
         if event.extra and event.extra.get("room_join"):
-            self._handle_user_join(event.username)
             return
 
         # Team join: user joins a country via keyword
@@ -1481,12 +1480,7 @@ class GameEngine:
         racer = self.physics_world.racers[requested_country]
         lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
         
-        self.spawn_floating_text(
-            f"@{username} joined!",
-            100,  # x position (start of lane)
-            lane_y,
-            (220, 220, 220)
-        )
+        # No floating text — TikTok handles join notifications natively
         
         logger.debug(f"✅ {username} joined {requested_country} (keyword: {keyword})")
 
@@ -6199,17 +6193,6 @@ class GameEngine:
             country = gift_country_hints[gift_name]
             self.user_assignments[username] = country
             logger.info(f"🎁 {username} auto-joined {country} via gift {gift_name}")
-            
-            # Visual feedback
-            racer = self.physics_world.racers[country]
-            lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
-            
-            self.spawn_floating_text(
-                f"@{username} joined!",
-                100,
-                lane_y,
-                (255, 215, 0)
-            )
             
             return country, "auto_joined_gift"
         
