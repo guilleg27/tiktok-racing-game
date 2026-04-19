@@ -214,7 +214,51 @@ class CloudManager:
         except Exception as e:
             logger.error(f"❌ Supabase sync error: {e}")
             return False
-    
+
+    async def sync_gift_event(
+        self,
+        session_id: str,
+        username: str,
+        country: str,
+        gift_name: str,
+        diamond_count: int,
+        gift_count: int,
+    ) -> None:
+        """Insert a single gift event for real-time monitoring. Non-blocking."""
+        if not self.enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._sync_gift_event_blocking,
+                session_id, username, country, gift_name, diamond_count, gift_count,
+            )
+        except Exception as e:
+            logger.debug(f"[Monitor] gift sync error: {e}")
+
+    def _sync_gift_event_blocking(
+        self,
+        session_id: str,
+        username: str,
+        country: str,
+        gift_name: str,
+        diamond_count: int,
+        gift_count: int,
+    ) -> None:
+        try:
+            self.client.table("live_gift_events").insert({
+                "session_id":    session_id,
+                "username":      username,
+                "country":       country,
+                "gift_name":     gift_name,
+                "diamond_count": diamond_count,
+                "gift_count":    gift_count,
+            }).execute()
+        except Exception as e:
+            logger.warning(f"[Monitor] gift insert error: {e}")
+
+
     async def get_global_leaderboard(self, limit: int = 10) -> list[Dict[str, Any]]:
         """
         Fetch global hall of fame (top captains).

@@ -433,6 +433,8 @@ class GameEngine:
         self.database = database
         self.cloud_manager = CloudManager()
         self.running = True
+        import uuid
+        self.session_id = str(uuid.uuid4())[:8]
         
         self.messages: list[tuple[str, EventType]] = []
         self.connection_state = ConnectionState.DISCONNECTED
@@ -1253,6 +1255,17 @@ class GameEngine:
             total_diamonds = diamond_count * gift_count
             logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | {gift_name} x{gift_count} = {total_diamonds}💎")
 
+            # Real-time monitor: fire-and-forget INSERT to Supabase
+            if self.cloud_manager.enabled:
+                asyncio.create_task(self.cloud_manager.sync_gift_event(
+                    session_id=self.session_id,
+                    username=username,
+                    country=country,
+                    gift_name=gift_name,
+                    diamond_count=diamond_count,
+                    gift_count=gift_count,
+                ))
+
             # Apply impulse to country's flag (full combo value)
             success, was_frozen = self.physics_world.apply_gift_impulse(
                 country=country,
@@ -1475,12 +1488,6 @@ class GameEngine:
         self.user_assignments[username] = requested_country
         self.last_join_time[username] = current_time
         self._on_real_activity()
-        
-        # Visual feedback: floating text on the country's lane
-        racer = self.physics_world.racers[requested_country]
-        lane_y = self.physics_world.game_area_top + (racer.lane * self.physics_world.lane_height) + (self.physics_world.lane_height // 2)
-        
-        # No floating text — TikTok handles join notifications natively
         
         logger.debug(f"✅ {username} joined {requested_country} (keyword: {keyword})")
 
