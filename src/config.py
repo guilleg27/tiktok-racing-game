@@ -238,6 +238,11 @@ GIFT_DIAMOND_VALUES = {
     "Rosa": 1, "Rose": 1, "rosa": 1,
     "GG": 1, "gg": 1,
     "Ice Cream Cone": 1, "Helado": 1,
+    "TikTok": 1, "tiktok": 1,
+    "Creeper": 1, "creeper": 1,
+    "Pop": 1, "pop": 1,
+    "Maracas": 1, "maracas": 1,
+    "Te adoro": 1, "te adoro": 1, "love you so much": 1,
     
     # 5 diamond gifts
     "Finger Heart": 5, "Corazón con dedos": 5,
@@ -253,9 +258,8 @@ GIFT_DIAMOND_VALUES = {
     "Love you": 25, "Te amo": 25,
     
     # 50+ diamond gifts
-    "TikTok": 50, "tiktok": 50,
     "Cap": 50, "Gorra": 50,
-    "Doughnut": 50, "Dona": 50,
+    "Doughnut": 30, "Rosquilla": 30,
     
     # 100+ diamond gifts
     "Lion": 100, "León": 100,
@@ -486,7 +490,7 @@ MOTOGP_GIFT_COUNTRY_MAP = {
     "ice cream cone": "Chile",  # EN confirmed
     # Peru
     "te adoro": "Peru",         # ⚠️ verify EN name via console log
-    "Love you so much": "Peru",
+    "love you so much": "Peru",
     # Venezuela
     "maracas": "Venezuela",     # ⚠️ verify EN name via console log
     # Uruguay

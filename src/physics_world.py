@@ -255,7 +255,7 @@ class PhysicsWorld:
         was_frozen = self.is_country_frozen(country)
 
         # Direct distance scaling: diamonds = pixels to move
-        distance_per_diamond = 0.8  # Each diamond = 0.8 pixels forward
+        distance_per_diamond = 3.0  # Each diamond = 3.0 pixels forward
         distance = (
             diamond_count
             * distance_per_diamond
