@@ -112,6 +112,7 @@ COUNTRY_ABBREV = {
 
 # Comment mode settings
 COMMENT_POINTS_PER_MESSAGE = 1  # Points awarded per valid comment
+COMMENT_DISTANCE_MULTIPLIER = 0.33  # Distance scale for comment votes vs gifts (lower = harder race)
 COMMENT_COOLDOWN = 1.0  # Seconds between valid comments from same user
 
 # Combo system

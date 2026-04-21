@@ -1568,7 +1568,7 @@ class GameEngine:
         Args:
             event: Vote event with country as content
         """
-        from .config import COMMENT_POINTS_PER_MESSAGE, COMMENT_COOLDOWN
+        from .config import COMMENT_POINTS_PER_MESSAGE, COMMENT_COOLDOWN, COMMENT_DISTANCE_MULTIPLIER
         import time
         
         # TRANSICIÓN: IDLE -> RACING al primer voto
@@ -1615,7 +1615,7 @@ class GameEngine:
         success, _ = self.physics_world.apply_gift_impulse(
             country=country,
             gift_name="Vote",
-            diamond_count=COMMENT_POINTS_PER_MESSAGE
+            diamond_count=COMMENT_POINTS_PER_MESSAGE * COMMENT_DISTANCE_MULTIPLIER
         )
 
         if success:
@@ -1727,7 +1727,7 @@ class GameEngine:
 
                     logger.debug(f"TEST BIG: {country} received {diamonds}💎")
 
-                elif event.key == pygame.K_m:  # M = Test next MOTOGP mapped gift (cycles)
+                elif event.key == pygame.K_p:  # P = Test next MOTOGP mapped gift (cycles)
                     if self.game_state == 'IDLE':
                         self._transition_to_racing()
                         logger.debug("🏁 Game state: RACING (test mode)")
@@ -1930,9 +1930,6 @@ class GameEngine:
                         self.blackout_alpha = 0
                     else:
                         self._activate_blackout()
-
-                elif event.key == pygame.K_p:  # disabled
-                    pass
 
                 elif event.key == pygame.K_a:  # A = Toggle Auto-Pilot
                     self._autopilot_enabled = not self._autopilot_enabled
