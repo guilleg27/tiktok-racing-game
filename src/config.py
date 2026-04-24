@@ -410,7 +410,10 @@ WELCOME_FONT_SIZE = 16           # Compact, non-intrusive
 
 # Likes goal bar (retention mechanic - Meteor Shower event)
 LIKES_GOAL_INITIAL = 500       # First goal; doubles after each Meteor Shower
-LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key (no real API yet)
+LIKES_SIMULATED_PER_KEY = 50   # Simulated likes per 'L' key
+METEOR_COUNT = 10               # Meteors spawned per shower
+METEOR_BOOST_MIN = 3           # Min diamonds per meteor hit
+METEOR_BOOST_MAX = 8           # Max diamonds per meteor hit
 
 # TTS (Text-to-Speech) voice announcer — set to True to re-enable
 TTS_ENABLED = False
