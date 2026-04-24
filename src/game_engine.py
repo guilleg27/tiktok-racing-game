@@ -49,6 +49,9 @@ from .config import (
     FLOATING_TEXT_FONT_SIZE,
     LIKES_GOAL_INITIAL,
     LIKES_SIMULATED_PER_KEY,
+    METEOR_COUNT,
+    METEOR_BOOST_MIN,
+    METEOR_BOOST_MAX,
     HYPE_THRESHOLD_CPM,
     HYPE_COOLDOWN_DURATION,
     HYPE_PHYSICS_MULTIPLIER,
@@ -4349,9 +4352,9 @@ class GameEngine:
         self.likes_goal = min(self.likes_goal * 2, 2000)
         self._likes_charge_played = False
 
-        # Spawn 15 meteors: cross screen quickly with trail
+        # Spawn meteors: cross screen quickly with trail
         self.meteors.clear()
-        for _ in range(15):
+        for _ in range(METEOR_COUNT):
             # Start from random edge, move across screen
             side = random.choice(["left", "right", "top"])
             if side == "left":
@@ -4416,7 +4419,7 @@ class GameEngine:
                 dist = math.hypot(m.x - fx, m.y - fy)
                 if dist < (FLAG_RADIUS + m.radius + 8):
                     m.hit_countries.add(country)
-                    boost = random.randint(15, 45)
+                    boost = random.randint(METEOR_BOOST_MIN, METEOR_BOOST_MAX)
                     self.physics_world.apply_gift_impulse(
                         country=country, gift_name="Meteor", diamond_count=boost
                     )
