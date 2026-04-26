@@ -20,7 +20,7 @@ import sys
 sys.modules['supabase'] = MagicMock()
 sys.modules['dotenv'] = MagicMock()
 
-from src.cloud_manager import CloudManager
+from core.cloud_manager import CloudManager
 
 
 class TestCloudManagerInitialization(unittest.TestCase):
@@ -32,7 +32,7 @@ class TestCloudManagerInitialization(unittest.TestCase):
         CloudManager._initialized = False
     
     @patch.dict(os.environ, {}, clear=True)
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
     def test_initialization_without_env_vars(self):
         """Test that CloudManager initializes with disabled state when .env missing."""
         manager = CloudManager()
@@ -44,8 +44,8 @@ class TestCloudManagerInitialization(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_initialization_with_env_vars(self, mock_create_client):
         """Test successful initialization with environment variables."""
         mock_client = MagicMock()
@@ -57,7 +57,7 @@ class TestCloudManagerInitialization(unittest.TestCase):
         self.assertIsNotNone(manager.client)
         mock_create_client.assert_called_once_with('https://test.supabase.co', 'test-key')
     
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', False)
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', False)
     def test_initialization_without_supabase_library(self):
         """Test graceful degradation when supabase library not installed."""
         manager = CloudManager()
@@ -69,8 +69,8 @@ class TestCloudManagerInitialization(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_initialization_with_client_error(self, mock_create_client):
         """Test that initialization errors are caught and logged."""
         mock_create_client.side_effect = Exception("Connection failed")
@@ -91,8 +91,8 @@ class TestCloudManagerInitialization(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_initialization_only_once(self, mock_create_client):
         """Test that initialization only happens once despite multiple calls."""
         mock_client = MagicMock()
@@ -118,8 +118,8 @@ class TestCloudManagerSyncOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_sync_race_result_when_disabled(self, mock_create_client):
         """Test that sync returns False when CloudManager is disabled."""
         manager = CloudManager()
@@ -137,8 +137,8 @@ class TestCloudManagerSyncOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_sync_race_result_success_existing_country(self, mock_create_client):
         """Test successful sync for existing country (increment wins)."""
         # Setup mock client
@@ -197,8 +197,8 @@ class TestCloudManagerSyncOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_sync_race_result_success_new_country(self, mock_create_client):
         """Test successful sync for new country (insert)."""
         # Setup mock client
@@ -244,8 +244,8 @@ class TestCloudManagerSyncOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_sync_race_result_network_error(self, mock_create_client):
         """Test that network errors are caught and logged."""
         # Setup mock client that raises error
@@ -281,8 +281,8 @@ class TestCloudManagerQueryOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_get_global_leaderboard_success(self, mock_create_client):
         """Test fetching global leaderboard."""
         mock_client = MagicMock()
@@ -321,8 +321,8 @@ class TestCloudManagerQueryOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_get_country_stats_success(self, mock_create_client):
         """Test fetching country stats."""
         mock_client = MagicMock()
@@ -360,8 +360,8 @@ class TestCloudManagerQueryOperations(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_get_country_stats_not_found(self, mock_create_client):
         """Test fetching stats for non-existent country."""
         mock_client = MagicMock()
@@ -402,8 +402,8 @@ class TestCloudManagerNonBlocking(unittest.TestCase):
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_KEY': 'test-key'
     })
-    @patch('src.cloud_manager.SUPABASE_AVAILABLE', True)
-    @patch('src.cloud_manager.create_client')
+    @patch('core.cloud_manager.SUPABASE_AVAILABLE', True)
+    @patch('core.cloud_manager.create_client')
     def test_sync_uses_executor(self, mock_create_client):
         """Test that sync operations use run_in_executor for non-blocking."""
         mock_client = MagicMock()
