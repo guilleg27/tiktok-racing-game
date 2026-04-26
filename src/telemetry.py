@@ -17,7 +17,7 @@ from .config import GRAVITY
 if TYPE_CHECKING:
     from .game_engine import GameEngine
     from .event_buffer import HumanizedEventBuffer
-    from .cloud_manager import CloudManager
+    from core.cloud_manager import CloudManager
 
 logger = logging.getLogger(__name__)
 

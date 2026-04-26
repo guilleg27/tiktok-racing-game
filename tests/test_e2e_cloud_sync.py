@@ -19,10 +19,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
-from cloud_manager import CloudManager
+from core.cloud_manager import CloudManager
 
 
 class Colors:
