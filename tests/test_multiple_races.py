@@ -6,7 +6,7 @@ Simula 3 carreras consecutivas.
 
 import asyncio
 import logging
-from src.cloud_manager import CloudManager
+from core.cloud_manager import CloudManager
 from dotenv import load_dotenv
 import os
 from supabase import create_client

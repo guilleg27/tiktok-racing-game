@@ -8,7 +8,7 @@ import math
 import random
 import time
 import sys
-from .cloud_manager import CloudManager
+from core.cloud_manager import CloudManager
 from dataclasses import dataclass, field
 
 import pygame
