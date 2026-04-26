@@ -111,24 +111,37 @@ class TikTokManager:
                     for attr in ['diamond_count', 'diamondCount', 'diamonds']:
                         val = getattr(gift_proto, attr, None)
                         if val and val > 0:
+                            logger.info(f"[Diamond] '{gift_name}' → {int(val)}💎 (proto.gift.{attr})")
                             return int(val)
-            
+                    logger.warning(
+                        f"[Diamond] '{gift_name}' — proto.gift existe pero ningún campo tiene valor "
+                        f"(attrs probados: {[getattr(gift_proto, a, None) for a in ['diamond_count', 'diamondCount', 'diamonds']]})"
+                    )
+                else:
+                    logger.warning(f"[Diamond] '{gift_name}' — proto existe pero proto.gift es None")
+            else:
+                logger.warning(f"[Diamond] '{gift_name}' — evento sin _proto")
+
             # Try direct access
             if hasattr(event, 'gift') and event.gift:
                 try:
                     if hasattr(event.gift, 'diamond_count'):
-                        return int(event.gift.diamond_count)
+                        val = int(event.gift.diamond_count)
+                        logger.info(f"[Diamond] '{gift_name}' → {val}💎 (event.gift.diamond_count)")
+                        return val
                 except:
                     pass
         except Exception as e:
             logger.debug(f"Error extracting diamond count: {e}")
-        
+
         # Fallback to config mapping
-        return GIFT_DIAMOND_VALUES.get(gift_name, 1)
+        fallback = GIFT_DIAMOND_VALUES.get(gift_name, 1)
+        logger.warning(f"[Diamond] '{gift_name}' → {fallback}💎 (FALLBACK config map)")
+        return fallback
     
     def _setup_handlers(self, client: TikTokLiveClient) -> None:
         """Set up event handlers for the TikTok client."""
-        logger.info("🔧 Setting up TikTok event handlers...")
+        logger.debug("🔧 Setting up TikTok event handlers...")
         
         @client.on(ConnectEvent)
         async def on_connect(event: ConnectEvent) -> None:
@@ -188,6 +201,7 @@ class TikTokManager:
                     gift_proto = getattr(event._proto, 'gift', None)
                     if gift_proto:
                         gift_name = getattr(gift_proto, 'name', None) or "Regalo"
+                        logger.info("[Gift raw] %r", gift_name)
                 elif hasattr(event, 'gift') and event.gift:
                     try:
                         gift_name = event.gift.name
