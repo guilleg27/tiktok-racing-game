@@ -5,7 +5,7 @@ Test script for Global Ranking Panel functionality.
 
 import asyncio
 import logging
-from src.cloud_manager import CloudManager
+from core.cloud_manager import CloudManager
 
 logging.basicConfig(
     level=logging.INFO,

@@ -24,7 +24,7 @@ from typing import Optional
 
 from src.config import FPS
 from src.events import EventType, GameEvent, ConnectionState
-from src.tiktok_manager import TikTokManager
+from core.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
 from src.resources import is_frozen
