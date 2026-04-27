@@ -15,7 +15,7 @@ from .event_buffer import CHAT_MAX
 from .config import GRAVITY
 
 if TYPE_CHECKING:
-    from src.game_engine import GameEngine  # temporary until M6b-2
+    from .game_engine import GameEngine
     from .event_buffer import HumanizedEventBuffer
     from .cloud_manager import CloudManager
 
