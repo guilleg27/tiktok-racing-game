@@ -2,8 +2,14 @@
 """
 Script para construir el ejecutable del TikTok Live Bot.
 Usa --onedir que es más confiable que --onefile en macOS.
+
+Usage:
+    python build_app.py                    # countries variant (default)
+    python build_app.py --variant countries
+    python build_app.py --variant motos
 """
 
+import argparse
 import os
 import sys
 import platform
@@ -38,13 +44,35 @@ def detect_icon():
                 return fname
     return None
 
-def build():
+VARIANT_CONFIG = {
+    "countries": {
+        "entry_point": "variants/countries/main.py",
+        "app_name": "TikTokRacingGoLive",
+    },
+    "motos": {
+        "entry_point": "variants/motos/main.py",
+        "app_name": "MotoRace",
+    },
+}
+
+
+def build(variant: str = "countries"):
     """Construye el ejecutable usando PyInstaller."""
-    
+
+    if variant not in VARIANT_CONFIG:
+        print(f"❌ Variant desconocida: {variant}. Opciones: {list(VARIANT_CONFIG)}")
+        sys.exit(1)
+
+    cfg = VARIANT_CONFIG[variant]
+    entry_point = cfg["entry_point"]
+    app_name = cfg["app_name"]
+
+    print(f"🎮 Variant: {variant}  →  entry: {entry_point}  →  name: {app_name}")
+
     # Limpiar builds anteriores
     print("🧹 Limpiando builds anteriores...")
     clean_build()
-    
+
     system = platform.system()
     
     if system == "Windows":
@@ -88,7 +116,7 @@ def build():
     # Build PyInstaller command. --onedir keeps Windows/macOS runs smooth and output clear.
     cmd = [
         "pyinstaller",
-        "--name", "TikTokRacingGoLive",
+        "--name", app_name,
         "--windowed",  # No console window
         "--onedir",    # Output as folder (more reliable than --onefile on Windows/macOS)
         "--clean",
@@ -125,28 +153,28 @@ def build():
 
         *icon_arg,
 
-        "main.py"
+        entry_point,
     ]
 
     print("\n🚀 Ejecutando PyInstaller...")
     print("Comando:", " ".join(cmd))
     print()
-    
+
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         print(result.stdout)
-        
+
         print("\n✅ Build completado exitosamente!")
-        
-        dist_dir = os.path.join("dist", "TikTokRacingGoLive")
+
+        dist_dir = os.path.join("dist", app_name)
         if system == "Darwin":
-            app_path = os.path.join("dist", "TikTokRacingGoLive.app")
+            app_path = os.path.join("dist", f"{app_name}.app")
             print(f"📍 Salida (--onedir): {app_path}")
             print("\n💡 Ejecutar:")
-            print("   open dist/TikTokRacingGoLive.app")
-            print("   o: dist/TikTokRacingGoLive.app/Contents/MacOS/TikTokRacingGoLive")
+            print(f"   open dist/{app_name}.app")
+            print(f"   o: dist/{app_name}.app/Contents/MacOS/{app_name}")
         else:
-            exe_path = os.path.join(dist_dir, "TikTokRacingGoLive.exe")
+            exe_path = os.path.join(dist_dir, f"{app_name}.exe")
             print(f"📍 Salida (--onedir): {os.path.normpath(dist_dir)}")
             print(f"   Ejecutable: {os.path.normpath(exe_path)}")
             
@@ -159,8 +187,17 @@ def build():
         sys.exit(1)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Build TikTok Racing Go executable")
+    parser.add_argument(
+        "--variant",
+        choices=list(VARIANT_CONFIG),
+        default="countries",
+        help="Which variant to build (default: countries)",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
-    print("  TikTok Racing Go Live - Builder")
+    print(f"  TikTok Racing Go Live - Builder ({args.variant})")
     print("=" * 60)
     print()
-    build()
+    build(args.variant)
