@@ -4,6 +4,7 @@ from .resources import resource_path, is_frozen
 from .database import Database
 from .audio_manager import AudioManager, SoundType, create_tts_provider
 from .background_manager import BackgroundManager
+from .asset_manager import AssetManager
 
 __all__ = [
     "CloudManager",
@@ -15,4 +16,5 @@ __all__ = [
     "SoundType",
     "create_tts_provider",
     "BackgroundManager",
+    "AssetManager",
 ]
