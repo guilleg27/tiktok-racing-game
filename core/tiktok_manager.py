@@ -17,9 +17,8 @@ from TikTokLive.events import (
     RoomUserSeqEvent,
 )
 
-from core.config import MAX_RETRIES, BASE_DELAY, MAX_DELAY
-from src.config import GIFT_DIAMOND_VALUES  # effective variant value (motos overrides base)
-from src.events import EventType, ConnectionState, GameEvent
+from core.config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
+from core.events import EventType, ConnectionState, GameEvent
 
 logger = logging.getLogger(__name__)
 

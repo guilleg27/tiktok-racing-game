@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.config import FPS
-from src.events import EventType, GameEvent, ConnectionState
+from core.events import EventType, GameEvent, ConnectionState
 from core.tiktok_manager import TikTokManager
 from src.game_engine import GameEngine
 from src.database import Database
