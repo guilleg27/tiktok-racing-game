@@ -438,7 +438,7 @@ class GameEngine:
         self.running = True
         import uuid
         self.session_id = str(uuid.uuid4())[:8]
-        
+
         self.messages: list[tuple[str, EventType]] = []
         self.connection_state = ConnectionState.DISCONNECTED
         
