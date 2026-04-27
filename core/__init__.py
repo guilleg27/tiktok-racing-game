@@ -5,6 +5,11 @@ from .database import Database
 from .audio_manager import AudioManager, SoundType, create_tts_provider
 from .background_manager import BackgroundManager
 from .asset_manager import AssetManager
+from .camera import ScreenShaker
+from .hype_manager import HypeManager
+from .notification_manager import NotificationManager
+from .event_buffer import HumanizedEventBuffer, CHAT_MAX
+from .telemetry import TelemetryManager
 
 __all__ = [
     "CloudManager",
@@ -17,4 +22,10 @@ __all__ = [
     "create_tts_provider",
     "BackgroundManager",
     "AssetManager",
+    "ScreenShaker",
+    "HypeManager",
+    "NotificationManager",
+    "HumanizedEventBuffer",
+    "CHAT_MAX",
+    "TelemetryManager",
 ]
