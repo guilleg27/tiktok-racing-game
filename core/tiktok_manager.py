@@ -18,7 +18,7 @@ from TikTokLive.events import (
 )
 
 from core.config import MAX_RETRIES, BASE_DELAY, MAX_DELAY, GIFT_DIAMOND_VALUES
-from src.events import EventType, ConnectionState, GameEvent
+from core.events import EventType, ConnectionState, GameEvent
 
 logger = logging.getLogger(__name__)
 
