@@ -142,6 +142,8 @@ HYPE_TIMER_ENABLED          = True
 HYPE_TIMER_INTERVAL         = 120.0   # seconds between disasters (2 min)
 HYPE_TIMER_URGENCY_SECS     = 10.0    # below this → red/flashing
 HYPE_TIMER_HOST_CUE_SECS    = 30.0   # console cue for streamer
+HYPE_TIMER_LABEL            = "DESASTRE EN"
+HYPE_DISASTER_TITLE         = "🚨 ¡DESASTRE MÁXIMO!"
 
 # Background colors - Elegant TikTok-style gradient
 GRADIENT_TOP = (25, 30, 60)       # Azul medianoche
@@ -402,6 +404,9 @@ WELCOME_FONT_SIZE = 16
 # Likes goal bar (retention mechanic - Meteor Shower event)
 LIKES_GOAL_INITIAL = 500
 LIKES_SIMULATED_PER_KEY = 50
+METEOR_COUNT = 10
+METEOR_BOOST_MIN = 3
+METEOR_BOOST_MAX = 8
 
 # TTS (Text-to-Speech) voice announcer
 TTS_ENABLED = False
@@ -440,3 +445,11 @@ BLACKOUT_RECHARGE_DECREASE  = 35
 BLACKOUT_HYPE_INTERVAL      = 30.0
 BLACKOUT_HYPE_CHANCE        = 0.05
 BLACKOUT_ENABLED            = False
+
+# ---------------------------------------------------------------------------
+# MotoGP variant flags (overridden by variants/motos/config.py via bootstrap)
+# ---------------------------------------------------------------------------
+MOTOGP_MODE             = False
+MOTOGP_LITE_PARTICLES   = False
+MOTOGP_GIFT_COUNTRY_MAP: dict = {}
+COMBAT_FORCE_MULTIPLIER = 1.0

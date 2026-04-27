@@ -10,6 +10,8 @@ from .hype_manager import HypeManager
 from .notification_manager import NotificationManager
 from .event_buffer import HumanizedEventBuffer, CHAT_MAX
 from .telemetry import TelemetryManager
+from .game_engine import GameEngine
+from .physics_world import PhysicsWorld
 
 __all__ = [
     "CloudManager",
@@ -28,4 +30,6 @@ __all__ = [
     "HumanizedEventBuffer",
     "CHAT_MAX",
     "TelemetryManager",
+    "GameEngine",
+    "PhysicsWorld",
 ]
