@@ -25,6 +25,8 @@ from .config import (
     GAME_AREA_BOTTOM,
     RACE_COUNTRIES,
     LANE_HEIGHT,
+    MOTOGP_MODE,
+    COMBAT_FORCE_MULTIPLIER,
 )
 
 if TYPE_CHECKING:
@@ -37,13 +39,14 @@ logger = logging.getLogger(__name__)
 class FlagRacer:
     """Represents a flag racer in a lane."""
     body: pymunk.Body
-    shape: pymunk.Circle
+    shape: pymunk.Shape          # pymunk.Circle in normal mode, pymunk.Poly in MOTOGP_MODE
     color: tuple[int, int, int]
     country: str
     lane: int
     sprite: Optional[pygame.Surface] = None
     target_x: float = 0.0  # Target position for smooth interpolation
     y_offset: float = 0.0  # visual-only: applied at draw time, not in physics
+    draw_radius: float = FLAG_RADIUS  # stable rendering radius (replaces shape.radius reads)
 
 
 class PhysicsWorld:
@@ -114,10 +117,11 @@ class PhysicsWorld:
         # Countries that finished their freeze this tick (consumed by game_engine each frame)
         self.just_unfrozen: list[str] = []
         
-        # Combat effect constants
-        self.EFFECT_ROSA_ADVANCE = 5.0      # +5 metros (píxeles)
-        self.EFFECT_PESA_SETBACK = 10.0     # -10 metros al líder
-        self.EFFECT_HELADO_FREEZE = 5.0     # 5 segundos de congelamiento
+        # Combat effect constants (1.5x in MOTOGP_MODE for higher impact)
+        _m = COMBAT_FORCE_MULTIPLIER if MOTOGP_MODE else 1.0
+        self.EFFECT_ROSA_ADVANCE = 5.0 * _m   # +7.5px in MotoGP mode
+        self.EFFECT_PESA_SETBACK = 10.0 * _m  # +15px in MotoGP mode
+        self.EFFECT_HELADO_FREEZE = 5.0        # freeze duration unchanged
         
         self._create_boundaries()
         self._create_racers()
@@ -159,15 +163,25 @@ class PhysicsWorld:
             
             # Create dynamic body usando FLAG_RADIUS de config
             mass = 1.0
-            moment = pymunk.moment_for_circle(mass, 0, FLAG_RADIUS)
-            body = pymunk.Body(mass, moment)
-            body.position = (self.start_x, lane_y)
-            
-            # Create circular shape
-            shape = pymunk.Circle(body, FLAG_RADIUS)
+            if MOTOGP_MODE:
+                # Rectangular motorcycle hitbox (24×8 px); lock rotation so bikes don't tumble
+                verts = [(-FLAG_RADIUS*3//2, -FLAG_RADIUS//2),
+                         ( FLAG_RADIUS*3//2, -FLAG_RADIUS//2),
+                         ( FLAG_RADIUS*3//2,  FLAG_RADIUS//2),
+                         (-FLAG_RADIUS*3//2,  FLAG_RADIUS//2)]
+                moment = pymunk.moment_for_poly(mass, verts)
+                body = pymunk.Body(mass, moment)
+                body.moment = float('inf')  # lock rotation
+                body.position = (self.start_x, lane_y)
+                shape = pymunk.Poly.create_box(body, (FLAG_RADIUS * 3, FLAG_RADIUS))
+            else:
+                moment = pymunk.moment_for_circle(mass, 0, FLAG_RADIUS)
+                body = pymunk.Body(mass, moment)
+                body.position = (self.start_x, lane_y)
+                shape = pymunk.Circle(body, FLAG_RADIUS)
             shape.friction = 0.3
             shape.elasticity = 0.1
-            
+
             # Add to space
             self.space.add(body, shape)
             
@@ -187,7 +201,11 @@ class PhysicsWorld:
             # Try to load sprite
             sprite = None
             if self.asset_manager:
-                sprite = self.asset_manager.get_sprite(country, FLAG_RADIUS * 2)
+                if MOTOGP_MODE:
+                    # Aspect-ratio preserving, no background removal (motorcycle images)
+                    sprite = self.asset_manager.get_sprite_for_racer(country, self.lane_height + 6)
+                else:
+                    sprite = self.asset_manager.get_sprite(country, FLAG_RADIUS * 2)
             
             # Create racer
             racer = FlagRacer(
@@ -197,7 +215,8 @@ class PhysicsWorld:
                 country=country,
                 lane=i,
                 sprite=sprite,
-                target_x=self.start_x
+                target_x=self.start_x,
+                draw_radius=FLAG_RADIUS,
             )
             
             self.racers[country] = racer
@@ -236,7 +255,7 @@ class PhysicsWorld:
         was_frozen = self.is_country_frozen(country)
 
         # Direct distance scaling: diamonds = pixels to move
-        distance_per_diamond = 0.8  # Each diamond = 0.8 pixels forward
+        distance_per_diamond = 3.0  # Each diamond = 3.0 pixels forward
         distance = (
             diamond_count
             * distance_per_diamond
@@ -464,14 +483,18 @@ class PhysicsWorld:
         """
         if self.race_finished:
             return {'effect': 'none', 'target': '', 'value': 0, 'message': 'Carrera terminada'}
-        
+
+        # En MOTOGP_MODE los regalos de combate están desactivados
+        if MOTOGP_MODE:
+            return {'effect': 'none', 'target': sender_country, 'value': 0, 'message': ''}
+
         result = {
             'effect': 'none',
             'target': sender_country,
             'value': 0,
             'message': ''
         }
-        
+
         # Normalizar nombre del regalo (case insensitive)
         gift_lower = gift_name.lower()
         
@@ -607,19 +630,24 @@ class PhysicsWorld:
             
             # Recreate body
             mass = 1.0
-            radius = racer.shape.radius
-            moment = pymunk.moment_for_circle(mass, 0, radius)
-            racer.body = pymunk.Body(mass, moment)
-            
-            # Reset position
+            radius = racer.draw_radius  # use draw_radius; shape.radius is Circle-only
             start_y = (racer.lane * self.lane_height) + (self.lane_height // 2)
-            racer.body.position = (self.start_x, start_y)
-            
-            # Recreate shape
-            racer.shape = pymunk.Circle(racer.body, radius)
+            if MOTOGP_MODE:
+                verts = [(-radius*3//2, -radius//2), ( radius*3//2, -radius//2),
+                         ( radius*3//2,  radius//2), (-radius*3//2,  radius//2)]
+                moment = pymunk.moment_for_poly(mass, verts)
+                racer.body = pymunk.Body(mass, moment)
+                racer.body.moment = float('inf')
+                racer.body.position = (self.start_x, start_y)
+                racer.shape = pymunk.Poly.create_box(racer.body, (radius * 3, radius))
+            else:
+                moment = pymunk.moment_for_circle(mass, 0, radius)
+                racer.body = pymunk.Body(mass, moment)
+                racer.body.position = (self.start_x, start_y)
+                racer.shape = pymunk.Circle(racer.body, radius)
             racer.shape.friction = 0.3
             racer.shape.elasticity = 0.1
-            
+
             # Add back to space
             self.space.add(racer.body, racer.shape)
             

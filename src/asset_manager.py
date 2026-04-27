@@ -108,6 +108,132 @@ class AssetManager:
             self._scale_cache[cache_key] = scaled
         return scaled
     
+    def get_sprite_for_racer(self, gift_name: str, target_height: int) -> Optional[pygame.Surface]:
+        """Scale sprite to target_height preserving aspect ratio, no background removal.
+        Used for motorcycle sprites in MOTOGP_MODE where images are non-square and
+        may contain dark areas that the standard background removal would incorrectly strip.
+
+        Args:
+            gift_name: Country name matching the asset file.
+            target_height: Desired height in pixels; width computed from source aspect ratio.
+
+        Returns:
+            Scaled surface or None if asset not found.
+        """
+        translated_name = GIFT_NAME_MAPPING.get(gift_name, gift_name)
+        source: Optional[pygame.Surface] = None
+
+        if translated_name in self._cache:
+            source = self._cache[translated_name]
+        elif gift_name in self._cache:
+            source = self._cache[gift_name]
+        else:
+            for cached_name in self._cache:
+                if cached_name.lower() in (gift_name.lower(), translated_name.lower()):
+                    source = self._cache[cached_name]
+                    break
+
+        if source is None:
+            return None
+
+        orig_w, orig_h = source.get_size()
+        if orig_h == 0:
+            return None
+
+        target_w = max(1, int(orig_w * target_height / orig_h))
+        scaled = pygame.transform.smoothscale(source, (target_w, target_height))  # scale first, BG intact
+        cleaned = self._remove_light_background(scaled)  # remove BG after scaling to avoid halo fringe
+        try:
+            return cleaned.convert_alpha()
+        except Exception:
+            return cleaned
+
+    def _remove_light_background(self, surface: pygame.Surface) -> pygame.Surface:
+        """Flood-fill background removal starting from image borders.
+        Only removes pixels reachable from the border — interior motorcycle
+        pixels are never touched even if they match the background color.
+        """
+        from collections import deque
+        width, height = surface.get_size()
+
+        # --- Step 1: detect dominant border color ---
+        step = max(1, (width + height) // 150)
+        border_samples = []
+        for x in range(0, width, step):
+            for cy in (0, height - 1):
+                r, g, b, a = surface.get_at((x, cy))
+                if a > 0:
+                    border_samples.append((r, g, b))
+        for y in range(0, height, step):
+            for cx in (0, width - 1):
+                r, g, b, a = surface.get_at((cx, y))
+                if a > 0:
+                    border_samples.append((r, g, b))
+
+        if len(border_samples) < 5:
+            return surface
+
+        cluster_tol = 30
+        best_color = None
+        best_count = 0
+        for candidate in border_samples:
+            matching = [
+                c for c in border_samples
+                if abs(c[0] - candidate[0]) <= cluster_tol and
+                   abs(c[1] - candidate[1]) <= cluster_tol and
+                   abs(c[2] - candidate[2]) <= cluster_tol
+            ]
+            if len(matching) > best_count:
+                best_count = len(matching)
+                best_color = tuple(
+                    sum(c[i] for c in matching) // len(matching) for i in range(3)
+                )
+
+        if best_color is None or best_count < len(border_samples) * 0.4:
+            return surface
+
+        # --- Step 2: BFS flood fill from all 4 border edges ---
+        removal_tol = 50
+        cleaned = surface.copy()
+        visited: set[tuple[int, int]] = set()
+        queue: deque[tuple[int, int]] = deque()
+
+        def matches_bg(r: int, g: int, b: int, a: int) -> bool:
+            return (a > 0 and
+                    abs(r - best_color[0]) <= removal_tol and
+                    abs(g - best_color[1]) <= removal_tol and
+                    abs(b - best_color[2]) <= removal_tol)
+
+        cleaned.lock()
+        for x in range(width):
+            for cy in (0, height - 1):
+                if (x, cy) not in visited:
+                    r, g, b, a = cleaned.get_at((x, cy))
+                    if matches_bg(r, g, b, a):
+                        visited.add((x, cy))
+                        queue.append((x, cy))
+        for y in range(height):
+            for cx in (0, width - 1):
+                if (cx, y) not in visited:
+                    r, g, b, a = cleaned.get_at((cx, y))
+                    if matches_bg(r, g, b, a):
+                        visited.add((cx, y))
+                        queue.append((cx, y))
+
+        while queue:
+            cx, cy = queue.popleft()
+            r, g, b, _ = cleaned.get_at((cx, cy))
+            cleaned.set_at((cx, cy), (r, g, b, 0))
+            for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited:
+                    r2, g2, b2, a2 = cleaned.get_at((nx, ny))
+                    if matches_bg(r2, g2, b2, a2):
+                        visited.add((nx, ny))
+                        queue.append((nx, ny))
+
+        cleaned.unlock()
+        return cleaned
+
     def _normalize_name(self, name: str) -> str:
         """Normaliza el nombre para búsqueda."""
         # Remove accents, spaces, lowercase

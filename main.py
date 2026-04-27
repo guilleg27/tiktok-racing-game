@@ -439,7 +439,7 @@ def get_username() -> tuple[str, bool]:
                 
                 # Show dialog
                 username = simpledialog.askstring(
-                    "TikTok Live Bot",
+                    "Moto Race",
                     "Ingresa el username de TikTok (sin @):\n\nDeja vacío para modo IDLE",
                     parent=root
                 )
@@ -462,7 +462,7 @@ def get_username() -> tuple[str, bool]:
                     
                     # Simple pygame input box
                     screen = pygame.display.set_mode((400, 200))
-                    pygame.display.set_caption("TikTok Live Bot - Username")
+                    pygame.display.set_caption("Moto Race")
                     font = pygame.font.Font(None, 32)
                     clock = pygame.time.Clock()
                     
