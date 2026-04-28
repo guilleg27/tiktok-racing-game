@@ -7,6 +7,12 @@ Usage:
     python variants/motos/main.py --idle
 """
 
+# Ensure project root is on sys.path when invoked directly from a subdirectory.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+del _sys, _Path
+
 # Patch motos variant config into core.config BEFORE any core.game_engine import.
 # Python caches modules in sys.modules — patching the live module object here
 # ensures all subsequent `from .config import NAME` bindings in core/ capture

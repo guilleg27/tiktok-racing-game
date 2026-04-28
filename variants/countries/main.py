@@ -7,6 +7,12 @@ Usage:
     python variants/countries/main.py --idle
 """
 
+# Ensure project root is on sys.path when invoked directly from a subdirectory.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+del _sys, _Path
+
 import asyncio
 import logging
 import signal
