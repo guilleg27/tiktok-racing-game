@@ -69,6 +69,7 @@ from .config import (
     MOTOGP_GIFT_COUNTRY_MAP,
     HYPE_TIMER_LABEL,
     HYPE_DISASTER_TITLE,
+    RACER_ASSETS_PATH,
 )
 from .events import EventType, ConnectionState, GameEvent
 from .physics_world import PhysicsWorld
@@ -458,8 +459,8 @@ class GameEngine:
             "🇻🇪": "Venezuela"
         }
         
-        # Asset Manager
-        self.asset_manager = AssetManager()
+        # Asset Manager (racer sprites: flags for countries, motorcycles for motos)
+        self.asset_manager = AssetManager(RACER_ASSETS_PATH)
         
         # Audio Manager
         self.audio_manager = AudioManager()
