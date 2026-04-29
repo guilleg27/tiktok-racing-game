@@ -16,6 +16,12 @@ import platform
 import subprocess
 import shutil
 
+# Windows console may use CP1252 which can't encode emoji — force UTF-8.
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 def clean_build():
     """Limpia directorios de builds anteriores."""
     folders_to_clean = ['build', 'dist', '__pycache__']

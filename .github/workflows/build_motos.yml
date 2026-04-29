@@ -96,7 +96,7 @@ jobs:
       run: python -m py_compile core/*.py
 
     - name: Syntax check variants/
-      run: python -m py_compile variants/countries/main.py variants/motos/main.py variants/motos/config.py variants/motos/asset_manager.py
+      run: python -m py_compile variants/countries/main.py variants/motos/main.py variants/motos/config.py
 
     - name: Run tests
       run: python -m pytest tests/ -v --ignore=tests/test_e2e_cloud_sync.py --ignore=tests/test_multiple_races.py --ignore=tests/test_global_ranking.py
