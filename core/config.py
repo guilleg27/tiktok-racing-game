@@ -453,3 +453,6 @@ MOTOGP_MODE             = False
 MOTOGP_LITE_PARTICLES   = False
 MOTOGP_GIFT_COUNTRY_MAP: dict = {}
 COMBAT_FORCE_MULTIPLIER = 1.0
+
+# Path to racer sprites (flags for countries, motorcycles for motos)
+RACER_ASSETS_PATH = "assets/flags"

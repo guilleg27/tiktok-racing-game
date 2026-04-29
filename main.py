@@ -7,6 +7,17 @@ Usage:
     python main.py --idle          # Modo IDLE (ventana abierta, conectar después con L)
 """
 
+# Patch motos variant config into core.config BEFORE any core.game_engine import.
+# Python caches modules in sys.modules — patching the live module object here
+# ensures all subsequent `from .config import NAME` bindings in core/ capture
+# the motos values (e.g. MOTOGP_MODE=True).
+import core.config as _c
+import variants.motos.config as _vc
+for _k, _v in vars(_vc).items():
+    if not _k.startswith('_'):
+        setattr(_c, _k, _v)
+del _c, _vc, _k, _v
+
 import asyncio
 import logging
 import signal

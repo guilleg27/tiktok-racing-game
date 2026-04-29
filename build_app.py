@@ -16,6 +16,12 @@ import platform
 import subprocess
 import shutil
 
+# Windows console may use CP1252 which can't encode emoji — force UTF-8.
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 def clean_build():
     """Limpia directorios de builds anteriores."""
     folders_to_clean = ['build', 'dist', '__pycache__']
@@ -101,7 +107,7 @@ def build(variant: str = "countries"):
 
     # Required asset subfolders. fonts and images (e.g. flags) must exist for visuals.
     # backgrounds is optional (fallback to procedural star field).
-    asset_subfolders = ['audio', 'gifts', 'sounds', 'fonts', 'images', 'icons', 'backgrounds']
+    asset_subfolders = ['audio', 'gifts', 'sounds', 'fonts', 'images', 'backgrounds', 'flags', 'motos']
     assets_to_include = []
     for subfolder in asset_subfolders:
         subfolder_path = os.path.join('assets', subfolder)

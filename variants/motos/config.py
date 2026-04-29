@@ -29,6 +29,7 @@ GIFT_DIAMOND_VALUES = {
 # ── MOTOS_ONLY additions ────────────────────────────────────────────────────
 MOTOGP_MODE = True
 COMBAT_FORCE_MULTIPLIER = 1.5
+RACER_ASSETS_PATH = "assets/motos"
 MOTOGP_LITE_PARTICLES = True
 HYPE_TIMER_ENABLED = False  # Samba disaster incompatible with MotoGP edition
 HYPE_TIMER_LABEL = "VUELTA FINAL EN"
