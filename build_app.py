@@ -59,6 +59,10 @@ VARIANT_CONFIG = {
         "entry_point": "variants/motos/main.py",
         "app_name": "MotoRace",
     },
+    "versus": {
+        "entry_point": "variants/versus/main.py",
+        "app_name": "versus",
+    },
 }
 
 

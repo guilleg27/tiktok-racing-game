@@ -2568,7 +2568,12 @@ class GameEngine:
         if self._audio_toast_timer > 0:
             self._render_audio_toast()
 
+        self._pre_flip_screen_overlay()
         pygame.display.flip()
+
+    def _pre_flip_screen_overlay(self) -> None:
+        """Hook for subclasses to draw overlays on self.screen before the display flip."""
+        pass
 
     def _activate_blackout(self) -> None:
         """Activate Blackout Mode at the initial darkness level."""
