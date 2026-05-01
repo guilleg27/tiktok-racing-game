@@ -10,6 +10,10 @@ from core.config import *  # noqa: F401, F403
 # ── IDENTIDAD DEL DUELO ─────────────────────────────────────────────────────
 VERSUS_MODE = True
 
+# Portrait layout: reserve the top of the game canvas for TikTok/OBS face-cam.
+# Physics and HUD use the band below this (core default was 114).
+GAME_AREA_TOP: int = 200
+
 # Definición de los dos equipos
 TEAM_LEFT = {
     "name":      "River",
@@ -48,9 +52,11 @@ VICTORY_MODE: str = "time"
 SCORE_LIMIT: int = 10          # puntos para ganar en modo "score"
 MATCH_DURATION_SECS: float = 60.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
 
-# ── TIEMPO EXTRA Y GOLDEN GOAL ───────────────────────────────────────────────
-EXTRA_TIME_SECS: float = 60.0   # duración del tiempo extra
-GOLDEN_GOAL_ENABLED: bool = True # si sigue igualado al cabo del extra time
+# ── GOL DE ORO (muerte súbita) ───────────────────────────────────────────────
+# When regular time ends in a tie, golden goal / sudden death starts immediately.
+# No extra-time countdown — the next team to score wins.
+EXTRA_TIME_SECS: float = 0.0     # unused; kept for compatibility
+GOLDEN_GOAL_ENABLED: bool = True  # always True; first goal wins on tie
 
 # ── AUTOPILOT (core) ─────────────────────────────────────────────────────────
 # Versus: solo regalos reales; sin simulación de caos en IDLE.
@@ -115,3 +121,18 @@ GIFT_COLORS = {
 
 # ── AUDIO ────────────────────────────────────────────────────────────────────
 HYPE_TIMER_ENABLED = False   # Sin catástrofes en el duelo
+
+# ── RETRO LED SCOREBOARD & AMBIENT (versus UI) ───────────────────────────────
+# Scoreboard fonts: DOTMATRI.TTF (primary) under assets/versus/fonts/; DSEG7 fallback optional.
+VERSUS_SCORE_PULSE_DURATION_SEC: float = 0.38
+VERSUS_SCOREBOARD_CORNER_RADIUS: int = 10
+# Bokeh / data-stream overlay over the split field (disabled — cleaner Tablero-style look).
+VERSUS_AMBIENT_ENABLED: bool = False
+# Confetti-style sparks on mapped gifts (disabled for versus clarity).
+VERSUS_GIFT_SPARK_PARTICLES: bool = False
+VERSUS_AMBIENT_BOKEH_COUNT: int = 36
+VERSUS_AMBIENT_BOKEH_ALPHA_MAX: int = 48
+VERSUS_AMBIENT_STREAM_COUNT: int = 14
+VERSUS_AMBIENT_STREAM_ALPHA: int = 28
+VERSUS_DATA_STREAM_SPEED_PX_S: float = 24.0
+VERSUS_PUCK_GROUND_GLOW_ALPHA: int = 42

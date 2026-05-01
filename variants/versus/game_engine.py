@@ -7,6 +7,7 @@ Sobrescribe exclusivamente la lógica que difiere del core:
   • Tiempo extra + golden goal
   • Pantalla de victoria (top donador + MVP)
   • Sin combos / trails ON FIRE / autopilot (motor liviano)
+  • Pantalla partida en dos mitades (River | Boca), banderas fijas al centro de cada mitad
   • Teclas demo Q/W para simular gifts sin TikTok
 
 El render principal y physics lo hereda de core/game_engine.py sin tocar.
@@ -17,14 +18,39 @@ import logging
 import time
 import math
 import random
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, List, Any
 
+import pymunk
 import pygame
 
-from core.game_engine import GameEngine
+from core.game_engine import GameEngine, _get_font
 from core.events import EventType, GameEvent
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _VersusBokeh:
+    """Single soft light speck for the versus ambient overlay."""
+
+    x: float
+    y: float
+    r: float
+    alpha: int
+    vx: float
+    vy: float
+
+
+@dataclass
+class _VersusStream:
+    """Short vertical streak for a subtle \"data stream\" effect."""
+
+    x: float
+    y: float
+    length: float
+    speed: float
+    alpha: int
 
 
 class VersusGameEngine(GameEngine):
@@ -85,6 +111,24 @@ class VersusGameEngine(GameEngine):
         self.victory_mvp: Optional[str] = None
         self.victory_mvp_diamonds: int = 0
 
+        # Fixed (cx, lane_y) per team for split layout — regifts do not move flags.
+        self._versus_racer_pin: dict[str, tuple[float, float]] = {}
+
+        # Score hit pulse (0..1 per team, decays in update)
+        self._score_pulse: dict[str, float] = {
+            self.team_left_name: 0.0,
+            self.team_right_name: 0.0,
+        }
+        self._versus_scoreboard: Any = None  # VersusRetroScoreboard, lazy init
+        self._versus_anim_time: float = 0.0
+        self._versus_last_dt: float = 0.0
+        self._versus_ambient_ready: bool = False
+        self._versus_bokeh: List[_VersusBokeh] = []
+        self._versus_streams: List[_VersusStream] = []
+
+        # Team crest images for the puck: {team_name: pygame.Surface | None}
+        self._versus_crests: dict[str, Any] = {}
+
         # Acumulador de puntos por donador (para MVP y top donador)
         self.donor_points: dict[str, int] = {}          # username → total 💎 global
         self.team_donor_points: dict[str, dict[str, int]] = {  # equipo → {user: pts}
@@ -102,11 +146,120 @@ class VersusGameEngine(GameEngine):
             f"| modo={self.victory_mode}"
         )
 
+        self._apply_split_screen_layout()
+
+    # ── Split screen (River | Boca) ─────────────────────────────────────────
+
+    @staticmethod
+    def _remove_versus_track_constraints_for_body(pw, body: pymunk.Body) -> None:
+        """Remove GrooveJoint and PinJoint constraints attached to ``body``.
+
+        Args:
+            pw: Physics world containing ``space`` and racers.
+            body: Dynamic body whose track/pin joints should be stripped.
+        """
+        to_remove: list[pymunk.Constraint] = []
+        for j in pw.space.constraints:
+            if not isinstance(j, (pymunk.GrooveJoint, pymunk.PinJoint)):
+                continue
+            if j.b is body or j.a is body:
+                to_remove.append(j)
+        for j in to_remove:
+            pw.space.remove(j)
+
+    def _apply_split_screen_layout(self) -> None:
+        """Pin each team flag to the center of its half (River left, Boca right).
+
+        Uses ``PinJoint`` so flags stay fixed for live streams; score changes only
+        on the HUD. Re-applies after ``reset_race`` or startup.
+        """
+        from core.config import SCREEN_WIDTH, RACE_START_X, TEAM_LEFT, TEAM_RIGHT
+
+        pw = self.physics_world
+        mid = SCREEN_WIDTH // 2
+        gap = 12
+        margin = 20
+        lane_y = float(pw.game_area_top + pw.game_area_height // 2)
+
+        left_start = float(max(RACE_START_X, margin))
+        left_end = float(mid - gap)
+        right_start = float(mid + gap)
+        right_end = float(SCREEN_WIDTH - margin)
+
+        if left_start >= left_end:
+            left_end = left_start + 40.0
+        if right_start >= right_end:
+            right_end = right_start + 40.0
+
+        bounds = {
+            self.team_left_name: (left_start, left_end),
+            self.team_right_name: (right_start, right_end),
+        }
+
+        self._versus_racer_pin = {}
+
+        for country, racer in pw.racers.items():
+            if country not in bounds:
+                continue
+            x0, x1 = bounds[country]
+            cx_fixed = (x0 + x1) * 0.5
+            self._remove_versus_track_constraints_for_body(pw, racer.body)
+            pin = pymunk.PinJoint(
+                pw.space.static_body,
+                racer.body,
+                (cx_fixed, lane_y),
+                (0.0, 0.0),
+            )
+            pw.space.add(pin)
+            racer.body.position = pymunk.Vec2d(cx_fixed, lane_y)
+            racer.target_x = cx_fixed
+            self._versus_racer_pin[country] = (cx_fixed, lane_y)
+
+        pw.finish_line_x = 999999
+        logger.debug(
+            "Versus split pins: %s @ %.0f | %s @ %.0f | y=%.0f",
+            TEAM_LEFT["name"],
+            (left_start + left_end) * 0.5,
+            TEAM_RIGHT["name"],
+            (right_start + right_end) * 0.5,
+            lane_y,
+        )
+
+    def _pin_versus_racers_static(self) -> None:
+        """Keep versus flags pinned after core physics Lerp (no horizontal drift)."""
+        pw = getattr(self, "physics_world", None)
+        if pw is None:
+            return
+        pins = getattr(self, "_versus_racer_pin", None) or {}
+        for country, (cx, ly) in pins.items():
+            racer = pw.racers.get(country)
+            if not racer:
+                continue
+            if pw.is_country_frozen(country):
+                continue
+            racer.body.position = pymunk.Vec2d(cx, ly)
+            racer.target_x = cx
+
+    def _return_to_idle(self) -> None:
+        """Return to IDLE and re-apply split grooves after physics reset."""
+        super()._return_to_idle()
+        self._apply_split_screen_layout()
+
+    def on_physics_race_reset(self) -> None:
+        """Re-apply split layout after a physics-driven race reset (rare in versus)."""
+        super().on_physics_race_reset()
+        self._apply_split_screen_layout()
+
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _get_team_from_gift(self, gift_name: str) -> Optional[str]:
         """Devuelve el equipo mapeado al gift, o None si no está en el mapa."""
         return self.gift_team_map.get(gift_name.strip().lower())
+
+    def _trigger_score_pulse(self, team: str) -> None:
+        """Start or refresh the LED score pulse animation for a team."""
+        if team in self._score_pulse:
+            self._score_pulse[team] = 1.0
 
     def _register_donor(self, username: str, team: str, diamonds: int) -> None:
         """Acumula puntos de donador globalmente y por equipo."""
@@ -165,6 +318,7 @@ class VersusGameEngine(GameEngine):
             # Incrementar score del set
             points = self.gift_point_value * gift_count
             self.set_score[team] = self.set_score.get(team, 0) + points
+            self._trigger_score_pulse(team)
 
             logger.info(
                 f"⚽ VERSUS GIFT: {username} → {team} | {gift_name} x{gift_count} "
@@ -189,7 +343,7 @@ class VersusGameEngine(GameEngine):
         total_diamonds: int,
         username: str,
     ) -> None:
-        """Aplica impulso físico al racer del equipo, como haría el engine base."""
+        """Gift feedback (audio/SFX) without moving flags — live layout stays fixed."""
         if team not in self.physics_world.racers:
             logger.warning(f"[VERSUS] Equipo '{team}' no encontrado en racers")
             return
@@ -201,19 +355,25 @@ class VersusGameEngine(GameEngine):
         self._on_real_activity()
         self._update_captain_points(username, team, total_diamonds)
 
-        success, was_frozen = self.physics_world.apply_gift_impulse(
-            country=team,
-            gift_name=gift_name,
-            diamond_count=total_diamonds,
-        )
+        self._pin_versus_racers_static()
+        racer = self.physics_world.racers[team]
+        pos = (float(racer.body.position.x), float(racer.body.position.y))
+        was_frozen = self.physics_world.is_country_frozen(team)
 
-        if success:
-            self.audio_manager.play_gift_sound(gift_name=gift_name, diamond_value=total_diamonds)
-            racer = self.physics_world.racers[team]
-            pos = (racer.body.position.x, racer.body.position.y)
+        self.audio_manager.play_gift_sound(gift_name=gift_name, diamond_value=total_diamonds)
+        if not was_frozen:
+            import core.config as _cfg
+
             is_large = total_diamonds > 50
-            count = 15 + int(total_diamonds / 8) if is_large else 10 + int(total_diamonds / 10)
-            self.emit_explosion(pos=pos, color=(255, 215, 0), count=count, power=1.0 if is_large else 0.7, diamond_count=total_diamonds)
+            if getattr(_cfg, "VERSUS_GIFT_SPARK_PARTICLES", False):
+                count = 15 + int(total_diamonds / 8) if is_large else 10 + int(total_diamonds / 10)
+                self.emit_explosion(
+                    pos=pos,
+                    color=(255, 215, 0),
+                    count=count,
+                    power=1.0 if is_large else 0.7,
+                    diamond_count=total_diamonds,
+                )
             if total_diamonds >= 100:
                 self.screen_shaker.big_impact_shake()
             elif is_large:
@@ -281,6 +441,19 @@ class VersusGameEngine(GameEngine):
     def update(self, dt: float) -> None:
         """Override update para gestionar el timer de partido (modo time)."""
         super().update(dt)
+        self._pin_versus_racers_static()
+        self._versus_anim_time += dt
+        self._versus_last_dt = dt
+        from core.config import VERSUS_SCORE_PULSE_DURATION_SEC, VERSUS_AMBIENT_ENABLED
+
+        dur = float(VERSUS_SCORE_PULSE_DURATION_SEC) or 0.35
+        for tname in list(self._score_pulse.keys()):
+            v = self._score_pulse[tname]
+            if v > 0.0:
+                self._score_pulse[tname] = max(0.0, v - dt / dur)
+
+        if VERSUS_AMBIENT_ENABLED:
+            self._update_versus_ambient(dt)
 
         # No hacer nada si ya hay victoria de partido
         if self.versus_victory_active:
@@ -303,16 +476,11 @@ class VersusGameEngine(GameEngine):
                 self.match_elapsed = now - self.match_start_time
 
                 if self.match_elapsed >= self.match_duration:
-                    # Tiempo regular terminado
+                    # Regular time over
                     self._evaluate_time_winner()
             else:
-                # Tiempo extra
-                extra_elapsed = now - (self.extra_time_start or now)
-                if extra_elapsed >= self.extra_time_secs:
-                    # Tiempo extra terminado
-                    self._evaluate_time_winner(is_extra=True)
-                elif self.golden_goal_active:
-                    # Golden goal activo: cualquier punto gana
+                # Gol de Oro (sudden death): first team to score wins, no clock
+                if self.golden_goal_active:
                     for team in self.teams:
                         if self.set_score.get(team, 0) > self.set_score.get(
                             self._other_team(team), 0
@@ -323,28 +491,26 @@ class VersusGameEngine(GameEngine):
     def _other_team(self, team: str) -> str:
         return self.team_right_name if team == self.team_left_name else self.team_left_name
 
-    def _evaluate_time_winner(self, is_extra: bool = False) -> None:
-        """Evalúa quién ganó al terminar el tiempo."""
+    def _evaluate_time_winner(self) -> None:
+        """Evaluate who won when regular time expires.
+
+        If there is a clear winner, trigger victory immediately.
+        On a tie, activate *Gol de Oro* (golden goal / sudden death):
+        the next team to score wins — no extra-time countdown.
+        """
         s_left  = self.set_score.get(self.team_left_name, 0)
         s_right = self.set_score.get(self.team_right_name, 0)
 
         if s_left != s_right:
             winner = self.team_left_name if s_left > s_right else self.team_right_name
             self._trigger_set_victory(winner)
-        elif not is_extra and self.extra_time_secs > 0:
-            # Empate → tiempo extra
-            self.in_extra_time = True
-            self.extra_time_start = time.time()
-            self.golden_goal_active = self.golden_goal_enabled
-            mode_txt = "GOLDEN GOAL" if self.golden_goal_active else "TIEMPO EXTRA"
-            logger.info(f"EMPATE -> {mode_txt}")
-            self._add_floating_text(f"{mode_txt}!", color=(255, 215, 0))
         else:
-            # Sigue empatado después del tiempo extra → sorteo (random)
-            winner = random.choice(self.teams)
-            logger.warning(f"[VERSUS] Empate tras tiempo extra → ganador por sorteo: {winner}")
-            self._add_floating_text("¡DEFINICIÓN!", color=(255, 80, 80))
-            self._trigger_set_victory(winner)
+            # Tie → golden goal (sudden death, no extra-time clock)
+            self.in_extra_time   = True
+            self.extra_time_start = time.time()
+            self.golden_goal_active = True
+            logger.info("EMPATE -> GOL DE ORO (muerte súbita)")
+            self._add_floating_text("¡GOL DE ORO!", color=(255, 215, 0))
 
     # ── Sync Supabase ─────────────────────────────────────────────────────────
 
@@ -366,6 +532,7 @@ class VersusGameEngine(GameEngine):
     def _reset_versus(self) -> None:
         """Reset completo: vuelta a IDLE, marcador a cero."""
         self.set_score    = {self.team_left_name: 0, self.team_right_name: 0}
+        self._score_pulse = {self.team_left_name: 0.0, self.team_right_name: 0.0}
         self.match_start_time  = None
         self.match_elapsed     = 0.0
         self.in_extra_time     = False
@@ -495,8 +662,351 @@ class VersusGameEngine(GameEngine):
     def _render_combo_flashes(self) -> None:
         """Versus: skip drawing combo flash overlays."""
 
+    def _init_versus_ambient_if_needed(self) -> None:
+        """Seed bokeh and stream particles once the playfield rect is known."""
+        if self._versus_ambient_ready:
+            return
+        from core.config import SCREEN_WIDTH, VERSUS_AMBIENT_BOKEH_COUNT, VERSUS_AMBIENT_STREAM_COUNT
+
+        pw = self.physics_world
+        top = float(pw.game_area_top)
+        h = float(pw.game_area_height)
+        rnd = random.Random(42)
+        self._versus_bokeh = []
+        for _ in range(int(VERSUS_AMBIENT_BOKEH_COUNT)):
+            self._versus_bokeh.append(
+                _VersusBokeh(
+                    x=rnd.uniform(0, SCREEN_WIDTH),
+                    y=rnd.uniform(top, top + h),
+                    r=rnd.uniform(2.0, 9.0),
+                    alpha=int(rnd.uniform(18, 55)),
+                    vx=rnd.uniform(-4.0, 4.0),
+                    vy=rnd.uniform(-10.0, -2.5),
+                )
+            )
+        self._versus_streams = []
+        for _ in range(int(VERSUS_AMBIENT_STREAM_COUNT)):
+            self._versus_streams.append(
+                _VersusStream(
+                    x=rnd.uniform(0, SCREEN_WIDTH),
+                    y=rnd.uniform(top, top + h),
+                    length=rnd.uniform(14.0, 42.0),
+                    speed=rnd.uniform(16.0, 38.0),
+                    alpha=int(rnd.uniform(12, 32)),
+                )
+            )
+        self._versus_ambient_ready = True
+
+    def _update_versus_ambient(self, dt: float) -> None:
+        """Drift bokeh and scroll stream streaks within the versus playfield."""
+        from core.config import SCREEN_WIDTH, VERSUS_AMBIENT_ENABLED, VERSUS_DATA_STREAM_SPEED_PX_S
+
+        if not VERSUS_AMBIENT_ENABLED:
+            return
+        self._init_versus_ambient_if_needed()
+        pw = self.physics_world
+        top = float(pw.game_area_top)
+        h = float(pw.game_area_height)
+        bottom = top + h
+        stream_factor = max(0.35, float(VERSUS_DATA_STREAM_SPEED_PX_S) / 24.0)
+        for b in self._versus_bokeh:
+            b.x += b.vx * dt
+            b.y += b.vy * dt
+            if b.y < top - 12:
+                b.y = bottom + random.uniform(0.0, 24.0)
+                b.x = random.uniform(0.0, float(SCREEN_WIDTH))
+            if b.x < -15 or b.x > SCREEN_WIDTH + 15:
+                b.x = random.uniform(0.0, float(SCREEN_WIDTH))
+        for s in self._versus_streams:
+            s.y += s.speed * dt * stream_factor
+            if s.y > bottom + s.length:
+                s.y = top - s.length
+                s.x = random.uniform(0.0, float(SCREEN_WIDTH))
+
+    def _draw_versus_ambient_layer(self) -> None:
+        """Additive bokeh and vertical streaks over the split-field tint."""
+        from core.config import (
+            VERSUS_AMBIENT_ENABLED,
+            VERSUS_AMBIENT_BOKEH_ALPHA_MAX,
+        )
+
+        if not VERSUS_AMBIENT_ENABLED:
+            return
+        try:
+            self._init_versus_ambient_if_needed()
+            surf = self.render_surface
+            cap = int(VERSUS_AMBIENT_BOKEH_ALPHA_MAX)
+            for b in self._versus_bokeh:
+                sz = max(5, int(b.r * 2) + 4)
+                blob = pygame.Surface((sz, sz), pygame.SRCALPHA)
+                a = min(cap, max(6, b.alpha))
+                pygame.draw.circle(blob, (210, 230, 255, a), (sz // 2, sz // 2), max(2, int(b.r)))
+                surf.blit(blob, (int(b.x - sz // 2), int(b.y - sz // 2)), special_flags=pygame.BLEND_RGBA_ADD)
+            for s in self._versus_streams:
+                hseg = max(4, int(s.length))
+                seg = pygame.Surface((2, hseg), pygame.SRCALPHA)
+                seg.fill((170, 200, 255, min(55, s.alpha + 10)))
+                surf.blit(seg, (int(s.x), int(s.y)), special_flags=pygame.BLEND_RGBA_ADD)
+        except Exception as e:
+            logger.debug(f"[versus_ambient] {e}")
+
+    def _render_lanes(self) -> None:
+        """Draw two vertical halves (River / Boca) with a divider; no horizontal lane grid."""
+        try:
+            from core.config import SCREEN_WIDTH, TEAM_LEFT, TEAM_RIGHT
+
+            pw = self.physics_world
+            top = int(pw.game_area_top)
+            h = int(pw.game_area_height)
+            mid = SCREEN_WIDTH // 2
+
+            # Deep burgundy / navy tint (Tablero-style); team names live on the LED scoreboard.
+            left_panel = pygame.Surface((mid, h), pygame.SRCALPHA)
+            left_panel.fill((48, 10, 14, 235))
+            self.render_surface.blit(left_panel, (0, top))
+
+            right_w = SCREEN_WIDTH - mid
+            right_panel = pygame.Surface((right_w, h), pygame.SRCALPHA)
+            right_panel.fill((6, 18, 46, 238))
+            self.render_surface.blit(right_panel, (mid, top))
+
+            self._draw_versus_ambient_layer()
+            glow = pygame.Surface((SCREEN_WIDTH, h), pygame.SRCALPHA)
+            for w, a in ((7, 18), (4, 35), (2, 70)):
+                pygame.draw.line(
+                    glow,
+                    (255, 248, 200, a),
+                    (mid, top),
+                    (mid, top + h),
+                    w,
+                )
+            self.render_surface.blit(glow, (0, top))
+            pygame.draw.line(
+                self.render_surface,
+                (255, 252, 220),
+                (mid, top),
+                (mid, top + h),
+                2,
+            )
+        except Exception as e:
+            logger.debug(f"[render_lanes versus] {e}")
+
+    def _render_leader_spotlight(self, racer) -> None:
+        """Versus: leader spotlight disabled (two independent halves)."""
+
+    def _render_race_start_hud(self, alpha: int) -> None:
+        """Versus: hide the GO! / Type-to-vote fade-in overlay."""
+
+    def _render_shortcuts_panel(self) -> None:
+        """Versus: hide the 1→RIV / 2→BOC scrolling ticker."""
+
+    def _render_global_ranking_futuristic(self) -> None:
+        """Versus: hide world-records / global ranking panel."""
+
+    def _render_idle_screen(self) -> None:
+        """Versus: hide the IDLE overlay (dark dim + connect prompt)."""
+
+    def _render_captain_label(self, racer, flag_x: int, flag_y: int) -> None:
+        """Captain label hidden in this version (logic kept, rendering skipped)."""
+        return
+        country = racer.country  # noqa: F401 — unreachable, kept for logic reference
+        captain = self.current_captains.get(country, "")
+        if not captain:
+            return
+        label_y = flag_y + 25
+        captain_text = f"@{captain}"
+        if country in self.captain_change_timer:
+            color = (255, 223, 0)
+            font_size = 12
+        else:
+            color = (255, 245, 220)
+            font_size = 10
+        glow_rgb = (
+            (100, 220, 255) if country == self.team_left_name else (255, 220, 100)
+        )
+        try:
+            captain_font = _get_font("Arial", font_size, bold=True)
+            for dx, dy, al in (
+                (2, 0, 50),
+                (-2, 0, 50),
+                (0, 2, 45),
+                (0, -2, 45),
+                (2, 2, 28),
+                (-2, -2, 28),
+            ):
+                g = captain_font.render(captain_text, True, glow_rgb)
+                g.set_alpha(al)
+                self.render_surface.blit(
+                    g,
+                    (
+                        flag_x - g.get_width() // 2 + dx,
+                        label_y - g.get_height() // 2 + dy,
+                    ),
+                )
+            captain_surface = self._render_text_enhanced(
+                captain_text,
+                captain_font,
+                color,
+                outline_color=(0, 0, 0),
+                outline_width=2,
+            )
+            captain_rect = captain_surface.get_rect(center=(flag_x, label_y))
+            self.render_surface.blit(captain_surface, captain_rect)
+        except Exception as e:
+            logger.debug(f"[versus_captain_label] {e}")
+
+    def _load_versus_crest(self, team_name: str, size: int) -> "Optional[pygame.Surface]":
+        """Load and cache the team crest PNG scaled to *size* × *size* pixels.
+
+        Args:
+            team_name: Team identifier ("River" or "Boca").
+            size: Target pixel size (square).
+
+        Returns:
+            Scaled pygame.Surface or None if the asset is missing.
+        """
+        cache_key = (team_name, size)
+        if cache_key in self._versus_crests:
+            return self._versus_crests[cache_key]
+
+        from core.resources import resource_path
+        import os
+
+        filename = f"escudo-{team_name.lower()}.png"
+        path = resource_path(os.path.join("assets", "versus", "images", filename))
+        surf: "Optional[pygame.Surface]" = None
+        try:
+            raw = pygame.image.load(path).convert_alpha()
+            surf = pygame.transform.smoothscale(raw, (size, size))
+        except Exception as e:
+            logger.debug(f"[versus_crest] could not load {filename}: {e}")
+            surf = None
+
+        self._versus_crests[cache_key] = surf
+        return surf
+
+    def _render_racer(self, racer, is_winner: bool = False) -> None:
+        """Team crest PNG puck with ground glow; falls back to sphere if image missing."""
+        from core.config import MOTOGP_MODE, SCREEN_HEIGHT, TEAM_LEFT, TEAM_RIGHT, VERSUS_PUCK_GROUND_GLOW_ALPHA
+
+        if MOTOGP_MODE:
+            super()._render_racer(racer, is_winner=is_winner)
+            return
+
+        x = float(racer.body.position.x)
+        y = float(racer.body.position.y + (racer.y_offset if hasattr(racer, "y_offset") else 0.0))
+        radius = float(racer.draw_radius)
+        angle = float(racer.body.angle)
+
+        x = float(x) if math.isfinite(x) else float(self.physics_world.start_x)
+        y = float(y) if math.isfinite(y) else float(
+            racer.lane * self.physics_world.lane_height + self.physics_world.lane_height // 2
+        )
+        radius = float(radius) if math.isfinite(radius) else 30.0
+
+        is_frozen = self.physics_world.is_country_frozen(racer.country)
+        if is_frozen:
+            x += random.uniform(-3, 3)
+            y += random.uniform(-2, 2)
+        elif racer.country in self.on_fire_countries:
+            x += random.uniform(-2, 2)
+            y += random.uniform(-2, 2)
+
+        if is_winner:
+            radius = radius * self.winner_scale_pulse
+
+        ix = self._safe_int(x, self.physics_world.start_x)
+        iy = self._safe_int(y, SCREEN_HEIGHT // 2)
+        ir = self._safe_int(radius, 30)
+
+        # ── Crest display size ───────────────────────────────────────────────
+        # 60 % of each half-width keeps the crest prominent without dominating.
+        from core.config import SCREEN_WIDTH
+        pw = self.physics_world
+        half_w = SCREEN_WIDTH // 2
+        max_from_width  = int(half_w * 0.60)
+        max_from_height = int(pw.game_area_height * 0.55)
+        crest_size = min(max_from_width, max_from_height)
+        if is_winner:
+            crest_size = int(crest_size * self.winner_scale_pulse)
+
+        # ── Ground glow ellipse (scaled to crest size) ───────────────────────
+        acc = (
+            TEAM_LEFT["accent"]
+            if racer.country == self.team_left_name
+            else TEAM_RIGHT["accent"]
+        )
+        glow_alpha = int(VERSUS_PUCK_GROUND_GLOW_ALPHA)
+        gr = crest_size // 2
+        ell_w, ell_h = max(gr * 3, 24), max(12, gr // 2 + 4)
+        ground = pygame.Surface((ell_w, ell_h), pygame.SRCALPHA)
+        pygame.draw.ellipse(ground, (*acc[:3], glow_alpha), ground.get_rect())
+        self.render_surface.blit(ground, (ix - ell_w // 2, iy + gr - ell_h // 2 + 2))
+
+        # ── Crest image (or sphere fallback) ────────────────────────────────
+        crest = self._load_versus_crest(racer.country, crest_size)
+        if crest is not None:
+            pulse = self._score_pulse.get(racer.country, 0.0)
+            if pulse > 0.01:
+                # Scale-up bounce: crest grows up to 20 % at pulse peak
+                scaled_px = int(crest_size * (1.0 + 0.20 * pulse))
+                scaled = pygame.transform.smoothscale(crest, (scaled_px, scaled_px))
+                self.render_surface.blit(scaled, scaled.get_rect(center=(ix, iy)))
+                # Team-colored concentric glow rings radiating outward
+                ring_base_r = scaled_px // 2 + 4
+                for i in range(4):
+                    ring_r = ring_base_r + i * 7
+                    ring_a = int(pulse * (160 - i * 36))
+                    if ring_a <= 0:
+                        break
+                    rsz = ring_r * 2 + 6
+                    ring_surf = pygame.Surface((rsz, rsz), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        ring_surf, (*acc[:3], ring_a),
+                        (rsz // 2, rsz // 2), ring_r, max(2, 4 - i),
+                    )
+                    self.render_surface.blit(ring_surf, ring_surf.get_rect(center=(ix, iy)))
+            else:
+                self.render_surface.blit(crest, crest.get_rect(center=(ix, iy)))
+        else:
+            # ── Sphere fallback ──────────────────────────────────────────────
+            d = crest_size
+            ball = pygame.Surface((d, d), pygame.SRCALPHA)
+            bcx, bcy = d // 2, d // 2
+            base = racer.color
+            if not (isinstance(base, (tuple, list)) and len(base) >= 3):
+                base = (140, 140, 140)
+            if racer.country == self.team_left_name:
+                dark, midc = (200, 200, 208), (252, 252, 255)
+            else:
+                dark = tuple(max(0, int(c * 0.42)) for c in base[:3])
+                midc = tuple(min(255, int(c * 0.75) + 18) for c in base[:3])
+            pygame.draw.circle(ball, dark, (bcx, bcy), gr)
+            pygame.draw.circle(ball, midc, (bcx, bcy), max(2, gr - 2))
+            self.render_surface.blit(ball, (ix - bcx, iy - bcy))
+            pygame.draw.circle(self.render_surface, (0, 0, 0), (ix, iy), gr, 2)
+
+        _ = angle  # rotation reserved
+
+        if is_frozen:
+            size = crest_size + 4
+            ice_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            ice_surf.fill((80, 210, 255, 100))
+            pygame.draw.rect(ice_surf, (200, 240, 255, 200), (0, 0, size, size), 2)
+            self.render_surface.blit(ice_surf, (ix - size // 2, iy - size // 2))
+            remaining = self.physics_world.frozen_countries.get(racer.country, 0.0)
+            timer_font = _get_font("Arial", 18, bold=True)
+            timer_surf = timer_font.render(f"{remaining:.1f}s", True, (180, 235, 255))
+            self.render_surface.blit(
+                timer_surf,
+                (ix - timer_surf.get_width() // 2, iy - size // 2 - 22),
+            )
+
+        self._render_captain_label(racer, ix, iy)
+
     def _transition_to_racing(self) -> None:
         super()._transition_to_racing()
+        self._apply_split_screen_layout()
         if self.victory_mode == "time" and self.match_start_time is None:
             self.match_start_time = time.time()
             logger.info("Timer de partido iniciado")
@@ -513,70 +1023,105 @@ class VersusGameEngine(GameEngine):
         if self.versus_victory_active:
             self._render_victory_screen()
 
+    def _ensure_versus_scoreboard(self) -> None:
+        """Lazily construct (or rebuild after config change) the retro LED scoreboard."""
+        if self._versus_scoreboard is not None:
+            return
+        self._versus_crests.clear()  # force crest reload at new sizes
+        self.asset_manager._versus_digital_font_cache.clear()  # flush font cache for new sizes
+        from variants.versus.scoreboard_ui import load_versus_scoreboard_fonts
+        from core.config import VERSUS_SCOREBOARD_CORNER_RADIUS
+
+        self._versus_scoreboard = load_versus_scoreboard_fonts(
+            self.asset_manager,
+            score_size=60,
+            label_size=52,
+            timer_size=22,
+            badge_height=50,
+            corner_radius=int(VERSUS_SCOREBOARD_CORNER_RADIUS),
+        )
+
     def _render_versus_hud(self) -> None:
-        """HUD compacto: marcador + tiempo, justo arriba del primer carril."""
+        """Retro LED scoreboard: scores, timer, optional Golden Goal row."""
         if self.game_state not in ("RACING", "IDLE"):
             return
 
         try:
-            from core.config import SCREEN_WIDTH, GAME_MARGIN
+            from core.config import SCREEN_WIDTH, GAME_MARGIN, TEAM_LEFT, TEAM_RIGHT
 
             surface = self.screen
             cx = GAME_MARGIN + SCREEN_WIDTH // 2
 
-            font_score = pygame.font.SysFont("Arial Black", 20, bold=True)
-            font_timer = pygame.font.SysFont("Arial", 14)
-
-            left_name  = self.team_left_name
+            left_name = self.team_left_name
             right_name = self.team_right_name
-            s_left  = self.set_score.get(left_name, 0)
+            s_left = self.set_score.get(left_name, 0)
             s_right = self.set_score.get(right_name, 0)
 
-            score_str  = f"{left_name.upper()}  {s_left}  —  {s_right}  {right_name.upper()}"
-            score_surf = font_score.render(score_str, True, (255, 255, 255))
-            score_rect = score_surf.get_rect(centerx=cx, top=0)
-
-            timer_surf = None
-            timer_rect = score_rect
+            timer_text: Optional[str] = None
+            timer_color = (255, 218, 130)
             if self.victory_mode == "time":
-                if self.match_start_time is None:
+                if self.in_extra_time and self.golden_goal_active:
+                    # Golden goal / sudden death — no clock, just the label
+                    timer_text = "GOL DE ORO"
+                    timer_color = (255, 215, 0)
+                elif self.match_start_time is None:
                     remaining = self.match_duration
-                    t_color = (200, 200, 200)
-                    t_str = f"TIEMPO  {int(remaining)//60}:{int(remaining)%60:02d}"
-                elif self.in_extra_time:
-                    extra_elapsed = time.time() - (self.extra_time_start or time.time())
-                    remaining = max(0.0, self.extra_time_secs - extra_elapsed)
-                    t_color = (255, 100, 100)
-                    t_str = "GOLDEN GOAL" if self.golden_goal_active else f"EXTRA  {int(remaining)//60}:{int(remaining)%60:02d}"
+                    timer_text = f"TIEMPO  {int(remaining) // 60}:{int(remaining) % 60:02d}"
                 else:
                     remaining = max(0.0, self.match_duration - self.match_elapsed)
-                    t_color = (255, 215, 0) if remaining > 30 else (255, 80, 80)
-                    t_str = f"TIEMPO  {int(remaining)//60}:{int(remaining)%60:02d}"
-                timer_surf = font_timer.render(t_str, True, t_color)
-                timer_rect = timer_surf.get_rect(centerx=cx, top=score_rect.bottom + 3)
+                    timer_color = (255, 218, 130) if remaining > 30 else (255, 120, 95)
+                    timer_text = f"TIEMPO  {int(remaining) // 60}:{int(remaining) % 60:02d}"
 
-            pad_x, pad_y = 10, 4
-            total_h = score_rect.height + (timer_rect.height + 3 if timer_surf else 0) + pad_y * 2
+            # "GOL DE ORO" is already shown in the timer row; no extra row needed.
+            golden_row = False
 
             pw = self.physics_world
             first_lane_top = pw.game_area_top + pw.lane_y_offset
             gap = 6
-            top_y = GAME_MARGIN + first_lane_top - total_h - gap
-            top_y = max(GAME_MARGIN + 2, int(top_y))
-            score_rect.top = top_y
-            if timer_surf:
-                timer_rect.top = score_rect.bottom + 3
+            panel_w = min(SCREEN_WIDTH - 12, 420)
+            label_h = 58     # RIVER / BOCA font row
+            row2_h  = 68     # badge + score on same row
+            timer_h = 24 if timer_text else 0
+            gg_h    = 0       # golden_row always False
+            pad_y   = 6
+            total_h = label_h + row2_h + timer_h + gg_h + pad_y
+            top_y = max(GAME_MARGIN + 4, GAME_MARGIN + first_lane_top - total_h - 30)
 
-            bg = pygame.Surface((score_rect.width + pad_x * 2, total_h), pygame.SRCALPHA)
-            bg.fill((0, 0, 0, 160))
-            surface.blit(bg, (score_rect.left - pad_x, score_rect.top - pad_y))
-            surface.blit(score_surf, score_rect)
-            if timer_surf:
-                surface.blit(timer_surf, timer_rect)
+            panel_rect = pygame.Rect(0, 0, panel_w, total_h)
+            panel_rect.centerx = cx
+            panel_rect.top = top_y
 
-            # Teclas demo
-            if self.connection_state and str(self.connection_state) not in ("ConnectionState.CONNECTED",):
-                hint = pygame.font.SysFont("Arial", 12).render("Q=River  W=Boca  (DEMO)", True, (100, 100, 100))
+            self._ensure_versus_scoreboard()
+            sb = self._versus_scoreboard
+
+            la = TEAM_LEFT["accent"]
+            rc_b = TEAM_RIGHT["color"]
+            sb.draw(
+                surface,
+                panel_rect,
+                left_team_upper=left_name,
+                right_team_upper=right_name,
+                s_left=s_left,
+                s_right=s_right,
+                timer_text=timer_text,
+                timer_color=timer_color,
+                golden_goal_row=golden_row,
+                anim_time=self._versus_anim_time,
+                dt=self._versus_last_dt,
+                pulse_left=self._score_pulse.get(left_name, 0.0),
+                pulse_right=self._score_pulse.get(right_name, 0.0),
+                river_name_color=(min(255, la[0] + 30), min(255, la[1] + 20), min(255, la[2] + 20)),
+                river_name_glow=(255, 140, 140),
+                boca_name_color=(min(255, rc_b[0] + 40), min(255, rc_b[1] + 60), 255),
+                boca_name_glow=(160, 200, 255),
+            )
+
+            if self.connection_state and str(self.connection_state) not in (
+                "ConnectionState.CONNECTED",
+            ):
+                hint = pygame.font.SysFont("Arial", 12).render(
+                    "Q=River  W=Boca  (DEMO)", True, (100, 100, 100)
+                )
                 surface.blit(hint, hint.get_rect(centerx=cx, bottom=self.screen.get_height() - 4))
 
         except Exception as e:

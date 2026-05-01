@@ -111,7 +111,9 @@ def build(variant: str = "countries"):
 
     # Required asset subfolders. fonts and images (e.g. flags) must exist for visuals.
     # backgrounds is optional (fallback to procedural star field).
-    asset_subfolders = ['audio', 'gifts', 'sounds', 'fonts', 'images', 'backgrounds', 'flags', 'motos']
+    asset_subfolders = [
+        'audio', 'gifts', 'sounds', 'fonts', 'images', 'backgrounds', 'flags', 'motos', 'versus',
+    ]
     assets_to_include = []
     for subfolder in asset_subfolders:
         subfolder_path = os.path.join('assets', subfolder)

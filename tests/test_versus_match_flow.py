@@ -31,10 +31,8 @@ def _minimal_versus_engine():
     eng.team_right_name = "Boca"
     eng.teams = ["River", "Boca"]
     eng.set_score = {"River": 0, "Boca": 0}
-    eng.extra_time_secs = 60.0
     eng.in_extra_time = False
     eng.extra_time_start = None
-    eng.golden_goal_enabled = True
     eng.golden_goal_active = False
     eng.versus_victory_active = False
     eng._trigger_set_victory = MagicMock()
@@ -43,30 +41,34 @@ def _minimal_versus_engine():
 
 
 class TestVersusEvaluateTimeWinner(unittest.TestCase):
-    """Tests for VersusGameEngine._evaluate_time_winner."""
+    """Tests for VersusGameEngine._evaluate_time_winner (simplified Gol de Oro)."""
 
     def test_decisive_score_calls_trigger_with_leader(self):
+        """Clear winner when time expires → victory triggered immediately."""
         eng = _minimal_versus_engine()
         eng.set_score = {"River": 4, "Boca": 2}
-        VersusGameEngine._evaluate_time_winner(eng, is_extra=False)
+        VersusGameEngine._evaluate_time_winner(eng)
         eng._trigger_set_victory.assert_called_once_with("River")
         self.assertFalse(eng.in_extra_time)
 
-    def test_tie_starts_extra_time_no_trigger(self):
+    def test_tie_activates_golden_goal_no_trigger(self):
+        """Tie on time expiry → golden goal (sudden death) without triggering victory."""
         eng = _minimal_versus_engine()
         eng.set_score = {"River": 3, "Boca": 3}
-        VersusGameEngine._evaluate_time_winner(eng, is_extra=False)
+        VersusGameEngine._evaluate_time_winner(eng)
         eng._trigger_set_victory.assert_not_called()
         self.assertTrue(eng.in_extra_time)
+        self.assertTrue(eng.golden_goal_active)
         self.assertIsNotNone(eng.extra_time_start)
 
-    def test_tie_no_extra_calls_trigger_random(self):
+    def test_tie_golden_goal_no_countdown(self):
+        """After tie, golden goal state has no time limit — extra_time_secs is not consulted."""
         eng = _minimal_versus_engine()
         eng.set_score = {"River": 1, "Boca": 1}
-        eng.extra_time_secs = 0.0
-        with patch("variants.versus.game_engine.random.choice", return_value="Boca"):
-            VersusGameEngine._evaluate_time_winner(eng, is_extra=False)
-        eng._trigger_set_victory.assert_called_once_with("Boca")
+        VersusGameEngine._evaluate_time_winner(eng)
+        # No victory called — match waits for the next score
+        eng._trigger_set_victory.assert_not_called()
+        self.assertTrue(eng.golden_goal_active)
 
 
 class TestVersusConfigPatch(unittest.TestCase):
@@ -97,8 +99,20 @@ class TestVersusVictoryOverlayTimeout(unittest.TestCase):
         eng.versus_victory_time = 11.0
         eng.victory_screen_duration = 12.0
         eng._reset_versus = MagicMock()
+        eng.team_left_name = "River"
+        eng.team_right_name = "Boca"
+        eng._versus_anim_time = 0.0
+        eng._versus_last_dt = 0.0
+        eng._score_pulse = {"River": 0.0, "Boca": 0.0}
+        eng._pin_versus_racers_static = MagicMock()
+        eng.physics_world = MagicMock()
+        eng.physics_world.racers = {}
+        eng.game_state = "IDLE"
+        eng.victory_mode = "score"
+        eng.match_start_time = None
         with patch("variants.versus.game_engine.GameEngine.update", MagicMock()):
-            VersusGameEngine.update(eng, 2.0)
+            with patch.object(_core_config, "VERSUS_AMBIENT_ENABLED", False):
+                VersusGameEngine.update(eng, 2.0)
         eng._reset_versus.assert_called_once()
 
 
