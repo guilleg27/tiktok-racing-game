@@ -68,7 +68,7 @@ AUTOPILOT_ENABLED: bool = False
 VERSUS_GIFT_POINT_VALUE: int = 1   # cada gift mapeado = 1 punto
 
 # ── PANTALLA DE VICTORIA ─────────────────────────────────────────────────────
-VICTORY_SCREEN_DURATION: float = 12.0   # segundos mostrando la pantalla
+VICTORY_SCREEN_DURATION: float = 30.0   # segundos mostrando la pantalla
 SHOW_TOP_DONOR_GLOBAL: bool = True       # top donador global del stream
 SHOW_MVP_WINNER_TEAM: bool = True        # MVP del equipo ganador
 
