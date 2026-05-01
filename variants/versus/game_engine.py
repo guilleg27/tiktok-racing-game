@@ -148,6 +148,9 @@ class VersusGameEngine(GameEngine):
 
         self._apply_split_screen_layout()
 
+        # Silence the join-welcome banner — it overlaps the scoreboard.
+        self.notification_manager.render = lambda *_args, **_kwargs: None
+
     # ── Split screen (River | Boca) ─────────────────────────────────────────
 
     @staticmethod
@@ -433,8 +436,9 @@ class VersusGameEngine(GameEngine):
         self.audio_manager.play_victory_sound(winner_country=winner_team)
         self.screen_shaker.big_impact_shake()
 
-        if self.cloud_manager.enabled:
-            asyncio.create_task(self._sync_versus_result(winner_team))
+        # Cloud sync disabled for versus variant — uncomment to re-enable.
+        # if self.cloud_manager.enabled:
+        #     asyncio.create_task(self._sync_versus_result(winner_team))
 
     # ── Override update: timer de partido y tiempo extra ──────────────────────
 
@@ -610,6 +614,7 @@ class VersusGameEngine(GameEngine):
 
     def _draw_permanent_cta(self, surface) -> None:
         pass
+
 
     def _render_podium_tags(self) -> None:
         pass
@@ -1128,73 +1133,217 @@ class VersusGameEngine(GameEngine):
             logger.debug(f"[render_versus_hud] {e}")
 
     def _render_victory_screen(self) -> None:
-        """Pantalla de victoria del partido: marcador final, top donador, MVP."""
+        """Enhanced victory screen: winner crest, final score, stat cards, countdown bar."""
         if not self.versus_winner:
             return
 
         try:
-            import pygame
-            from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT, TEAM_LEFT, TEAM_RIGHT
+            from core.config import (
+                ACTUAL_WIDTH, ACTUAL_HEIGHT, TEAM_LEFT, TEAM_RIGHT,
+                GAME_MARGIN, GAME_AREA_TOP, GAME_AREA_BOTTOM, SCREEN_HEIGHT,
+            )
 
             surface = self.screen
             sw, sh = surface.get_size()
-            # Prefer real backbuffer size (packaged / resized); fallback to config.
             aw = sw if sw > 0 else ACTUAL_WIDTH
             ah = sh if sh > 0 else ACTUAL_HEIGHT
             cx = aw // 2
-
-            # Overlay oscuro — cubre toda la ventana (incl. márgenes del marco)
-            overlay = pygame.Surface((aw, ah), pygame.SRCALPHA)
-            alpha = min(200, int(self.versus_victory_time * 100))
-            overlay.fill((0, 0, 0, alpha))
-            surface.blit(overlay, (0, 0))
+            t  = self.versus_victory_time
+            f  = min(1.0, t * 2.0)       # general 0→1 fade-in over 0.5 s
 
             winner_cfg = TEAM_LEFT if self.versus_winner == TEAM_LEFT["name"] else TEAM_RIGHT
-            font_title  = pygame.font.SysFont("Arial Black", 48, bold=True)
-            font_sub    = pygame.font.SysFont("Arial", 22, bold=True)
-            font_detail = pygame.font.SysFont("Arial", 18)
+            loser_cfg  = TEAM_RIGHT if self.versus_winner == TEAM_LEFT["name"] else TEAM_LEFT  # noqa: F841
+            w_accent   = winner_cfg["accent"]
+            w_color    = winner_cfg["color"]
 
-            cy = ah // 2 - 80
+            # ── Vertical band reserved for content (between camera and chat) ──
+            # Top = where the game area starts (below the camera feed).
+            # Bottom = where the game area ends (above the chat strip).
+            play_top    = GAME_MARGIN + GAME_AREA_TOP                    # ≈ 240 px
+            play_bottom = GAME_MARGIN + SCREEN_HEIGHT - GAME_AREA_BOTTOM # ≈ 795 px
+            play_center = (play_top + play_bottom) // 2
 
-            # Título
-            title_surf = font_title.render(f"{winner_cfg['name'].upper()} GANO", True, winner_cfg["color"])
-            surface.blit(title_surf, title_surf.get_rect(centerx=cx, centery=cy))
-            cy += 60
+            # Estimated total content height so we can center it.
+            CONTENT_H = 430
+            y = max(play_top + 6, play_center - CONTENT_H // 2)
 
-            left  = self.team_left_name
-            right = self.team_right_name
-            ma = self.set_score.get(left, 0)
-            mb = self.set_score.get(right, 0)
-            marcador_str = f"Marcador final: {left} {ma} — {mb} {right}"
-            marcador_surf = font_sub.render(marcador_str, True, (255, 215, 0))
-            surface.blit(marcador_surf, marcador_surf.get_rect(centerx=cx, centery=cy))
-            cy += 45
+            # ── Dark overlay (fade in) ───────────────────────────────────────
+            ov = pygame.Surface((aw, ah), pygame.SRCALPHA)
+            ov.fill((0, 0, 0, int(248 * min(1.0, t * 1.5))))
+            surface.blit(ov, (0, 0))
 
-            # Top donador global
-            if self.show_top_donor_global and self.victory_top_donor:
-                donor_surf = font_detail.render(
-                    f"Top donador: @{self.victory_top_donor} ({self.victory_top_donor_diamonds} diamantes)",
-                    True, (200, 200, 255)
-                )
-                surface.blit(donor_surf, donor_surf.get_rect(centerx=cx, centery=cy))
-                cy += 30
+            # ── Winner-colored radial glow (centred on content block) ────────
+            pulse = 0.7 + 0.3 * math.sin(t * 2.2)
+            glow_cy = play_center
+            glow_surf = pygame.Surface((aw, ah), pygame.SRCALPHA)
+            for i in range(6, 0, -1):
+                r = 80 + i * 45
+                a = int(pulse * (14 - i * 2) * f)
+                if a > 0:
+                    pygame.draw.circle(glow_surf, (*w_accent[:3], a), (cx, glow_cy), r)
+            surface.blit(glow_surf, (0, 0))
 
-            # MVP equipo ganador
-            if self.show_mvp_winner_team and self.victory_mvp:
-                mvp_surf = font_detail.render(
-                    f"MVP {winner_cfg['name']}: @{self.victory_mvp} ({self.victory_mvp_diamonds} diamantes)",
-                    True, (255, 230, 100)
-                )
-                surface.blit(mvp_surf, mvp_surf.get_rect(centerx=cx, centery=cy))
-                cy += 30
+            # ── Row 1: VS badge strip (small crests + score) ─────────────────
+            mini = 48
+            l_crest = self._load_versus_crest(self.team_left_name, mini)
+            r_crest = self._load_versus_crest(self.team_right_name, mini)
 
-            # Cuenta regresiva para nuevo duelo
-            remaining = max(0.0, self.victory_screen_duration - self.versus_victory_time)
-            if remaining < 8:
-                countdown_surf = font_detail.render(
-                    f"Nuevo partido en {int(remaining) + 1}s...", True, (150, 150, 150)
-                )
-                surface.blit(countdown_surf, countdown_surf.get_rect(centerx=cx, centery=cy + 20))
+            score_l = self.set_score.get(self.team_left_name, 0)
+            score_r = self.set_score.get(self.team_right_name, 0)
+
+            score_font_sm = self.asset_manager.get_versus_digital_font(30)
+            gap = 70
+
+            # Left crest + score
+            if l_crest:
+                sc = l_crest.copy(); sc.set_alpha(int(230 * f))
+                surface.blit(sc, sc.get_rect(centerx=cx - gap - mini // 2, centery=y + mini // 2))
+            sl_surf = score_font_sm.render(str(score_l), True, (255, 212, 72))
+            sl_surf.set_alpha(int(255 * f))
+            surface.blit(sl_surf, sl_surf.get_rect(centerx=cx - gap + mini // 2 + 4, centery=y + mini // 2))
+
+            # Dash
+            dash_font = pygame.font.SysFont("Arial", 22, bold=True)
+            dash = dash_font.render("—", True, (90, 90, 90))
+            dash.set_alpha(int(200 * f))
+            surface.blit(dash, dash.get_rect(center=(cx, y + mini // 2)))
+
+            # Right score + crest
+            sr_surf = score_font_sm.render(str(score_r), True, (255, 212, 72))
+            sr_surf.set_alpha(int(255 * f))
+            surface.blit(sr_surf, sr_surf.get_rect(centerx=cx + gap - mini // 2 - 4, centery=y + mini // 2))
+            if r_crest:
+                sc = r_crest.copy(); sc.set_alpha(int(230 * f))
+                surface.blit(sc, sc.get_rect(centerx=cx + gap + mini // 2, centery=y + mini // 2))
+
+            y += mini + 14
+
+            # ── Row 2: Winner crest (large, golden rings) ────────────────────
+            crest_sz = 150
+            bounce   = 1.0 + 0.035 * math.sin(t * 3.5)
+            draw_sz  = int(crest_sz * bounce * min(1.0, t * 3.0))
+            w_crest  = self._load_versus_crest(self.versus_winner, crest_sz)
+            crest_cy = y + crest_sz // 2
+
+            # Golden rings (on intermediate surface)
+            ring_pulse = 0.55 + 0.45 * math.sin(t * 4.0)
+            ring_surf  = pygame.Surface((aw, crest_sz + 40), pygame.SRCALPHA)
+            local_cx   = cx
+            local_cy   = crest_sz // 2 + 20
+            for i in range(4):
+                ra = int(ring_pulse * (140 - i * 32) * f)
+                if ra > 0:
+                    pygame.draw.circle(
+                        ring_surf, (255, 215, 0, ra),
+                        (local_cx, local_cy), crest_sz // 2 + 6 + i * 7, max(1, 4 - i),
+                    )
+            surface.blit(ring_surf, (0, y - 20))
+
+            if w_crest and draw_sz > 10:
+                ds = pygame.transform.smoothscale(w_crest, (draw_sz, draw_sz))
+                ds.set_alpha(int(255 * f))
+                surface.blit(ds, ds.get_rect(centerx=cx, centery=crest_cy))
+
+            y += crest_sz + 10
+
+            # ── Row 3: Title "GANADOR: RIVER" ────────────────────────────────
+            title_font = self.asset_manager.get_versus_digital_font(44)
+            title_text = f"GANADOR: {self.versus_winner.upper()}"
+            title_f    = min(1.0, t * 3.0)
+
+            for offset, af in ((5, 0.20), (3, 0.38)):
+                for dx, dy in ((-offset, 0), (offset, 0), (0, -offset), (0, offset)):
+                    g = title_font.render(title_text, True, w_accent[:3])
+                    g.set_alpha(int(200 * title_f * af))
+                    surface.blit(g, g.get_rect(centerx=cx + dx, centery=y + dx))
+            ts = title_font.render(title_text, True, w_color[:3])
+            ts.set_alpha(int(255 * title_f))
+            surface.blit(ts, ts.get_rect(centerx=cx, centery=y + title_font.get_height() // 2))
+            y += title_font.get_height() + 12
+
+            # ── Separator ────────────────────────────────────────────────────
+            sep = pygame.Surface((int(aw * 0.72), 1), pygame.SRCALPHA)
+            sep.fill((255, 255, 255, int(35 * f)))
+            surface.blit(sep, sep.get_rect(centerx=cx, top=y))
+            y += 10
+
+            # ── Row 4: Stat cards (Top Donador | MVP) ────────────────────────
+            card_w   = int(aw * 0.40)
+            card_h   = 72
+            pad      = 10
+            card_l_x = cx - card_w - pad // 2
+            card_r_x = cx + pad // 2
+
+            lbl_font  = pygame.font.SysFont("Arial", 12, bold=True)
+            user_font = pygame.font.SysFont("Arial", 14, bold=True)
+            dia_font  = pygame.font.SysFont("Arial", 12)
+
+            def _stat_card(x: int, cy_top: int, title: str, username, diamonds: int,
+                           accent: tuple) -> None:
+                cs = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+                for i in range(card_h):
+                    ratio = i / card_h
+                    r = int(12 + accent[0] * 0.07 * (1 - ratio * 0.5))
+                    g = int(12 + accent[1] * 0.07 * (1 - ratio * 0.5))
+                    b = int(22 + accent[2] * 0.10 * (1 - ratio * 0.5))
+                    a = int(170 * f)
+                    pygame.draw.line(cs, (r, g, b, a), (0, i), (card_w, i))
+                pygame.draw.rect(cs, (*accent[:3], int(160 * f)),
+                                 (0, 0, card_w, card_h), 1, border_radius=6)
+                t_s = lbl_font.render(title, True, accent[:3])
+                t_s.set_alpha(int(230 * f))
+                cs.blit(t_s, (8, 6))
+                if username:
+                    u_s = user_font.render(f"@{username}", True, (235, 235, 235))
+                    u_s.set_alpha(int(255 * f))
+                    cs.blit(u_s, (8, 24))
+                    d_s = dia_font.render(f"{diamonds} diamantes", True, (170, 170, 170))
+                    d_s.set_alpha(int(200 * f))
+                    cs.blit(d_s, (8, 48))
+                else:
+                    nd = lbl_font.render("sin datos", True, (90, 90, 90))
+                    cs.blit(nd, (8, 30))
+                surface.blit(cs, (x, cy_top))
+
+            if self.show_top_donor_global:
+                _stat_card(card_l_x, y, "TOP DONADOR",
+                           self.victory_top_donor, self.victory_top_donor_diamonds,
+                           (255, 215, 0))
+
+            if self.show_mvp_winner_team:
+                _stat_card(card_r_x, y, f"MVP {self.versus_winner.upper()}",
+                           self.victory_mvp, self.victory_mvp_diamonds,
+                           w_accent)
+
+            y += card_h + 14
+
+            # ── Row 5: Countdown bar ─────────────────────────────────────────
+            remaining = max(0.0, self.victory_screen_duration - t)
+            progress  = remaining / max(1.0, self.victory_screen_duration)
+
+            bar_w = int(aw * 0.62)
+            bar_h = 5
+            bx    = cx - bar_w // 2
+
+            track = pygame.Surface((bar_w, bar_h), pygame.SRCALPHA)
+            track.fill((55, 55, 55, 140))
+            surface.blit(track, (bx, y))
+
+            fill_w = int(bar_w * progress)
+            if fill_w > 2:
+                fc = (80, 210, 110) if remaining > 8 else (255, 130, 50)
+                fill = pygame.Surface((fill_w, bar_h), pygame.SRCALPHA)
+                fill.fill((*fc, 210))
+                surface.blit(fill, (bx, y))
+
+            y += bar_h + 6
+
+            cd_font  = pygame.font.SysFont("Arial", 14, bold=True)
+            cd_color = (80, 210, 110) if remaining > 8 else (255, 130, 50)
+            cd_text  = f"Nuevo partido en {int(remaining) + 1}s..." if remaining > 0 else "Preparandose..."
+            cd_surf  = cd_font.render(cd_text, True, cd_color)
+            cd_surf.set_alpha(int(190 * f))
+            surface.blit(cd_surf, cd_surf.get_rect(centerx=cx, top=y))
 
         except Exception as e:
             logger.debug(f"[render_victory_screen] {e}")
