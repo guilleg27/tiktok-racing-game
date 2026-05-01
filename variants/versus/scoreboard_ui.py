@@ -157,6 +157,8 @@ class VersusRetroScoreboard:
         boca_name_glow: Tuple[int, int, int],
         score_led_color: Tuple[int, int, int] = (255, 212, 72),
         score_glow_color: Tuple[int, int, int] = (170, 110, 35),
+        fans_left: int = 0,
+        fans_right: int = 0,
     ) -> None:
         """Draw the full scoreboard into ``rect`` on ``surface``."""
         _ = dt
@@ -253,6 +255,17 @@ class VersusRetroScoreboard:
                 halo.set_alpha(min(90, alpha // 2))
                 surface.blit(halo, gr.move(ox, oy))
             surface.blit(g_surf, gr)
+            y += self._timer_font.get_height() + 1
+
+        # ── Fans row: session-wide keyword votes ─────────────────────────────
+        fans_color = (130, 180, 255)
+        lf_str = f"Fans: {fans_left}"
+        rf_str = f"Fans: {fans_right}"
+        lf_surf = self._timer_font.render(lf_str, True, fans_color)
+        rf_surf = self._timer_font.render(rf_str, True, fans_color)
+        fans_row_y = y + 2
+        surface.blit(lf_surf, lf_surf.get_rect(left=inner.left + 6, centery=fans_row_y + lf_surf.get_height() // 2))
+        surface.blit(rf_surf, rf_surf.get_rect(right=inner.right - 6, centery=fans_row_y + rf_surf.get_height() // 2))
 
         gloss = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
         pts = [

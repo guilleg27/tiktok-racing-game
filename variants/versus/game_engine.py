@@ -136,6 +136,13 @@ class VersusGameEngine(GameEngine):
             self.team_right_name: {},
         }
 
+        # Session-wide fan counter: chat keyword votes, persists across match resets.
+        self.session_fans: dict[str, int] = {
+            self.team_left_name: 0,
+            self.team_right_name: 0,
+        }
+        self._fans_cooldown: dict[str, float] = {}  # username → timestamp of last fan vote
+
         # Deshabilitar la meta física para que la carrera nunca termine por posición.
         # La victoria se decide únicamente por tiempo (VersusGameEngine.update).
         self.physics_world.finish_line_x = 999999
@@ -336,8 +343,46 @@ class VersusGameEngine(GameEngine):
             self._check_set_winner()
             return
 
-        # Todos los demás eventos los maneja el engine base sin cambios
+        # COMMENT: check for fan keyword before passing to base engine
+        if event.type == EventType.COMMENT:
+            self._handle_versus_fan_comment(event)
+
+        # All other events (including COMMENT) handled by base engine
         await super()._handle_event(event)
+
+    def _handle_versus_fan_comment(self, event: GameEvent) -> None:
+        """Increment session fan counter when a chat comment matches a team keyword.
+
+        Args:
+            event: COMMENT event from TikTok chat.
+        """
+        import time as _time
+        from core.config import COMMENT_COOLDOWN, TEAM_LEFT, TEAM_RIGHT
+
+        username = self.sanitize_username(event.username)
+        text = (event.content or "").strip().lower()
+        if not text:
+            return
+
+        # Per-user cooldown: same user can only add 1 fan vote per COMMENT_COOLDOWN seconds
+        now = _time.time()
+        if now - self._fans_cooldown.get(username, 0.0) < COMMENT_COOLDOWN:
+            return
+        self._fans_cooldown[username] = now
+
+        # Keyword matching: first word of the comment is enough
+        first_word = text.split()[0] if text.split() else text
+        team: Optional[str] = None
+        if first_word in [kw.lower() for kw in TEAM_LEFT["keywords"]]:
+            team = self.team_left_name
+        elif first_word in [kw.lower() for kw in TEAM_RIGHT["keywords"]]:
+            team = self.team_right_name
+
+        if team is None:
+            return
+
+        self.session_fans[team] = self.session_fans.get(team, 0) + 1
+        logger.debug(f"[VERSUS fans] {username} → {team} | total={self.session_fans[team]}")
 
     async def _handle_versus_gift_physics(
         self,
@@ -594,6 +639,20 @@ class VersusGameEngine(GameEngine):
         elif not keys[pygame.K_w]:
             self._w_held = False
 
+        # E → fan comment for River (team_left)
+        if keys[pygame.K_e] and not getattr(self, "_e_held", False):
+            self._e_held = True
+            self._inject_demo_fan_comment(self.team_left_name)
+        elif not keys[pygame.K_e]:
+            self._e_held = False
+
+        # R → fan comment for Boca (team_right)
+        if keys[pygame.K_r] and not getattr(self, "_r_held", False):
+            self._r_held = True
+            self._inject_demo_fan_comment(self.team_right_name)
+        elif not keys[pygame.K_r]:
+            self._r_held = False
+
     def _inject_demo_gift(self, team: str) -> None:
         """Inyecta un gift de demo para el equipo dado."""
         from core.config import (
@@ -609,6 +668,25 @@ class VersusGameEngine(GameEngine):
         )
         self.queue.put_nowait(event)
         logger.debug(f"[DEMO] Injected {gift_name} → {team}")
+
+    def _inject_demo_fan_comment(self, team: str) -> None:
+        """Injects a demo COMMENT event using the first keyword for the given team.
+
+        Args:
+            team: Team name (team_left_name or team_right_name).
+        """
+        import random
+        from core.config import TEAM_LEFT, TEAM_RIGHT
+        keywords = TEAM_LEFT["keywords"] if team == TEAM_LEFT["name"] else TEAM_RIGHT["keywords"]
+        keyword = keywords[0] if keywords else team.lower()
+        username = f"fan_{team.lower()}_{random.randint(1, 9999)}"
+        event = GameEvent(
+            type=EventType.COMMENT,
+            username=username,
+            content=keyword,
+        )
+        self.queue.put_nowait(event)
+        logger.debug(f"[DEMO] Fan comment '{keyword}' → {team}")
 
     # ── Overrides: suprimir elementos de UI de carrera ───────────────────────
 
@@ -1088,8 +1166,9 @@ class VersusGameEngine(GameEngine):
             row2_h  = 68     # badge + score on same row
             timer_h = 24 if timer_text else 0
             gg_h    = 0       # golden_row always False
+            fans_h  = 22     # fans counter row
             pad_y   = 6
-            total_h = label_h + row2_h + timer_h + gg_h + pad_y
+            total_h = label_h + row2_h + timer_h + gg_h + fans_h + pad_y
             top_y = max(GAME_MARGIN + 4, GAME_MARGIN + first_lane_top - total_h - 30)
 
             panel_rect = pygame.Rect(0, 0, panel_w, total_h)
@@ -1119,6 +1198,8 @@ class VersusGameEngine(GameEngine):
                 river_name_glow=(255, 140, 140),
                 boca_name_color=(min(255, rc_b[0] + 40), min(255, rc_b[1] + 60), 255),
                 boca_name_glow=(160, 200, 255),
+                fans_left=self.session_fans.get(left_name, 0),
+                fans_right=self.session_fans.get(right_name, 0),
             )
 
             if self.connection_state and str(self.connection_state) not in (

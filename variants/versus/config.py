@@ -50,7 +50,7 @@ VERSUS_GIFT_TEAM_MAP: dict[str, str] = {
 VICTORY_MODE: str = "time"
 
 SCORE_LIMIT: int = 10          # puntos para ganar en modo "score"
-MATCH_DURATION_SECS: float = 10.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
+MATCH_DURATION_SECS: float = 100.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
 
 # ── GOL DE ORO (muerte súbita) ───────────────────────────────────────────────
 # When regular time ends in a tie, golden goal / sudden death starts immediately.
