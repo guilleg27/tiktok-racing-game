@@ -26,6 +26,7 @@ class AssetManager:
         self._cache: Dict[str, pygame.Surface] = {}
         self._scale_cache: Dict[Tuple[str, int], pygame.Surface] = {}
         self._missing_assets: set = set()
+        self._versus_digital_font_cache: Dict[int, pygame.font.Font] = {}
         
         # Ensure assets directory exists (solo en desarrollo)
         try:
@@ -108,6 +109,45 @@ class AssetManager:
             self._scale_cache[cache_key] = scaled
         return scaled
     
+    def get_versus_digital_font(self, size: int) -> pygame.font.Font:
+        """Load cached dot-matrix / scoreboard font for Versus (primary: DOTMATRI).
+
+        Tries, in order: ``DOTMATRI.TTF``, ``DOTMBold.TTF``, ``DSEG7Classic-Regular.ttf``
+        under ``assets/versus/fonts/`` (each via ``resource_path``). Last resort is a
+        system monospace font (CI or missing assets).
+
+        Args:
+            size: Point size for pygame.font.Font.
+
+        Returns:
+            A pygame Font instance suitable for scores, timer, and team labels.
+        """
+        if size in self._versus_digital_font_cache:
+            return self._versus_digital_font_cache[size]
+        candidates = (
+            os.path.normpath(os.path.join("assets", "versus", "fonts", "DOTMATRI.TTF")),
+            os.path.normpath(os.path.join("assets", "versus", "fonts", "DOTMBold.TTF")),
+            os.path.normpath(os.path.join("assets", "versus", "fonts", "DSEG7Classic-Regular.ttf")),
+        )
+        font: Optional[pygame.font.Font] = None
+        last_err: Optional[Exception] = None
+        for ttf_rel in candidates:
+            path = resource_path(ttf_rel)
+            try:
+                font = pygame.font.Font(path, size)
+                break
+            except Exception as e:
+                last_err = e
+                continue
+        if font is None:
+            logger.warning(
+                "Versus scoreboard fonts missing or invalid (%s); using SysFont fallback",
+                last_err,
+            )
+            font = pygame.font.SysFont("consolas", size, bold=True)
+        self._versus_digital_font_cache[size] = font
+        return font
+
     def get_sprite_for_racer(self, gift_name: str, target_height: int) -> Optional[pygame.Surface]:
         """Scale sprite to target_height preserving aspect ratio, no background removal.
         Used for motorcycle sprites in MOTOGP_MODE where images are non-square and
@@ -342,6 +382,7 @@ class AssetManager:
         self._cache.clear()
         self._scale_cache.clear()
         self._missing_assets.clear()
+        self._versus_digital_font_cache.clear()
         self._preload_assets()
     
     @property

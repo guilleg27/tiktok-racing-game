@@ -1,4 +1,4 @@
-name: Build TikTok Racing GO Game
+name: Build Versus (Boca vs River)
 
 on:
   push:
@@ -29,13 +29,13 @@ jobs:
         pip install pyinstaller
 
     - name: Build executable
-      run: python build_app.py --variant countries
+      run: python build_app.py --variant versus
 
     - name: Upload Windows artifact
       uses: actions/upload-artifact@v4
       with:
-        name: TikTokRacingGoLive-Windows
-        path: dist/TikTokRacingGoLive/
+        name: Versus-Windows
+        path: dist/versus/
 
   build-macos:
     runs-on: macos-latest
@@ -57,13 +57,13 @@ jobs:
         pip install pyinstaller
 
     - name: Build executable
-      run: python build_app.py --variant countries
+      run: python build_app.py --variant versus
 
     - name: Upload macOS artifact
       uses: actions/upload-artifact@v4
       with:
-        name: TikTokRacingGoLive-macOS
-        path: dist/TikTokRacingGoLive.app/
+        name: Versus-macOS
+        path: dist/versus.app/
 
   test:
     runs-on: ubuntu-latest
@@ -89,18 +89,15 @@ jobs:
         pip install -r requirements.txt
         pip install pytest
 
-    - name: Syntax check src/
-      run: python -m py_compile main.py src/*.py
-
     - name: Syntax check core/
       run: python -m py_compile core/*.py
 
-    - name: Syntax check variants/
-      run: python -m py_compile variants/countries/main.py variants/motos/main.py variants/motos/config.py variants/versus/main.py variants/versus/config.py variants/versus/game_engine.py variants/versus/scoreboard_ui.py
+    - name: Syntax check versus variant
+      run: python -m py_compile variants/versus/main.py variants/versus/config.py variants/versus/game_engine.py variants/versus/scoreboard_ui.py
 
-    - name: Run tests
-      run: python -m pytest tests/ -v --ignore=tests/test_e2e_cloud_sync.py --ignore=tests/test_multiple_races.py --ignore=tests/test_global_ranking.py
-      continue-on-error: true
+    - name: Run versus tests
+      run: python -m pytest tests/test_versus_match_flow.py tests/test_versus_scoreboard_ui.py -v
+      continue-on-error: false
 
   release:
     needs: [build-windows, build-macos, test]
@@ -111,13 +108,13 @@ jobs:
     - name: Download Windows artifact
       uses: actions/download-artifact@v4
       with:
-        name: TikTokRacingGoLive-Windows
+        name: Versus-Windows
         path: ./windows
 
     - name: Download macOS artifact
       uses: actions/download-artifact@v4
       with:
-        name: TikTokRacingGoLive-macOS
+        name: Versus-macOS
         path: ./macos
 
     - name: Create Release
