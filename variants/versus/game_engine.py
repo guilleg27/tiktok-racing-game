@@ -598,6 +598,11 @@ class VersusGameEngine(GameEngine):
         for team in self.teams:
             self.team_donor_points[team].clear()
 
+        # Reset fan counters and cooldowns for the new match.
+        for team in self.teams:
+            self.session_fans[team] = 0
+        self._fans_cooldown.clear()
+
         self._return_to_idle()
         logger.info("🔄 Versus reseteado — nuevo partido")
 
