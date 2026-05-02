@@ -50,7 +50,8 @@ VERSUS_GIFT_TEAM_MAP: dict[str, str] = {
 VICTORY_MODE: str = "time"
 
 SCORE_LIMIT: int = 10          # puntos para ganar en modo "score"
-MATCH_DURATION_SECS: float = 100.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
+MATCH_DURATION_SECS: float = 600.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
+# MATCH_DURATION_SECS: float = 600.0   # 1 min para pruebas; cambiar a 600.0 para producción (10 min)
 
 # ── GOL DE ORO (muerte súbita) ───────────────────────────────────────────────
 # When regular time ends in a tie, golden goal / sudden death starts immediately.
@@ -136,3 +137,10 @@ VERSUS_AMBIENT_STREAM_COUNT: int = 14
 VERSUS_AMBIENT_STREAM_ALPHA: int = 28
 VERSUS_DATA_STREAM_SPEED_PX_S: float = 24.0
 VERSUS_PUCK_GROUND_GLOW_ALPHA: int = 42
+
+# ── TIRO LIBRE (evento de likes) ─────────────────────────────────────────────
+LIKES_PER_FREE_KICK: int = 2000        # likes acumulados para disparar Tiro Libre
+FREE_KICK_BALL_COUNT: int = 20         # pelotas en la lluvia
+FREE_KICK_BALL_SPEED_MIN: float = 180.0  # px/s mínimo vertical
+FREE_KICK_BALL_SPEED_MAX: float = 320.0  # px/s máximo vertical
+FREE_KICK_BALL_RADIUS: int = 14        # radio del círculo de cada pelota

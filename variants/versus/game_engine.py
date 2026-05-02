@@ -24,7 +24,7 @@ from typing import Optional, List, Any
 import pymunk
 import pygame
 
-from core.game_engine import GameEngine, _get_font
+from core.game_engine import GameEngine, _get_font, _get_unicode_font, _safe_render
 from core.events import EventType, GameEvent
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,19 @@ class _VersusStream:
     length: float
     speed: float
     alpha: int
+
+
+@dataclass
+class _FreekickBall:
+    """Soccer ball particle for the Tiro Libre (free-kick) rain event."""
+
+    x: float
+    y: float
+    vx: float
+    vy: float
+    side: str           # "left" | "right" — which team zone it falls into
+    counted: bool = False
+    active: bool = True
 
 
 class VersusGameEngine(GameEngine):
@@ -129,6 +142,9 @@ class VersusGameEngine(GameEngine):
         # Team crest images for the puck: {team_name: pygame.Surface | None}
         self._versus_crests: dict[str, Any] = {}
 
+        # Gift card images: {filename: pygame.Surface | None}
+        self._gift_card_images: dict[str, Any] = {}
+
         # Acumulador de puntos por donador (para MVP y top donador)
         self.donor_points: dict[str, int] = {}          # username → total 💎 global
         self.team_donor_points: dict[str, dict[str, int]] = {  # equipo → {user: pts}
@@ -142,6 +158,15 @@ class VersusGameEngine(GameEngine):
             self.team_right_name: 0,
         }
         self._fans_cooldown: dict[str, float] = {}  # username → timestamp of last fan vote
+
+        # Tiro Libre (free-kick) — likes-driven ball rain
+        self._total_likes: int = 0
+        self._free_kick_balls: list[_FreekickBall] = []
+        self._free_kick_impacts: dict[str, int] = {
+            self.team_left_name: 0,
+            self.team_right_name: 0,
+        }
+        self._free_kick_active: bool = False
 
         # Deshabilitar la meta física para que la carrera nunca termine por posición.
         # La victoria se decide únicamente por tiempo (VersusGameEngine.update).
@@ -208,11 +233,19 @@ class VersusGameEngine(GameEngine):
 
         self._versus_racer_pin = {}
 
+        # Compute River center first so Boca can be mirrored symmetrically.
+        cx_left  = (left_start + left_end) * 0.5
+        cx_right = float(SCREEN_WIDTH) - cx_left  # mirror across screen centre
+
+        fixed_cx = {
+            self.team_left_name:  cx_left,
+            self.team_right_name: cx_right,
+        }
+
         for country, racer in pw.racers.items():
             if country not in bounds:
                 continue
-            x0, x1 = bounds[country]
-            cx_fixed = (x0 + x1) * 0.5
+            cx_fixed = fixed_cx[country]
             self._remove_versus_track_constraints_for_body(pw, racer.body)
             pin = pymunk.PinJoint(
                 pw.space.static_body,
@@ -504,6 +537,9 @@ class VersusGameEngine(GameEngine):
         if VERSUS_AMBIENT_ENABLED:
             self._update_versus_ambient(dt)
 
+        if self._free_kick_active:
+            self._update_free_kick_balls(dt)
+
         # No hacer nada si ya hay victoria de partido
         if self.versus_victory_active:
             self.versus_victory_time += dt
@@ -603,6 +639,11 @@ class VersusGameEngine(GameEngine):
             self.session_fans[team] = 0
         self._fans_cooldown.clear()
 
+        # Reset Tiro Libre state (likes counter keeps accumulating across matches)
+        self._free_kick_balls.clear()
+        self._free_kick_active = False
+        self._free_kick_impacts = {self.team_left_name: 0, self.team_right_name: 0}
+
         self._return_to_idle()
         logger.info("🔄 Versus reseteado — nuevo partido")
 
@@ -658,6 +699,13 @@ class VersusGameEngine(GameEngine):
         elif not keys[pygame.K_r]:
             self._r_held = False
 
+        # F → Tiro Libre manual (demo / testing)
+        if keys[pygame.K_f] and not getattr(self, "_f_held", False):
+            self._f_held = True
+            self._trigger_free_kick()
+        elif not keys[pygame.K_f]:
+            self._f_held = False
+
     def _inject_demo_gift(self, team: str) -> None:
         """Inyecta un gift de demo para el equipo dado."""
         from core.config import (
@@ -692,6 +740,127 @@ class VersusGameEngine(GameEngine):
         )
         self.queue.put_nowait(event)
         logger.debug(f"[DEMO] Fan comment '{keyword}' → {team}")
+
+    # ── Tiro Libre (free-kick) — likes-triggered ball rain ───────────────────
+
+    def add_likes(self, count: int) -> None:
+        """Override: acumula likes y dispara Tiro Libre cada LIKES_PER_FREE_KICK.
+
+        Does NOT call super() — there is no meteor shower bar in Versus mode.
+        """
+        if count <= 0:
+            return
+        from core.config import LIKES_PER_FREE_KICK
+        prev = self._total_likes
+        self._total_likes += count
+        if prev // LIKES_PER_FREE_KICK < self._total_likes // LIKES_PER_FREE_KICK:
+            self._trigger_free_kick()
+
+    @staticmethod
+    def _draw_soccer_ball(
+        surface: pygame.Surface, cx: int, cy: int, r: int
+    ) -> None:
+        """Draw a soccer ball using pygame primitives — no emoji font needed."""
+        pygame.draw.circle(surface, (240, 240, 240), (cx, cy), r)
+        pygame.draw.circle(surface, (20, 20, 20), (cx, cy), r, max(1, r // 8))
+        patch_r = max(2, r // 3)
+        pygame.draw.circle(surface, (20, 20, 20), (cx, cy), patch_r)
+        for i in range(5):
+            angle = math.radians(i * 72 - 90)
+            px = cx + int(r * 0.58 * math.cos(angle))
+            py = cy + int(r * 0.58 * math.sin(angle))
+            pygame.draw.circle(surface, (20, 20, 20), (px, py), max(1, r // 4))
+
+    def _trigger_free_kick(self) -> None:
+        """Spawn a rain of soccer balls distributed by fan counts."""
+        if self._free_kick_active:
+            return
+        from core.config import (
+            ACTUAL_WIDTH, GAME_AREA_TOP,
+            FREE_KICK_BALL_COUNT, FREE_KICK_BALL_SPEED_MIN,
+            FREE_KICK_BALL_SPEED_MAX, FREE_KICK_BALL_RADIUS,
+        )
+        self._free_kick_active = True
+        self._free_kick_balls.clear()
+        self._free_kick_impacts = {self.team_left_name: 0, self.team_right_name: 0}
+
+        fans_left  = self.session_fans.get(self.team_left_name, 0)
+        fans_right = self.session_fans.get(self.team_right_name, 0)
+        total = fans_left + fans_right
+        n = int(FREE_KICK_BALL_COUNT)
+        n_left = n // 2 if total == 0 else round(n * fans_left / total)
+        n_right = n - n_left
+
+        mid_x = ACTUAL_WIDTH // 2
+        r = int(FREE_KICK_BALL_RADIUS)
+
+        for i in range(n):
+            side = "left" if i < n_left else "right"
+            x = (
+                random.uniform(r, mid_x - r)
+                if side == "left"
+                else random.uniform(mid_x + r, ACTUAL_WIDTH - r)
+            )
+            y = float(GAME_AREA_TOP) - i * random.uniform(20, 45)
+            vx = random.uniform(-30, 30)
+            vy = random.uniform(float(FREE_KICK_BALL_SPEED_MIN), float(FREE_KICK_BALL_SPEED_MAX))
+            self._free_kick_balls.append(_FreekickBall(x=x, y=y, vx=vx, vy=vy, side=side))
+
+        logger.info(f"⚽ TIRO LIBRE → {n_left} bolas River / {n_right} bolas Boca")
+        self.screen_shaker.big_impact_shake()
+
+    def _update_free_kick_balls(self, dt: float) -> None:
+        """Move balls downward and register impacts at 65% screen height."""
+        from core.config import ACTUAL_HEIGHT, FREE_KICK_BALL_RADIUS
+        impact_y = ACTUAL_HEIGHT * 0.65
+        all_done = True
+        for ball in self._free_kick_balls:
+            if not ball.active:
+                continue
+            all_done = False
+            ball.x += ball.vx * dt
+            ball.y += ball.vy * dt
+            if ball.y >= impact_y and not ball.counted:
+                ball.counted = True
+                team = self.team_left_name if ball.side == "left" else self.team_right_name
+                self._free_kick_impacts[team] = self._free_kick_impacts.get(team, 0) + 1
+            if ball.y > ACTUAL_HEIGHT + int(FREE_KICK_BALL_RADIUS):
+                ball.active = False
+        if all_done:
+            self._resolve_free_kick()
+            self._free_kick_active = False
+
+    def _resolve_free_kick(self) -> None:
+        """Award +1 set_score to the team with more ball impacts."""
+        from core.config import TEAM_LEFT, TEAM_RIGHT
+        hits_left  = self._free_kick_impacts.get(self.team_left_name, 0)
+        hits_right = self._free_kick_impacts.get(self.team_right_name, 0)
+        if hits_left == hits_right:
+            self._add_floating_text("TIRO LIBRE → EMPATE!", color=(255, 255, 100))
+            logger.info(f"⚽ Tiro Libre: empate {hits_left}-{hits_right}")
+            return
+        winner = self.team_left_name if hits_left > hits_right else self.team_right_name
+        color = (
+            tuple(TEAM_LEFT["color"])
+            if winner == self.team_left_name
+            else tuple(TEAM_RIGHT["color"])
+        )
+        self.set_score[winner] = self.set_score.get(winner, 0) + 1
+        self._trigger_score_pulse(winner)
+        self._add_floating_text(f"TIRO LIBRE → {winner.upper()}!", color=color)
+        self._check_set_winner()
+        logger.info(
+            f"⚽ Tiro Libre: ganó {winner} | {hits_left}-{hits_right} | score={self.set_score}"
+        )
+
+    def _render_free_kick_balls(self) -> None:
+        """Draw active soccer ball particles using pygame primitives."""
+        from core.config import FREE_KICK_BALL_RADIUS
+        r = int(FREE_KICK_BALL_RADIUS)
+        for ball in self._free_kick_balls:
+            if not ball.active:
+                continue
+            self._draw_soccer_ball(self.screen, int(ball.x), int(ball.y), r)
 
     # ── Overrides: suprimir elementos de UI de carrera ───────────────────────
 
@@ -1018,18 +1187,12 @@ class VersusGameEngine(GameEngine):
         if is_winner:
             crest_size = int(crest_size * self.winner_scale_pulse)
 
-        # ── Ground glow ellipse (scaled to crest size) ───────────────────────
         acc = (
             TEAM_LEFT["accent"]
             if racer.country == self.team_left_name
             else TEAM_RIGHT["accent"]
         )
-        glow_alpha = int(VERSUS_PUCK_GROUND_GLOW_ALPHA)
         gr = crest_size // 2
-        ell_w, ell_h = max(gr * 3, 24), max(12, gr // 2 + 4)
-        ground = pygame.Surface((ell_w, ell_h), pygame.SRCALPHA)
-        pygame.draw.ellipse(ground, (*acc[:3], glow_alpha), ground.get_rect())
-        self.render_surface.blit(ground, (ix - ell_w // 2, iy + gr - ell_h // 2 + 2))
 
         # ── Crest image (or sphere fallback) ────────────────────────────────
         crest = self._load_versus_crest(racer.country, crest_size)
@@ -1108,8 +1271,129 @@ class VersusGameEngine(GameEngine):
     def _pre_flip_screen_overlay(self) -> None:
         """Renderiza el HUD de versus justo antes del display.flip() del core."""
         self._render_versus_hud()
+        if self.game_state in ("RACING", "IDLE"):
+            self._render_gift_cards()
+        if self._free_kick_active:
+            self._render_free_kick_balls()
         if self.versus_victory_active:
             self._render_victory_screen()
+
+    def _load_gift_card_image(self, asset_path: str, size: int) -> Optional[pygame.Surface]:
+        """Load and cache a gift image scaled to a square of ``size`` pixels.
+
+        Args:
+            asset_path: Relative asset path (e.g. ``"assets/gifts/Dona.png"``).
+            size: Target side length in pixels.
+
+        Returns:
+            Scaled RGBA Surface, or None if loading fails.
+        """
+        cache_key = f"{asset_path}@{size}"
+        if cache_key in self._gift_card_images:
+            return self._gift_card_images[cache_key]
+        try:
+            from core.resources import resource_path
+            import os
+            full_path = resource_path(os.path.normpath(asset_path))
+            surf = pygame.image.load(full_path).convert_alpha()
+            ow, oh = surf.get_size()
+            if oh == 0:
+                self._gift_card_images[cache_key] = None
+                return None
+            scale = size / max(ow, oh)
+            tw, th = max(1, int(ow * scale)), max(1, int(oh * scale))
+            scaled = pygame.transform.smoothscale(surf, (tw, th))
+            self._gift_card_images[cache_key] = scaled
+            return scaled
+        except Exception:
+            self._gift_card_images[cache_key] = None
+            return None
+
+    def _render_gift_cards(self) -> None:
+        """Render a gift-hint card on the outer edge of each team half, vertically centred.
+
+        Cards sit on the left wall of River's half and the right wall of Boca's half,
+        vertically centred in the game area — matching the yellow-circle reference positions.
+        Layout (vertical card):
+          ┌──────────────┐
+          │  [gift img]  │
+          │  Gift Name   │
+          │   = 1 pt     │
+          └──────────────┘
+        """
+        try:
+            from core.config import (
+                SCREEN_WIDTH, GAME_MARGIN,
+                TEAM_LEFT, TEAM_RIGHT,
+            )
+            surface = self.screen
+
+            pw = self.physics_world
+            game_top    = int(pw.game_area_top)
+            game_h      = int(pw.game_area_height)
+            center_x    = GAME_MARGIN + SCREEN_WIDTH // 2
+
+            # Crest bottom — same formula as _render_racer, used to anchor cards.
+            half_w         = SCREEN_WIDTH // 2
+            crest_size     = min(int(half_w * 0.60), int(game_h * 0.55))
+            lane_y         = game_top + game_h // 2
+            crest_bottom_y = lane_y + crest_size // 2
+
+            cards = [
+                ("left",  "assets/gifts/Dona.png",              "Dona",     TEAM_LEFT["accent"]),
+                ("right", "assets/versus/images/capibara.png",  "Capibara", TEAM_RIGHT["accent"]),
+            ]
+
+            img_size   = 44    # gift image size
+            pad        = 8     # internal padding
+            name_font  = pygame.font.SysFont("Arial", 12, bold=True)
+            pt_font    = pygame.font.SysFont("Arial", 12)
+            margin_x   = 10   # gap between card edge and screen/center wall
+
+            for side, asset_path, label, team_color in cards:
+                img = self._load_gift_card_image(asset_path, img_size)
+
+                name_surf = name_font.render(label, True, (240, 240, 240))
+                pt_surf   = pt_font.render("= 1 gol", True, (170, 220, 170))
+
+                inner_w   = max(img_size, name_surf.get_width(), pt_surf.get_width())
+                card_w    = inner_w + pad * 2
+                card_h    = pad + img_size + 4 + name_surf.get_height() + 2 + pt_surf.get_height() + pad
+
+                # Bottom of card flush with crest bottom edge.
+                card_y = crest_bottom_y - card_h
+
+                if side == "left":
+                    card_x = GAME_MARGIN + margin_x
+                else:
+                    card_x = center_x + (center_x - GAME_MARGIN) - card_w - margin_x
+
+                # ── Background pill ──────────────────────────────────────────
+                bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+                pygame.draw.rect(bg, (8, 8, 18, 185), (0, 0, card_w, card_h), border_radius=12)
+                # Team-coloured top accent bar (3 px)
+                pygame.draw.rect(bg, (*team_color[:3], 180), (0, 0, card_w, 3), border_radius=12)
+                # Border
+                pygame.draw.rect(bg, (70, 70, 100, 130), (0, 0, card_w, card_h), width=1, border_radius=12)
+                surface.blit(bg, (card_x, card_y))
+
+                # ── Gift image (centred horizontally) ────────────────────────
+                cx_card = card_x + card_w // 2
+                y_cursor = card_y + pad
+                if img is not None:
+                    iw, ih = img.get_size()
+                    surface.blit(img, (cx_card - iw // 2, y_cursor + (img_size - ih) // 2))
+                y_cursor += img_size + 4
+
+                # ── Name ─────────────────────────────────────────────────────
+                surface.blit(name_surf, name_surf.get_rect(centerx=cx_card, top=y_cursor))
+                y_cursor += name_surf.get_height() + 2
+
+                # ── Points ───────────────────────────────────────────────────
+                surface.blit(pt_surf, pt_surf.get_rect(centerx=cx_card, top=y_cursor))
+
+        except Exception as e:
+            logger.debug(f"[render_gift_cards] {e}")
 
     def _ensure_versus_scoreboard(self) -> None:
         """Lazily construct (or rebuild after config change) the retro LED scoreboard."""
@@ -1174,7 +1458,7 @@ class VersusGameEngine(GameEngine):
             fans_h  = 22     # fans counter row
             pad_y   = 6
             total_h = label_h + row2_h + timer_h + gg_h + fans_h + pad_y
-            top_y = max(GAME_MARGIN + 4, GAME_MARGIN + first_lane_top - total_h - 30)
+            top_y = max(GAME_MARGIN + 4, GAME_MARGIN + first_lane_top - total_h - 70)
 
             panel_rect = pygame.Rect(0, 0, panel_w, total_h)
             panel_rect.centerx = cx
@@ -1207,6 +1491,8 @@ class VersusGameEngine(GameEngine):
                 fans_right=self.session_fans.get(right_name, 0),
             )
 
+            self._render_versus_likes_bar(surface, cx, panel_rect.bottom + 4, panel_w)
+
             if self.connection_state and str(self.connection_state) not in (
                 "ConnectionState.CONNECTED",
             ):
@@ -1217,6 +1503,67 @@ class VersusGameEngine(GameEngine):
 
         except Exception as e:
             logger.debug(f"[render_versus_hud] {e}")
+
+    def _render_versus_likes_bar(
+        self, surface: pygame.Surface, cx: int, top_y: int, width: int
+    ) -> None:
+        """Draw a compact single-row likes-progress bar just below the scoreboard.
+
+        Label and bar are on the same horizontal line to minimise vertical footprint
+        (total height ≈ 16 px) so it fits in the gap between the scoreboard and crests.
+        """
+        from core.config import LIKES_PER_FREE_KICK
+        goal = int(LIKES_PER_FREE_KICK)
+        filled = self._total_likes % goal if goal > 0 else 0
+        ratio = filled / goal if goal > 0 else 0.0
+
+        row_h   = 22           # total height of the whole row
+        bar_h   = row_h        # pill height
+        # Label on the left
+        lbl_font  = pygame.font.SysFont("Arial", 14, bold=True)
+        lbl_surf  = lbl_font.render("TIRO LIBRE", True, (190, 190, 230))
+        ball_r    = 7
+        lbl_w     = lbl_surf.get_width() + ball_r * 2 + 4
+        gap       = 6
+        # Bar occupies the rest of the available width
+        bar_w     = width - lbl_w - gap - 16   # 8 px margin each side
+        bar_w     = max(60, bar_w)
+
+        row_y  = top_y
+        lbl_x  = cx - (lbl_w + gap + bar_w) // 2
+        bar_x  = lbl_x + lbl_w + gap
+
+        # Label: mini ball + text
+        ball_cy = row_y + row_h // 2
+        self._draw_soccer_ball(surface, lbl_x + ball_r, ball_cy, ball_r)
+        surface.blit(lbl_surf, lbl_surf.get_rect(left=lbl_x + ball_r * 2 + 4, centery=ball_cy))
+
+        # Bar background
+        bg_rect = pygame.Rect(bar_x, row_y, bar_w, bar_h)
+        pygame.draw.rect(surface, (25, 25, 50), bg_rect, border_radius=7)
+
+        # Filled portion
+        if ratio > 0:
+            fill_w = max(bar_h, int(bar_w * ratio))
+            fill_rect = pygame.Rect(bar_x, row_y, fill_w, bar_h)
+            g_val = int(140 + 115 * ratio)
+            fill_color = (255, g_val, 30) if ratio < 0.9 else (255, 240, 70)
+            pygame.draw.rect(surface, fill_color, fill_rect, border_radius=7)
+
+        # Border
+        pygame.draw.rect(surface, (90, 90, 150), bg_rect, width=1, border_radius=7)
+
+        # Count text inside bar — white with dark outline for contrast on any fill color
+        count_font = pygame.font.SysFont("Arial", 13, bold=True)
+        count_label = f"{filled:,} / {goal:,}"
+        text_color = (255, 255, 255) if ratio > 0.3 else (200, 200, 240)
+        tr = count_surf_pos = bg_rect.centerx, bg_rect.centery
+        shadow_surf = count_font.render(count_label, True, (0, 0, 0))
+        main_surf   = count_font.render(count_label, True, text_color)
+        shadow_rect = shadow_surf.get_rect(centerx=tr[0], centery=tr[1])
+        for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            surface.blit(shadow_surf, shadow_rect.move(dx, dy))
+        surface.blit(main_surf, main_surf.get_rect(centerx=tr[0], centery=tr[1]))
 
     def _render_victory_screen(self) -> None:
         """Enhanced victory screen: winner crest, final score, stat cards, countdown bar."""
@@ -1361,7 +1708,7 @@ class VersusGameEngine(GameEngine):
             card_r_x = cx + pad // 2
 
             lbl_font  = pygame.font.SysFont("Arial", 12, bold=True)
-            user_font = pygame.font.SysFont("Arial", 14, bold=True)
+            user_font = _get_unicode_font(14, bold=True)
             dia_font  = pygame.font.SysFont("Arial", 12)
 
             def _stat_card(x: int, cy_top: int, title: str, username, diamonds: int,
@@ -1380,7 +1727,7 @@ class VersusGameEngine(GameEngine):
                 t_s.set_alpha(int(230 * f))
                 cs.blit(t_s, (8, 6))
                 if username:
-                    u_s = user_font.render(f"@{username}", True, (235, 235, 235))
+                    u_s = _safe_render(user_font, f"@{username}", (235, 235, 235))
                     u_s.set_alpha(int(255 * f))
                     cs.blit(u_s, (8, 24))
                     d_s = dia_font.render(f"{diamonds} diamantes", True, (170, 170, 170))
