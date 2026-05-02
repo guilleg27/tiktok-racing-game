@@ -296,7 +296,7 @@ class TikTokManager:
         async def on_room_user_seq(event: RoomUserSeqEvent) -> None:
             """Emit viewer count updates for milestone tracking."""
             try:
-                count = getattr(event, "total_user", 0) or 0
+                count = getattr(event, "m_popularity", 0) or 0
                 if count > 0:
                     await self.queue.put(GameEvent(
                         type=EventType.VIEWER_COUNT,

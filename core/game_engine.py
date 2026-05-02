@@ -387,15 +387,17 @@ class FloatingText:
     x: float
     y: float
     color: tuple[int, int, int]
-    dy: float = -2.0           # Velocidad vertical (negativa = sube)
+    dx: float = 0.0            # Velocidad horizontal (positivo = derecha, negativo = izquierda)
+    dy: float = -0.3           # Velocidad vertical leve (negativa = sube)
     lifespan: int = 60         # Frames restantes
     max_lifespan: int = 60     # Para calcular alpha
     font_size: int = 16
     is_welcome: bool = False   # Tag for welcome messages (cooldown counting)
     pulse_ratio: float = 0.15  # Fraction of life for elastic pulse (welcome uses 0.4)
-    
+
     def update(self) -> None:
         """Update position and lifespan."""
+        self.x += self.dx
         self.y += self.dy
         self.lifespan -= 1
     
@@ -574,6 +576,7 @@ class GameEngine:
         
         # Floating texts
         self.floating_texts: list[FloatingText] = []
+        self._float_dir_toggle: bool = False  # Alternates left/right for each new floating text
         
         self.screen: Optional[pygame.Surface] = None
         self.font: Optional[pygame.font.Font] = None
@@ -1351,35 +1354,34 @@ class GameEngine:
                     diamond_count=diamond_count
                 )
 
-                # Emit floating text feedback at top (respect global limit)
-                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
+                # Emit floating text feedback from the racer's lane position
                 if was_frozen:
-                    # Country is frozen — movement is queued, not visible yet.
-                    # Show a clear message so the viewer knows their gift was registered.
                     freeze_remaining = self.physics_world.frozen_countries.get(country, 0.0)
                     self.floating_texts.append(
                         FloatingText(
-                            text=f"FROZEN! +{diamond_count}💎 queued ({freeze_remaining:.1f}s)",
-                            x=SCREEN_WIDTH / 2,
-                            y=FLOATING_TEXT_TOP_Y,
-                            color=(0, 200, 255),  # ice-blue matches freeze theme
+                            text=f"¡CONGELADO! +{diamond_count}💎 en cola ({freeze_remaining:.1f}s)",
+                            x=racer.body.position.x,
+                            y=racer.body.position.y,
+                            color=(0, 200, 255),
                             lifespan=70,
                             max_lifespan=70,
                             font_size=18,
-                            dy=-0.8
+                            dx=self._next_float_dx(),
+                            dy=-0.3,
                         )
                     )
                 else:
                     self.floating_texts.append(
                         FloatingText(
                             text=f"{gift_name} x{gift_count}",
-                            x=SCREEN_WIDTH / 2,
-                            y=FLOATING_TEXT_TOP_Y,
+                            x=racer.body.position.x,
+                            y=racer.body.position.y,
                             color=(255, 255, 255),
                             lifespan=40,
                             max_lifespan=40,
                             font_size=20,
-                            dy=-1.0
+                            dx=self._next_float_dx(),
+                            dy=-0.3,
                         )
                     )
                 if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
@@ -1412,13 +1414,13 @@ class GameEngine:
                     target_racer = self.physics_world.racers[target]
                     pos = (target_racer.body.position.x, target_racer.body.position.y)
 
-                    # Global alert floating text (centered, long-lived ~3s)
                     self.floating_texts.append(FloatingText(
-                        text=f"** {target} FROZEN! **",
-                        x=SCREEN_WIDTH / 2,
-                        y=FLOATING_TEXT_TOP_Y,
+                        text=f"** ¡{target} CONGELADO! **",
+                        x=target_racer.body.position.x,
+                        y=target_racer.body.position.y,
                         color=COLOR_TEXT_FREEZE,
-                        dy=-0.8,
+                        dx=self._next_float_dx(2.0),
+                        dy=-0.2,
                         lifespan=180,
                         max_lifespan=180,
                         font_size=18,
@@ -1575,7 +1577,7 @@ class GameEngine:
 
         # Spawn welcome FloatingText: center, above flags, Neon Cyan, Elastic Pulse
         welcome_text = FloatingText(
-            text=f"WELCOME @{username}!",
+            text=f"¡BIENVENIDO @{username}!",
             x=SCREEN_WIDTH / 2,
             y=WELCOME_TEXT_Y,
             color=COLOR_NEON_CYAN,
@@ -1679,19 +1681,19 @@ class GameEngine:
                 diamond_count=COMMENT_POINTS_PER_MESSAGE
             )
             
-            # Optional: floating text feedback at top (limited)
+            # Optional: floating text from the racer's lane (limited)
             if len(self.floating_texts) < self.MAX_FLOATING_TEXTS // 2:
-                from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
                 self.floating_texts.append(
                     FloatingText(
                         text=f"+{COMMENT_POINTS_PER_MESSAGE}",
-                        x=SCREEN_WIDTH / 2,
-                        y=FLOATING_TEXT_TOP_Y,
-                        color=(0, 200, 255),  # Neon blue for votes
+                        x=racer.body.position.x,
+                        y=racer.body.position.y,
+                        color=(0, 200, 255),
                         lifespan=30,
                         max_lifespan=30,
                         font_size=14,
-                        dy=-1.0
+                        dx=self._next_float_dx(3.5),
+                        dy=-0.3,
                     )
                 )
         
@@ -1923,11 +1925,12 @@ class GameEngine:
                                 pos = (target_racer.body.position.x, target_racer.body.position.y)
                                 self.emit_explosion(pos=pos, color=(100, 200, 255), count=35, power=1.0, diamond_count=0)
                                 self.floating_texts.append(FloatingText(
-                                    text=f"** {target} FROZEN! **",
-                                    x=SCREEN_WIDTH / 2,
-                                    y=FLOATING_TEXT_TOP_Y,
+                                    text=f"** ¡{target} CONGELADO! **",
+                                    x=target_racer.body.position.x,
+                                    y=target_racer.body.position.y,
                                     color=COLOR_TEXT_FREEZE,
-                                    dy=-0.8,
+                                    dx=self._next_float_dx(2.0),
+                                    dy=-0.2,
                                     lifespan=180,
                                     max_lifespan=180,
                                     font_size=18,
@@ -1985,7 +1988,7 @@ class GameEngine:
                         self._autopilot_active = False
                     status = "ON" if self._autopilot_enabled else "OFF"
                     logger.debug("[AutoPilot] Toggled: %s", status)
-                    self.spawn_floating_text(f"Auto-Pilot {status}", 0, 0, (0, 200, 255))
+                    self.spawn_floating_text(f"Auto-Piloto {status}", 0, 0, (0, 200, 255))
 
                 elif event.key == pygame.K_h:  # H = Toggle ranking panel + refresh
                     self._show_ranking_panel = not self._show_ranking_panel
@@ -2066,35 +2069,36 @@ class GameEngine:
             new_captain: Username of new captain
             old_captain: Username of previous captain (can be empty)
         """
-        # Find racer position for floating text
         if country not in self.physics_world.racers:
             return
-        
-        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
-        # Floating text for new captain at top
-        crown_text = f"@{new_captain}"
+
+        racer = self.physics_world.racers[country]
+        rx, ry = racer.body.position.x, racer.body.position.y
+        _dx = self._next_float_dx(2.5)
         self.floating_texts.append(
             FloatingText(
-                text=crown_text,
-                x=SCREEN_WIDTH / 2,
-                y=FLOATING_TEXT_TOP_Y,
-                color=(255, 215, 0),  # Gold
+                text=f"@{new_captain}",
+                x=rx,
+                y=ry,
+                color=(255, 215, 0),
+                dx=_dx,
+                dy=-0.3,
                 lifespan=80,
                 max_lifespan=80,
                 font_size=18,
-                dy=-1.0
             )
         )
         self.floating_texts.append(
             FloatingText(
-                text="NEW CAPTAIN!",
-                x=SCREEN_WIDTH / 2,
-                y=FLOATING_TEXT_TOP_Y + 20,
-                color=(255, 255, 100),  # Bright yellow
+                text="¡NUEVO CAPITÁN!",
+                x=rx,
+                y=ry + 20,
+                color=(255, 255, 100),
+                dx=_dx,
+                dy=-0.3,
                 lifespan=60,
                 max_lifespan=60,
                 font_size=14,
-                dy=-1.0
             )
         )
         
@@ -2214,7 +2218,7 @@ class GameEngine:
                 pos = (racer.body.position.x, racer.body.position.y)
                 self.screen_shaker.impact_shake()
                 self.emit_explosion(pos=pos, color=(180, 240, 255), count=40, power=1.2, diamond_count=0)
-                self.spawn_floating_text(f"{country} THAWED!", 0, 0, (180, 240, 255))
+                self.spawn_floating_text(f"¡{country} DESCONGELADO!", racer.body.position.x, racer.body.position.y, (180, 240, 255))
 
         self.update_particles(dt)
         self.update_floating_texts()
@@ -2706,7 +2710,7 @@ class GameEngine:
         self.floating_texts.append(FloatingText(
             text=text, x=fx, y=fy - 20,
             color=color, lifespan=dur, max_lifespan=dur,
-            font_size=fsize, dy=-1.2,
+            font_size=fsize, dx=self._next_float_dx(), dy=-0.3,
         ))
 
         if p_count > 0:
@@ -2746,8 +2750,10 @@ class GameEngine:
             x=SCREEN_WIDTH / 2,
             y=SCREEN_HEIGHT / 2 - 30,
             color=(180, 220, 255),
+            dx=self._next_float_dx(1.8),
+            dy=-0.2,
             lifespan=150, max_lifespan=150,
-            font_size=22, dy=-0.2,
+            font_size=22,
         ))
 
         self.screen_shaker.big_impact_shake()
@@ -2770,8 +2776,10 @@ class GameEngine:
             x=SCREEN_WIDTH / 2,
             y=SCREEN_HEIGHT / 2,
             color=(100, 255, 160),
+            dx=self._next_float_dx(1.8),
+            dy=-0.3,
             lifespan=120, max_lifespan=120,
-            font_size=18, dy=-0.5,
+            font_size=18,
         ))
         logger.debug("[LUNAR] Lunar Gravity deactivated")
 
@@ -3920,28 +3928,47 @@ class GameEngine:
         
         return sanitized
     
+    def _next_float_dx(self, speed: float = 2.8) -> float:
+        """Return alternating ±speed and flip the direction toggle.
+
+        Args:
+            speed: Horizontal speed magnitude (pixels/frame).
+
+        Returns:
+            Positive or negative horizontal velocity.
+        """
+        self._float_dir_toggle = not self._float_dir_toggle
+        return speed if self._float_dir_toggle else -speed
+
     def spawn_floating_text(
-        self, 
-        text: str, 
-        x: float, 
-        y: float, 
+        self,
+        text: str,
+        x: float,
+        y: float,
         color: tuple[int, int, int]
     ) -> None:
-        """Spawn a floating text effect at the top of the screen for better visibility."""
+        """Spawn a floating text effect.
+
+        Texts related to a specific racer should pass the racer's position as x/y.
+        Generic/global texts should pass x=0, y=0 and will spawn at screen center.
+        """
         from .config import (
             SCREEN_WIDTH,
-            FLOATING_TEXT_TOP_Y,
-            FLOATING_TEXT_SPEED,
+            SCREEN_HEIGHT,
             FLOATING_TEXT_LIFESPAN,
             FLOATING_TEXT_FONT_SIZE,
         )
-    
+
+        spawn_x = x if x != 0.0 else SCREEN_WIDTH / 2
+        spawn_y = y if y != 0.0 else SCREEN_HEIGHT / 2
+
         floating_text = FloatingText(
             text=text,
-            x=SCREEN_WIDTH / 2,  # Center at top
-            y=FLOATING_TEXT_TOP_Y,
+            x=spawn_x,
+            y=spawn_y,
             color=color,
-            dy=-FLOATING_TEXT_SPEED,
+            dx=self._next_float_dx(),
+            dy=-0.3,
             lifespan=FLOATING_TEXT_LIFESPAN,
             max_lifespan=FLOATING_TEXT_LIFESPAN,
             font_size=FLOATING_TEXT_FONT_SIZE
@@ -3955,8 +3982,8 @@ class GameEngine:
     def _emit_hype_activation_text(self) -> None:
         """Spawn 'HYPE MODE!' floating text when hype activates."""
         self.spawn_floating_text(
-            ">> HYPE MODE! <<",
-            x=0,   # spawn_floating_text centers horizontally
+            ">> ¡TURBO ACTIVADO! <<",
+            x=0,
             y=0,
             color=(255, 50, 180),
         )
@@ -4109,137 +4136,14 @@ class GameEngine:
         overlay.fill((0, 0, 0, 150))  # ← Cambiado de 180 a 150
         self.render_surface.blit(overlay, (0, 0))
         
-        # Central message box
-        if GAME_MODE == "COMMENT":
-            box_width = 320
-            box_height = 205
-        else:
-            box_width = 380
-            box_height = 200
+        # Central message box (hidden - replaced by ranking panels)
 
-        box_x = (SCREEN_WIDTH - box_width) // 2
-        box_y = (SCREEN_HEIGHT - box_height) // 2 + 40
-        
-        # Box with gradient effect
-        box_surface = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
-        
-        # Gradient background
-        for i in range(box_height):
-            ratio = i / box_height
-            r = int(20 + (40 - 20) * ratio)
-            g = int(20 + (50 - 20) * ratio)
-            b = int(60 + (80 - 60) * ratio)
-            pygame.draw.line(box_surface, (r, g, b, 230), (0, i), (box_width, i))
-        
-        # Border with golden glow
-        pygame.draw.rect(box_surface, (255, 215, 0, 255), (0, 0, box_width, box_height), 3, border_radius=15)
-        
-        self.render_surface.blit(box_surface, (box_x, box_y))
-        
-        # 2️⃣ TEXTO PULSANTE CON EFECTO "RESPIRACIÓN"
-        # Usar pygame.time.get_ticks() y math.sin para escala sutil (1.0 - 1.05)
-        ticks = pygame.time.get_ticks()
-        breathe_scale = 1.0 + 0.05 * math.sin(ticks * 0.003)  # Oscila entre 1.0 y 1.05
-        pulse_alpha = int(200 + 55 * math.sin(ticks * 0.0025))  # Alpha pulsante
-
-        # Main title - different text depending on mode
-        title_font = _get_font("Arial", 22, bold=True)
-        if GAME_MODE == "COMMENT":
-            title_text = "VOTE IN CHAT!"
-        else:
-            title_text = "SEND A ROSE"
-        
-        title_surface = self._render_text_enhanced(
-            title_text,
-            title_font,
-            (255, 215, 0),
-            outline_color=(0, 0, 0),
-            outline_width=3
-        )
-        
-        # Apply breathe scale (scale() not smoothscale to avoid stutter in render loop)
-        scaled_width = int(title_surface.get_width() * breathe_scale)
-        scaled_height = int(title_surface.get_height() * breathe_scale)
-        title_surface = pygame.transform.scale(title_surface, (scaled_width, scaled_height))
-        
-        # Apply pulsating alpha
-        title_alpha_surface = pygame.Surface(title_surface.get_size(), pygame.SRCALPHA)
-        title_alpha_surface.fill((255, 255, 255, pulse_alpha))
-        title_surface = title_surface.copy()
-        title_surface.blit(title_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        
-        title_rect = title_surface.get_rect(center=(box_x + box_width // 2, box_y + 40))
-        self.render_surface.blit(title_surface, title_rect)
-
-        # COMMENT MODE: Mostrar lista de opciones dentro del recuadro
-        if GAME_MODE == "COMMENT":
-            # Subtitle
-            subtitle_font = _get_font("Arial", 14, bold=True)
-            subtitle_text = "Type # or SIGLA to start:"
-            subtitle_surface = subtitle_font.render(subtitle_text, True, (200, 200, 200))
-            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 70))
-            self.render_surface.blit(subtitle_surface, subtitle_rect)
-            
-            # Lista de países: 2 columnas × 4 filas (4 países por columna)
-            item_font = _get_font("Arial", 12, bold=True)
-            y_offset = box_y + 95
-            line_height = 24
-            col_width = box_width // 2
-            
-            for i, country in enumerate(self.physics_world.countries, start=1):
-                abbrev = COUNTRY_ABBREV.get(country, country[:3].upper())
-                color = self.physics_world.racers[country].color
-                
-                # 2 columns × 4 rows: left col = 1-4, right col = 5-8
-                col = (i - 1) // 4
-                row = (i - 1) % 4
-                
-                x_base = box_x + 20 + (col * col_width)
-                y_pos = y_offset + (row * line_height)
-                
-                # Number
-                number_text = f"{i:2d}"
-                number_surface = item_font.render(number_text, True, (255, 255, 100))
-                self.render_surface.blit(number_surface, (x_base, y_pos))
-                
-                # Separator
-                sep_surface = item_font.render("→", True, (150, 150, 150))
-                self.render_surface.blit(sep_surface, (x_base + 25, y_pos))
-                
-                # Sigla (with country color)
-                sigla_surface = item_font.render(abbrev, True, color)
-                self.render_surface.blit(sigla_surface, (x_base + 45, y_pos))
-        
-        else:
-            # GIFT MODE: Subtitle con mismo efecto de respiración
-            subtitle_font = _get_font("Arial", 20, bold=True)
-            subtitle_text = "TO START!"
-            subtitle_surface = self._render_text_enhanced(
-                subtitle_text,
-                subtitle_font,
-                (255, 255, 100),
-                outline_color=(0, 0, 0),
-                outline_width=3
-            )
-            
-            # Apply breathe scale (scale() not smoothscale for performance)
-            scaled_width = int(subtitle_surface.get_width() * breathe_scale)
-            scaled_height = int(subtitle_surface.get_height() * breathe_scale)
-            subtitle_surface = pygame.transform.scale(subtitle_surface, (scaled_width, scaled_height))
-            
-            # Apply pulsating alpha
-            subtitle_alpha_surface = pygame.Surface(subtitle_surface.get_size(), pygame.SRCALPHA)
-            subtitle_alpha_surface.fill((255, 255, 255, pulse_alpha))
-            subtitle_surface = subtitle_surface.copy()
-            subtitle_surface.blit(subtitle_alpha_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-            
-            subtitle_rect = subtitle_surface.get_rect(center=(box_x + box_width // 2, box_y + 95))
-            self.render_surface.blit(subtitle_surface, subtitle_rect)
-
-        # Last winner info (if exists) - below country list to avoid overlap
+        # Last winner info (if exists) - shown below the ranking panels
         if self.last_winner:
+            from .config import SCREEN_HEIGHT as _SH
+            _panel_bottom = (_SH - 210) // 2 + 40 + 210  # panel_y + panel_h
             winner_font = _get_font("Arial", 14, bold=True)
-            winner_text = f"Last winner: {self.last_winner}"
+            winner_text = f"Último ganador: {self.last_winner}"
             winner_surface = self._render_text_enhanced(
                 winner_text,
                 winner_font,
@@ -4247,21 +4151,14 @@ class GameEngine:
                 outline_color=(0, 0, 0),
                 outline_width=2
             )
-            # In COMMENT mode place below the 4-row country list; in GIFT mode keep higher
-            if GAME_MODE == "COMMENT":
-                winner_y = box_y + 210
-                distance_y = box_y + 235
-            else:
-                winner_y = box_y + 140
-                distance_y = box_y + 165
-            winner_rect = winner_surface.get_rect(center=(box_x + box_width // 2, winner_y))
+            winner_rect = winner_surface.get_rect(center=(SCREEN_WIDTH // 2, _panel_bottom + 18))
             self.render_surface.blit(winner_surface, winner_rect)
-            
+
             # Distance info
             diamonds_approx = self._safe_int(self.last_winner_distance / 0.8, 0)
-            distance_text = f"Distance: {diamonds_approx} diamonds"
+            distance_text = f"Distancia: {diamonds_approx} diamantes"
             distance_surface = winner_font.render(distance_text, True, (200, 200, 200))
-            distance_rect = distance_surface.get_rect(center=(box_x + box_width // 2, distance_y))
+            distance_rect = distance_surface.get_rect(center=(SCREEN_WIDTH // 2, _panel_bottom + 38))
             self.render_surface.blit(distance_surface, distance_rect)
         
         # 🏆 Render Global Ranking Panel (futuristic style) only
@@ -4764,7 +4661,8 @@ class GameEngine:
         total_w = panel_w * 2 + gap
         panel_x_left = (SCREEN_WIDTH - total_w) // 2
         panel_x_right = panel_x_left + panel_w + gap
-        panel_y = 20
+        from .config import SCREEN_HEIGHT
+        panel_y = (SCREEN_HEIGHT - panel_h) // 2 + 40
 
         glow_intensity = 0.7 + 0.3 * math.sin(self.ranking_3d_animation_time * 2.0)
 
@@ -5330,19 +5228,19 @@ class GameEngine:
         else:
             color = (255, 200, 50)  # Yellow for regular combo
         
-        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
         combo_text = f"COMBO x{count}!"
         base_font_size = 22 if count % 5 == 0 else 16
         self.floating_texts.append(
             FloatingText(
                 text=combo_text,
-                x=SCREEN_WIDTH / 2,
-                y=FLOATING_TEXT_TOP_Y,
+                x=x,
+                y=y,
                 color=color,
+                dx=self._next_float_dx(3.0),
+                dy=-0.3,
                 lifespan=50,
                 max_lifespan=50,
                 font_size=base_font_size,
-                dy=-1.0
             )
         )
         
@@ -5374,18 +5272,18 @@ class GameEngine:
         if country not in self.physics_world.racers:
             return
         
-        from .config import SCREEN_WIDTH, FLOATING_TEXT_TOP_Y
-        # Big announcement at top
+        racer = self.physics_world.racers[country]
         self.floating_texts.append(
             FloatingText(
-                text="ON FIRE!",
-                x=SCREEN_WIDTH / 2,
-                y=FLOATING_TEXT_TOP_Y,
+                text="¡EN LLAMAS!",
+                x=racer.body.position.x,
+                y=racer.body.position.y,
                 color=(255, 100, 0),
+                dx=self._next_float_dx(3.0),
+                dy=-0.3,
                 lifespan=80,
                 max_lifespan=80,
                 font_size=20,
-                dy=-1.0
             )
         )
         
@@ -6305,7 +6203,7 @@ class GameEngine:
                     self._autopilot_active = True
                     logger.info("[AutoPilot] ACTIVATED after %.0fs of inactivity",
                                 now - self.last_activity_time)
-                    self.spawn_floating_text("AUTO PILOT", 0, 0, (0, 200, 255))
+                    self.spawn_floating_text("AUTO PILOTO", 0, 0, (0, 200, 255))
 
                 # Ensure RACING state
                 if self.game_state == 'IDLE':
@@ -6430,7 +6328,10 @@ class GameEngine:
         leader = lb[0][1]
         result = self.physics_world.apply_gift_effect("Helado", leader)
         if result['effect'] == 'freeze':
-            self.spawn_floating_text(f"{leader} CONGELADO!", 0, 0, (130, 220, 255))
+            _lr = self.physics_world.racers.get(leader)
+            _lx = _lr.body.position.x if _lr else 0.0
+            _ly = _lr.body.position.y if _lr else 0.0
+            self.spawn_floating_text(f"¡{leader} CONGELADO!", _lx, _ly, (130, 220, 255))
         self.screen_shaker.impact_shake()
 
     # ─── HYPE TIMER ────────────────────────────────────────────────────────────
@@ -6589,4 +6490,7 @@ class GameEngine:
             return
         country = random.choice(countries)
         self._trigger_on_fire(country)
-        self.spawn_floating_text(f"{country.upper()} ON FIRE!", 0, 0, (255, 120, 0))
+        racer = self.physics_world.racers.get(country)
+        rx = racer.body.position.x if racer else 0.0
+        ry = racer.body.position.y if racer else 0.0
+        self.spawn_floating_text(f"¡{country.upper()} EN LLAMAS!", rx, ry, (255, 120, 0))
