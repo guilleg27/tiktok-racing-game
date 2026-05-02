@@ -131,6 +131,50 @@ def _get_mono_font(size: int, bold: bool = False) -> "pygame.font.Font":
     return _mono_font_cache[key]
 
 
+_unicode_font_cache: dict[tuple, "pygame.font.Font"] = {}
+
+
+def _get_unicode_font(size: int, bold: bool = False) -> "pygame.font.Font":
+    """Font with broad Unicode coverage for arbitrary usernames (CJK, Arabic, etc.)."""
+    key = (size, bold)
+    if key not in _unicode_font_cache:
+        candidates = [
+            # macOS
+            "Hiragino Sans GB", "Hiragino Kaku Gothic Pro",
+            "Apple SD Gothic Neo", "Helvetica Neue",
+            # Windows
+            "Microsoft YaHei", "Malgun Gothic", "Arial Unicode MS",
+            # Universal / cross-platform
+            "Noto Sans", "NotoSans", "DejaVu Sans", "FreeSans",
+            # Last resort
+            "Arial", "Verdana",
+        ]
+        for name in candidates:
+            try:
+                _unicode_font_cache[key] = pygame.font.SysFont(name, size, bold=bold)
+                break
+            except Exception:
+                continue
+        else:
+            _unicode_font_cache[key] = pygame.font.Font(None, size)
+    return _unicode_font_cache[key]
+
+
+def _safe_render(
+    font: "pygame.font.Font", text: str, color: tuple
+) -> "pygame.Surface":
+    """Render text replacing glyphs missing from the font with '?' to avoid boxes."""
+    try:
+        metrics = font.metrics(text)
+        safe = "".join(
+            ch if (i < len(metrics) and metrics[i] is not None) else "?"
+            for i, ch in enumerate(text)
+        )
+        return font.render(safe, True, color)
+    except Exception:
+        return font.render("?", True, color)
+
+
 @dataclass
 class Particle:
     """
@@ -383,19 +427,19 @@ class FloatingText:
         font = _get_font("Arial", actual_font_size, bold=True)
     
         # Render main text con anti-aliasing
-        text_surface = font.render(self.text, True, self.color)
-    
+        text_surface = _safe_render(font, self.text, self.color)
+
         # Apply alpha
         temp_surface = pygame.Surface(text_surface.get_size(), pygame.SRCALPHA)
         temp_surface.fill((255, 255, 255, alpha))
         text_surface = text_surface.copy()
         text_surface.blit(temp_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    
+
         rect = text_surface.get_rect(center=(int(self.x), int(self.y)))
-    
+
         # Outline MÁS GRUESO (era 1px en diagonal, ahora 2px)
         outline_color = (0, 0, 0)
-        outline_surface = font.render(self.text, True, outline_color)
+        outline_surface = _safe_render(font, self.text, outline_color)
         outline_temp = pygame.Surface(outline_surface.get_size(), pygame.SRCALPHA)
         outline_temp.fill((255, 255, 255, alpha))
         outline_surface = outline_surface.copy()
