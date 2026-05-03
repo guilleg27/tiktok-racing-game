@@ -163,6 +163,12 @@ def build(variant: str = "countries"):
         "--hidden-import", "certifi",                  # SSL certificates on Windows
         "--collect-all", "certifi",                    # Bundle CA certs bundle
 
+        # OpenCV + NumPy — required for motos victory video playback
+        "--hidden-import", "cv2",
+        "--collect-all", "cv2",
+        "--hidden-import", "numpy",
+        "--collect-all", "numpy",
+
         *icon_arg,
 
         entry_point,

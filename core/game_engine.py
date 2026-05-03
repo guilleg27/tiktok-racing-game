@@ -1303,6 +1303,9 @@ class GameEngine:
             for _ in range(min(gift_count, 5)):  # Cap at 5 to prevent abuse
                 self.register_combo_event(country)
 
+            # Hook for subclasses to track gift stats
+            self._on_gift_processed(username, country, diamond_count * gift_count)
+
             total_diamonds = diamond_count * gift_count
             logger.info(f"🎁 REGALO: {username} ({assignment_type}) → {country} | {gift_name} x{gift_count} = {total_diamonds}💎")
 
@@ -1655,7 +1658,10 @@ class GameEngine:
         
         # 🔥 COMBO SYSTEM: Register this vote
         self.register_combo_event(country)
-        
+
+        # Hook for subclasses to track vote stats
+        self._on_vote_processed(username, country)
+
         # 🏆 CAPTAIN SYSTEM: Track points
         self._update_captain_points(username, country, COMMENT_POINTS_PER_MESSAGE)
 
@@ -2466,9 +2472,9 @@ class GameEngine:
                     diamond_count=100
                 )
             
-            # Auto-return to IDLE after 10 seconds (era 5)
-            if self.winner_animation_time >= 10.0:
-                logger.info(f"⏱️ Returning to IDLE after 10s")
+            # Auto-return to IDLE after 30 seconds
+            if self.winner_animation_time >= 30.0:
+                logger.info(f"⏱️ Returning to IDLE after 30s")
                 self._return_to_idle()
         else:
             # Reset animation state when no winner
@@ -6038,6 +6044,29 @@ class GameEngine:
             logger.info(f"☁️ Sync successful, updating ranking...")
             await self._fetch_global_ranking()
     
+    def _on_gift_processed(self, username: str, country: str, diamonds: int) -> None:
+        """Hook called after each gift event is fully processed.
+
+        Override in subclasses to track per-user gift stats without modifying
+        the core event loop.
+
+        Args:
+            username: TikTok username of the sender.
+            country: Country the gift was assigned to.
+            diamonds: Total diamond value (diamond_count * gift_count).
+        """
+
+    def _on_vote_processed(self, username: str, country: str) -> None:
+        """Hook called after each vote/comment event is fully processed.
+
+        Override in subclasses to track per-user vote counts without modifying
+        the core event loop.
+
+        Args:
+            username: TikTok username of the voter.
+            country: Country the vote was assigned to.
+        """
+
     async def _fetch_global_ranking(self) -> None:
         """
         Fetch global ranking from Supabase (non-blocking).
