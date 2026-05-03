@@ -90,7 +90,7 @@ class PhysicsWorld:
         self.winner = None
         self.race_finished = False
         self.win_time = 0.0
-        self.auto_reset_delay = 5.0
+        self.auto_reset_delay = 30.0
         
         self.final_leaderboard: list[tuple[int, str, float, str]] | None = None
 
