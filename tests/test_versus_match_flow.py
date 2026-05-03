@@ -110,6 +110,7 @@ class TestVersusVictoryOverlayTimeout(unittest.TestCase):
         eng.game_state = "IDLE"
         eng.victory_mode = "score"
         eng.match_start_time = None
+        eng._free_kick_active = False
         with patch("variants.versus.game_engine.GameEngine.update", MagicMock()):
             with patch.object(_core_config, "VERSUS_AMBIENT_ENABLED", False):
                 VersusGameEngine.update(eng, 2.0)

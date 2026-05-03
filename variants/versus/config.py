@@ -1,8 +1,9 @@
 """
 Versus variant config — 1v1 duelo entre dos equipos.
-MVP: Boca Juniors vs River Plate.
 
-Importa todo el core y sobreescribe solo lo necesario.
+TEAM_LEFT, TEAM_RIGHT and VERSUS_GIFT_TEAM_MAP are set here as defaults
+(River vs Boca) and are overridden at runtime by VersusGameEngine when a
+specific Matchup is injected via ``VersusApplication``.
 """
 
 from core.config import *  # noqa: F401, F403
@@ -14,7 +15,8 @@ VERSUS_MODE = True
 # Physics and HUD use the band below this (core default was 114).
 GAME_AREA_TOP: int = 200
 
-# Definición de los dos equipos
+# Default team definitions (River vs Boca).
+# These are replaced at startup when a different matchup is selected.
 TEAM_LEFT = {
     "name":      "River",
     "short":     "RIV",
@@ -32,17 +34,17 @@ TEAM_RIGHT = {
 }
 
 # Clave: nombre del gift en minúsculas (como llega de TikTok, ES y EN)
-# Valor: nombre del equipo ("River" o "Boca")
+# Valor: nombre del equipo — overridden by the active Matchup at startup.
 VERSUS_GIFT_TEAM_MAP: dict[str, str] = {
-    # River = Rosquilla / Doughnut (30 monedas)
     "rosquilla":  "River",
     "doughnut":   "River",
-    "dona":       "River",         # nombre sprite local
-
-    # Boca = Capibara / Capybara (30 monedas)
+    "dona":       "River",
     "capibara":   "Boca",
     "capybara":   "Boca",
 }
+
+# Active matchup ID — set by main.py before the engine starts.
+ACTIVE_MATCHUP_ID: str = "river_boca"
 
 # ── MODO VICTORIA ───────────────────────────────────────────────────────────
 # "score"  → primer equipo en llegar a SCORE_LIMIT gana el set

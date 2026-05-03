@@ -150,6 +150,11 @@ def build(variant: str = "countries"):
         "--hidden-import", "pyttsx3.drivers.sapi5",   # Windows TTS
         "--hidden-import", "pyttsx3.drivers.nsss",    # macOS TTS
 
+        # tkinter — required for the startup dialog on all platforms
+        "--hidden-import", "tkinter",
+        "--hidden-import", "tkinter.ttk",
+        "--hidden-import", "tkinter.simpledialog",
+
         # Supabase + HTTP stack (dynamic imports not detected by PyInstaller)
         "--hidden-import", "supabase",
         "--hidden-import", "postgrest",
