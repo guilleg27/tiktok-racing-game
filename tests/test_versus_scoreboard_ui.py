@@ -39,6 +39,7 @@ class TestVersusScorePulseDecay(unittest.TestCase):
         eng.extra_time_secs = 60.0
         eng._evaluate_time_winner = MagicMock()
         eng._trigger_set_victory = MagicMock()
+        eng._free_kick_active = False
         pw = MagicMock()
         pw.racers = {"River": MagicMock(), "Boca": MagicMock()}
         pw.is_country_frozen = MagicMock(return_value=False)

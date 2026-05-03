@@ -132,6 +132,8 @@ class VersusRetroScoreboard:
         self._label_font = label_font
         self._timer_font = timer_font
         self._corner_radius = corner_radius
+        self._label_font_base_size: int = label_font.size("A")[1]
+        self._asset_manager = None   # injected by load_versus_scoreboard_fonts
         self._left_badge = left_badge
         self._right_badge = right_badge
 
@@ -171,15 +173,31 @@ class VersusRetroScoreboard:
         # ── Row 1: team labels ──────────────────────────────────────────────
         lu = left_team_upper.upper()
         ru = right_team_upper.upper()
-        lw, lh = self._label_font.size(lu)
-        rw, rh = self._label_font.size(ru)
+
+        # Auto-shrink font until both names fit side-by-side with a 12 px gap.
+        label_font = self._label_font
+        max_label_w = (inner.width - 24) // 2   # half the inner width minus margins
+        current_size = self._label_font_base_size
+        for _ in range(8):
+            lw, lh = label_font.size(lu)
+            rw, rh = label_font.size(ru)
+            if lw <= max_label_w and rw <= max_label_w:
+                break
+            current_size = max(12, current_size - 4)
+            if self._asset_manager is not None:
+                label_font = self._asset_manager.get_versus_digital_font(current_size)
+            else:
+                label_font = pygame.font.SysFont("Arial", current_size, bold=True)
+
+        lw, lh = label_font.size(lu)
+        rw, rh = label_font.size(ru)
         label_row_h = max(lh, rh)
         _draw_text_glow(
-            surface, lu, self._label_font, river_name_color, river_name_glow,
+            surface, lu, label_font, river_name_color, river_name_glow,
             (inner.left + 12 + lw // 2, y + label_row_h // 2), layers=3,
         )
         _draw_text_glow(
-            surface, ru, self._label_font, boca_name_color, boca_name_glow,
+            surface, ru, label_font, boca_name_color, boca_name_glow,
             (inner.right - 12 - rw // 2, y + label_row_h // 2), layers=3,
         )
         y += label_row_h + 2
@@ -386,21 +404,27 @@ def load_versus_scoreboard_fonts(
     """
     from core.resources import resource_path
     import os
+    import variants.versus.config as _vcfg
 
     score_font = asset_manager.get_versus_digital_font(score_size)
     label_font = asset_manager.get_versus_digital_font(max(14, label_size))
     timer_font = asset_manager.get_versus_digital_font(timer_size)
 
-    river_path = resource_path(
-        os.path.normpath(os.path.join("assets", "versus", "images", "marcador-river.png"))
-    )
-    boca_path = resource_path(
-        os.path.normpath(os.path.join("assets", "versus", "images", "marcador-boca.png"))
-    )
-    left_badge = _load_badge(river_path, badge_height)
-    right_badge = _load_badge(boca_path, badge_height)
+    # Resolve badge paths from the active matchup when available.
+    matchup = getattr(_vcfg, "ACTIVE_MATCHUP", None)
+    if matchup is not None:
+        left_path_rel  = matchup.left.marcador_path or \
+            os.path.join("assets", "versus", "images", f"marcador-{matchup.left.name.lower()}.png")
+        right_path_rel = matchup.right.marcador_path or \
+            os.path.join("assets", "versus", "images", f"marcador-{matchup.right.name.lower()}.png")
+    else:
+        left_path_rel  = os.path.join("assets", "versus", "images", "marcador-river.png")
+        right_path_rel = os.path.join("assets", "versus", "images", "marcador-boca.png")
 
-    return VersusRetroScoreboard(
+    left_badge  = _load_badge(resource_path(os.path.normpath(left_path_rel)),  badge_height)
+    right_badge = _load_badge(resource_path(os.path.normpath(right_path_rel)), badge_height)
+
+    sb = VersusRetroScoreboard(
         score_font,
         label_font,
         timer_font,
@@ -408,3 +432,5 @@ def load_versus_scoreboard_fonts(
         left_badge=left_badge,
         right_badge=right_badge,
     )
+    sb._asset_manager = asset_manager
+    return sb

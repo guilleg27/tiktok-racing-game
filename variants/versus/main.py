@@ -111,9 +111,10 @@ def _save_crash_report(error: Exception, traceback_str: str) -> str:
 class VersusApplication:
     """Controlador principal del modo Versus."""
 
-    def __init__(self, username: str, idle_mode: bool = False):
+    def __init__(self, username: str, idle_mode: bool = False, matchup=None):
         self.username    = username.lstrip("@") if username else ""
         self.idle_mode   = idle_mode
+        self.matchup     = matchup  # Matchup instance selected at startup
         self._raw_queue: asyncio.Queue[GameEvent] = asyncio.Queue()
         self.queue:      asyncio.Queue[GameEvent] = asyncio.Queue()
         self._event_buffer: Optional[HumanizedEventBuffer] = None
@@ -178,6 +179,7 @@ class VersusApplication:
                 self.queue,
                 self.username or "idle",
                 database=self.database,
+                matchup=self.matchup,
             )
             self.game_engine.app = self
 
@@ -289,55 +291,177 @@ class VersusApplication:
         logger.info("Limpieza completa")
 
 
-def get_username() -> tuple[str, bool]:
-    if len(sys.argv) > 1 and sys.argv[1] in ("--idle", "-i"):
-        return ("", True)
-    if len(sys.argv) > 1:
-        return (sys.argv[1], False)
+def get_startup_params() -> tuple[str, bool, object]:
+    """Prompt for username and matchup selection.
 
-    if is_frozen():
+    Returns:
+        Tuple of ``(username, idle_mode, matchup)``.
+    """
+    from variants.versus.matchups import ALL_MATCHUPS, get_matchup, DEFAULT_MATCHUP
+
+    # ── CLI shortcuts ─────────────────────────────────────────────────────────
+    args = sys.argv[1:]
+    matchup_id: Optional[str] = None
+    username_arg: Optional[str] = None
+    idle_mode = False
+
+    for arg in args:
+        if arg in ("--idle", "-i"):
+            idle_mode = True
+        elif arg.startswith("--matchup="):
+            matchup_id = arg.split("=", 1)[1]
+        elif arg.startswith("@") or (not arg.startswith("--")):
+            username_arg = arg.lstrip("@")
+
+    matchup = get_matchup(matchup_id) if matchup_id else None
+
+    if idle_mode:
+        return ("", True, matchup or DEFAULT_MATCHUP)
+    if username_arg and matchup:
+        return (username_arg, False, matchup)
+
+    # ── GUI dialog (frozen executable) ───────────────────────────────────────
+    if is_frozen() or (not username_arg):
         try:
             import tkinter as tk
-            from tkinter import simpledialog
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            username = simpledialog.askstring(
-                "Versus — Boca vs River",
-                "Ingresa el username de TikTok (sin @):\n\nDeja vacío para modo IDLE (Q=River, W=Boca)",
-                parent=root
-            )
-            root.destroy()
-            if username and username.strip():
-                return (username.strip().lstrip("@"), False)
-            return ("", True)
-        except Exception as e:
-            logger.warning(f"No GUI dialog: {e}")
-            return ("", True)
+            from tkinter import ttk
+            import traceback as _tb
 
+            result: dict = {}
+
+            root = tk.Tk()
+            root.title("Versus — Selector de Duelo")
+            root.resizable(False, False)
+
+            # macOS .app: force window to the front.
+            try:
+                root.attributes("-topmost", True)
+            except Exception:
+                pass
+            root.lift()
+            root.focus_force()
+            root.after(100, lambda: root.lift())   # second lift after event loop starts
+
+            tk.Label(root, text="Username de TikTok (sin @):", font=("Arial", 11)).pack(
+                padx=20, pady=(16, 4)
+            )
+            username_var = tk.StringVar(value=username_arg or "")
+            entry = tk.Entry(root, textvariable=username_var, width=28, font=("Arial", 11))
+            entry.pack(padx=20, pady=(0, 12))
+            entry.focus_set()
+
+            tk.Label(root, text="Duelo:", font=("Arial", 11)).pack(padx=20, pady=(0, 4))
+            matchup_labels = [m.label for m in ALL_MATCHUPS]
+            matchup_var = tk.StringVar(value=matchup_labels[0])
+
+            # Use a plain Listbox if ttk.Combobox fails (older macOS Tcl/Tk).
+            try:
+                cb = ttk.Combobox(
+                    root,
+                    textvariable=matchup_var,
+                    values=matchup_labels,
+                    state="readonly",
+                    width=34,
+                    font=("Arial", 11),
+                )
+                cb.pack(padx=20, pady=(0, 16))
+            except Exception:
+                for i, lbl in enumerate(matchup_labels):
+                    tk.Radiobutton(
+                        root, text=lbl, variable=matchup_var, value=lbl,
+                        font=("Arial", 10),
+                    ).pack(anchor="w", padx=20)
+                tk.Frame(root, height=8).pack()
+
+            def on_ok():
+                result["username"] = username_var.get().strip().lstrip("@")
+                result["matchup_label"] = matchup_var.get()
+                root.destroy()
+
+            def on_idle():
+                result["username"] = ""
+                result["idle"] = True
+                result["matchup_label"] = matchup_var.get()
+                root.destroy()
+
+            btn_frame = tk.Frame(root)
+            btn_frame.pack(pady=(0, 14))
+            tk.Button(btn_frame, text="Conectar", command=on_ok, width=12).pack(
+                side=tk.LEFT, padx=6
+            )
+            tk.Button(btn_frame, text="Modo IDLE", command=on_idle, width=12).pack(
+                side=tk.LEFT, padx=6
+            )
+
+            root.bind("<Return>", lambda _e: on_ok())
+            root.protocol("WM_DELETE_WINDOW", on_idle)   # X closes → IDLE
+            root.mainloop()
+
+            selected_label = result.get("matchup_label", matchup_labels[0])
+            selected_matchup = next(
+                (m for m in ALL_MATCHUPS if m.label == selected_label),
+                DEFAULT_MATCHUP,
+            )
+            uname = result.get("username", "")
+            is_idle = result.get("idle", False) or not uname
+            return (uname, is_idle, selected_matchup)
+
+        except Exception as e:
+            # Write crash log next to the executable so we can diagnose.
+            try:
+                import os as _os, traceback as _tb
+                log_path = _os.path.join(_os.path.dirname(sys.executable), "versus_dialog_error.log")
+                with open(log_path, "w") as _f:
+                    _f.write(f"Dialog error: {e}\n{_tb.format_exc()}")
+            except Exception:
+                pass
+            logger.warning(f"GUI dialog failed: {e}")
+            return ("", True, DEFAULT_MATCHUP)
+
+    # ── Terminal fallback ─────────────────────────────────────────────────────
     print("\n╔══════════════════════════════════════════╗")
-    print("║  ⚽  Versus — Boca vs River  ⚽           ║")
+    print("║  ⚽  Versus — Selector de duelo  ⚽       ║")
     print("╚══════════════════════════════════════════╝\n")
+    print("Duelos disponibles:")
+    for i, m in enumerate(ALL_MATCHUPS):
+        print(f"  {i + 1}. {m.label}  [{m.id}]")
+    print()
+    try:
+        choice = input(f"Elige duelo (1-{len(ALL_MATCHUPS)}, Enter=1): ").strip()
+        idx = int(choice) - 1 if choice.isdigit() else 0
+        idx = max(0, min(idx, len(ALL_MATCHUPS) - 1))
+        selected_matchup = ALL_MATCHUPS[idx]
+    except (EOFError, OSError):
+        selected_matchup = DEFAULT_MATCHUP
+
+    print(f"\n▶ Duelo: {selected_matchup.label}\n")
     print("Controles demo (sin TikTok):")
-    print("  Q   → Gift a River (Rosquilla)")
-    print("  W   → Gift a Boca  (Capibara)")
-    print("  L   → Conectar a TikTok")
-    print("  R   → Reset a IDLE")
+    print("  Q   → Gift izquierda (Dona)")
+    print("  W   → Gift derecha  (Capibara)")
+    print("  E   → Fan comment izquierda")
+    print("  R   → Fan comment derecha")
     print("  ESC → Salir\n")
 
     try:
-        username = input("Username de TikTok (Enter para modo IDLE): ").strip()
-        if not username or username.lower() == "idle":
-            return ("", True)
-        return (username, False)
+        uname = input("Username de TikTok (Enter para modo IDLE): ").strip().lstrip("@")
+        if not uname or uname.lower() == "idle":
+            return ("", True, selected_matchup)
+        return (uname, False, selected_matchup)
     except (EOFError, OSError):
-        return ("", True)
+        return ("", True, selected_matchup)
+
+
+# Keep old name as alias so any external callers don't break.
+def get_username() -> tuple[str, bool]:
+    """Legacy shim — use ``get_startup_params`` for new code."""
+    u, idle, _ = get_startup_params()
+    return (u, idle)
 
 
 def main() -> None:
     try:
-        username, idle_mode = get_username()
-        app = VersusApplication(username, idle_mode)
+        username, idle_mode, matchup = get_startup_params()
+        app = VersusApplication(username, idle_mode, matchup=matchup)
         try:
             asyncio.run(app.run())
         except KeyboardInterrupt:

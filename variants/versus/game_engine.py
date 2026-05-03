@@ -70,7 +70,28 @@ class VersusGameEngine(GameEngine):
     """Modo duelo 1v1 sobre el GameEngine base."""
 
     # ── Estado versus ────────────────────────────────────────────────────────
-    def __init__(self, queue: asyncio.Queue, streamer_name: str, database=None):
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        streamer_name: str,
+        database=None,
+        matchup=None,
+    ):
+        """Initialise the versus engine, optionally with a specific matchup.
+
+        Args:
+            queue: Async event queue from TikTokManager.
+            streamer_name: TikTok username (or ``"idle"``).
+            database: Optional Database instance for local persistence.
+            matchup: Optional ``Matchup`` instance. When provided, its team
+                definitions are patched into ``variants.versus.config`` so that
+                every subsequent ``from core.config import TEAM_LEFT`` call
+                inside the engine (and scoreboard) picks up the correct values.
+        """
+        # ── Patch config module with the selected matchup ────────────────────
+        if matchup is not None:
+            self._apply_matchup_to_config(matchup)
+
         # Importar config versus (ya patched en sys.modules antes de este import)
         from core.config import (
             VICTORY_MODE, SCORE_LIMIT, MATCH_DURATION_SECS,
@@ -178,10 +199,99 @@ class VersusGameEngine(GameEngine):
             f"| modo={self.victory_mode}"
         )
 
+        # physics_world imports RACE_COUNTRIES at module level, so it already
+        # created racers with the default country list. Remap them to the
+        # actual team names of the active matchup.
+        if matchup is not None:
+            self._remap_physics_racers(matchup)
+
         self._apply_split_screen_layout()
 
         # Silence the join-welcome banner — it overlaps the scoreboard.
         self.notification_manager.render = lambda *_args, **_kwargs: None
+
+    # ── Matchup config patching ──────────────────────────────────────────────
+
+    @staticmethod
+    def _apply_matchup_to_config(matchup) -> None:
+        """Patch the versus config module in-place with the selected matchup.
+
+        All subsequent ``from core.config import TEAM_LEFT`` calls (inside the
+        engine, scoreboard, etc.) will see the patched values for the duration
+        of this process.
+
+        Args:
+            matchup: A ``Matchup`` instance from ``variants.versus.matchups``.
+        """
+        import variants.versus.config as _vcfg
+
+        _vcfg.TEAM_LEFT  = matchup.as_team_left_dict()
+        _vcfg.TEAM_RIGHT = matchup.as_team_right_dict()
+        _vcfg.VERSUS_GIFT_TEAM_MAP = dict(matchup.gift_team_map)
+        _vcfg.ACTIVE_MATCHUP_ID   = matchup.id
+
+        # Keep the aliases that physics_world / renderer read from the same module.
+        _vcfg.RACE_COUNTRIES = [matchup.left.name, matchup.right.name]
+        _vcfg.COUNTRY_ABBREV = {
+            matchup.left.name:  matchup.left.short,
+            matchup.right.name: matchup.right.short,
+        }
+        from core.config import GIFT_COLORS as _base_colors
+        _vcfg.GIFT_COLORS = {
+            **_base_colors,
+            matchup.left.name:  matchup.left.color,
+            matchup.right.name: matchup.right.color,
+        }
+
+        # Also patch into core.config so any module importing from there picks
+        # up the active team definitions.
+        import core.config as _ccfg
+        _ccfg.TEAM_LEFT            = _vcfg.TEAM_LEFT
+        _ccfg.TEAM_RIGHT           = _vcfg.TEAM_RIGHT
+        _ccfg.VERSUS_GIFT_TEAM_MAP = _vcfg.VERSUS_GIFT_TEAM_MAP
+        _ccfg.RACE_COUNTRIES       = _vcfg.RACE_COUNTRIES
+        _ccfg.COUNTRY_ABBREV       = _vcfg.COUNTRY_ABBREV
+
+        # Store the full matchup object for asset path lookups.
+        _vcfg.ACTIVE_MATCHUP = matchup
+
+        logger.info(
+            f"[Matchup] '{matchup.id}' — {matchup.left.name} vs {matchup.right.name}"
+        )
+
+    def _remap_physics_racers(self, matchup) -> None:
+        """Rename physics-world racers to match the active matchup teams.
+
+        ``physics_world.py`` imports ``RACE_COUNTRIES`` at module level, so
+        the racers are created with whatever that list contained at import time
+        (default: the versus config's two teams, initially River/Boca).  When a
+        different matchup is selected we need to rename both the racer dicts and
+        the racer.country attribute so that ``_render_racer`` and
+        ``_load_versus_crest`` resolve to the correct team names.
+
+        Args:
+            matchup: Active ``Matchup`` instance with the correct team names.
+        """
+        pw = self.physics_world
+        old_countries = list(pw.countries)
+        if len(old_countries) < 2:
+            return
+        new_names = [matchup.left.name, matchup.right.name]
+        rename_map = {old: new for old, new in zip(old_countries, new_names)}
+        if not any(o != n for o, n in rename_map.items()):
+            return  # already correct, nothing to do
+
+        # Rebuild the racers dict with the new names.
+        new_racers = {}
+        for old_name, racer in list(pw.racers.items()):
+            new_name = rename_map.get(old_name, old_name)
+            racer.country = new_name
+            if hasattr(racer, "name"):
+                racer.name = new_name
+            new_racers[new_name] = racer
+        pw.racers = new_racers
+        pw.countries = new_names
+        logger.info(f"[Matchup] Remapped racers: {rename_map}")
 
     # ── Split screen (River | Boca) ─────────────────────────────────────────
 
@@ -1115,8 +1225,11 @@ class VersusGameEngine(GameEngine):
     def _load_versus_crest(self, team_name: str, size: int) -> "Optional[pygame.Surface]":
         """Load and cache the team crest PNG scaled to *size* × *size* pixels.
 
+        Uses the escudo_path from the active matchup when available, falling
+        back to the legacy ``escudo-{team}.png`` naming convention.
+
         Args:
-            team_name: Team identifier ("River" or "Boca").
+            team_name: Team identifier (e.g. ``"River"`` or ``"Argentina"``).
             size: Target pixel size (square).
 
         Returns:
@@ -1128,15 +1241,26 @@ class VersusGameEngine(GameEngine):
 
         from core.resources import resource_path
         import os
+        import variants.versus.config as _vcfg
 
-        filename = f"escudo-{team_name.lower()}.png"
-        path = resource_path(os.path.join("assets", "versus", "images", filename))
+        # Prefer matchup-defined path, fall back to legacy convention.
+        matchup = getattr(_vcfg, "ACTIVE_MATCHUP", None)
+        asset_path: Optional[str] = None
+        if matchup is not None:
+            if team_name == matchup.left.name and matchup.left.escudo_path:
+                asset_path = matchup.left.escudo_path
+            elif team_name == matchup.right.name and matchup.right.escudo_path:
+                asset_path = matchup.right.escudo_path
+        if asset_path is None:
+            asset_path = os.path.join("assets", "versus", "images",
+                                      f"escudo-{team_name.lower()}.png")
+        path = resource_path(os.path.normpath(asset_path))
         surf: "Optional[pygame.Surface]" = None
         try:
             raw = pygame.image.load(path).convert_alpha()
             surf = pygame.transform.smoothscale(raw, (size, size))
         except Exception as e:
-            logger.debug(f"[versus_crest] could not load {filename}: {e}")
+            logger.debug(f"[versus_crest] could not load {asset_path}: {e}")
             surf = None
 
         self._versus_crests[cache_key] = surf
