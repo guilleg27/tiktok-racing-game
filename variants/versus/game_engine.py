@@ -486,43 +486,59 @@ class VersusGameEngine(GameEngine):
             self._check_set_winner()
             return
 
-        # COMMENT: check for fan keyword before passing to base engine
-        if event.type == EventType.COMMENT:
+        # COMMENT or VOTE: check for fan keyword before passing to base engine.
+        # VOTE events are produced by TikTokManager for comments that match
+        # COUNTRY_SHORTCUTS (e.g. "argentina", "1"), so we must intercept both.
+        if event.type in (EventType.COMMENT, EventType.VOTE):
             self._handle_versus_fan_comment(event)
 
-        # All other events (including COMMENT) handled by base engine
+        # All other events (including COMMENT / VOTE) handled by base engine
         await super()._handle_event(event)
 
     def _handle_versus_fan_comment(self, event: GameEvent) -> None:
         """Increment session fan counter when a chat comment matches a team keyword.
 
+        Handles both COMMENT events (raw chat text) and VOTE events (produced by
+        TikTokManager when a comment matched a COUNTRY_SHORTCUTS shortcut).
+
         Args:
-            event: COMMENT event from TikTok chat.
+            event: COMMENT or VOTE event from TikTok chat.
         """
         import time as _time
         from core.config import COMMENT_COOLDOWN, TEAM_LEFT, TEAM_RIGHT
 
         username = self.sanitize_username(event.username)
-        text = (event.content or "").strip().lower()
-        if not text:
+
+        team: Optional[str] = None
+
+        if event.type == EventType.VOTE:
+            # VOTE event: content is the resolved country name (e.g. "Argentina").
+            # Match it against the active team names directly.
+            voted = (event.content or "").strip()
+            if voted == self.team_left_name:
+                team = self.team_left_name
+            elif voted == self.team_right_name:
+                team = self.team_right_name
+        else:
+            # COMMENT event: keyword matching on the raw text.
+            text = (event.content or "").strip().lower()
+            if not text:
+                return
+            first_word = text.split()[0] if text.split() else text
+            if first_word in [kw.lower() for kw in TEAM_LEFT["keywords"]]:
+                team = self.team_left_name
+            elif first_word in [kw.lower() for kw in TEAM_RIGHT["keywords"]]:
+                team = self.team_right_name
+
+        if team is None:
             return
 
-        # Per-user cooldown: same user can only add 1 fan vote per COMMENT_COOLDOWN seconds
+        # Per-user cooldown: only applied after a successful keyword match so
+        # that regular chat messages don't block the user's next fan vote.
         now = _time.time()
         if now - self._fans_cooldown.get(username, 0.0) < COMMENT_COOLDOWN:
             return
         self._fans_cooldown[username] = now
-
-        # Keyword matching: first word of the comment is enough
-        first_word = text.split()[0] if text.split() else text
-        team: Optional[str] = None
-        if first_word in [kw.lower() for kw in TEAM_LEFT["keywords"]]:
-            team = self.team_left_name
-        elif first_word in [kw.lower() for kw in TEAM_RIGHT["keywords"]]:
-            team = self.team_right_name
-
-        if team is None:
-            return
 
         self.session_fans[team] = self.session_fans.get(team, 0) + 1
         logger.debug(f"[VERSUS fans] {username} → {team} | total={self.session_fans[team]}")
