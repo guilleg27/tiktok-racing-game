@@ -17,7 +17,7 @@ GIFT_DIAMOND_VALUES = {
     **_BASE_GIFT_MAP,
     # Gifts repurposed as country selectors → value drops to 1 diamond
     "TikTok": 1, "tiktok": 1,
-    "Creeper": 1, "creeper": 1,
+    "It's corn": 1,  # EN confirmed
     "Pop": 1, "pop": 1,
     "Maracas": 1, "maracas": 1,
     "Te adoro": 1, "te adoro": 1,
@@ -51,7 +51,7 @@ MOTOGP_GIFT_COUNTRY_MAP = {
     # Brasil
     "tiktok": "Brasil",
     # Mexico
-    "creeper": "Mexico",
+    "it's corn": "Mexico",  # EN confirmed
     # Colombia
     "pop": "Colombia",
     # Chile
