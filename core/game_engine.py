@@ -5473,9 +5473,9 @@ class GameEngine:
         Check if leader has reached final stretch (80% of track).
         Triggers announcement and speed boost.
         """
-        if self.final_stretch_triggered or self.game_state != 'RACING':
+        if self.final_stretch_triggered or self.game_state != 'RACING' or self.physics_world.race_finished:
             return
-        
+
         leader_info = self.physics_world.get_leader()
         if not leader_info:
             return
