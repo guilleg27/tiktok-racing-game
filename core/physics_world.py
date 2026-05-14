@@ -27,6 +27,7 @@ from .config import (
     LANE_HEIGHT,
     MOTOGP_MODE,
     COMBAT_FORCE_MULTIPLIER,
+    MOTOGP_SPRITE_HEIGHT,
 )
 
 if TYPE_CHECKING:
@@ -203,7 +204,8 @@ class PhysicsWorld:
             if self.asset_manager:
                 if MOTOGP_MODE:
                     # Aspect-ratio preserving, no background removal (motorcycle images)
-                    sprite = self.asset_manager.get_sprite_for_racer(country, self.lane_height + 6)
+                    sprite_h = MOTOGP_SPRITE_HEIGHT if MOTOGP_SPRITE_HEIGHT > 0 else self.lane_height + 6
+                    sprite = self.asset_manager.get_sprite_for_racer(country, sprite_h)
                 else:
                     sprite = self.asset_manager.get_sprite(country, FLAG_RADIUS * 2)
             

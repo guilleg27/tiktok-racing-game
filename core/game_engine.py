@@ -394,6 +394,7 @@ class FloatingText:
     font_size: int = 16
     is_welcome: bool = False   # Tag for welcome messages (cooldown counting)
     pulse_ratio: float = 0.15  # Fraction of life for elastic pulse (welcome uses 0.4)
+    font_name: str = "Arial"   # Override per-variant (e.g. motos uses condensed font)
 
     def update(self) -> None:
         """Update position and lifespan."""
@@ -426,7 +427,7 @@ class FloatingText:
         actual_font_size = max(8, int(self.font_size * scale))
         
         # Create font con BOLD para mejor legibilidad
-        font = _get_font("Arial", actual_font_size, bold=True)
+        font = _get_font(self.font_name, actual_font_size, bold=True)
     
         # Render main text con anti-aliasing
         text_surface = _safe_render(font, self.text, self.color)
@@ -2560,20 +2561,6 @@ class GameEngine:
         if HYPE_TIMER_ENABLED and self.hud_visible:
             self._render_hype_timer(self.render_surface)
 
-        # Render shortcuts panel in COMMENT mode (solo durante RACING)
-        import time as time_module
-        
-        if GAME_MODE == "COMMENT" and self.game_state == "RACING":
-            
-            # Show fade-out HUD overlay for first 3 seconds
-            if self.race_start_time:
-                elapsed = time_module.time() - self.race_start_time
-                if elapsed < self.hud_fade_duration:
-                    # Calculate fade alpha (1.0 -> 0.0 over 3 seconds)
-                    fade_progress = elapsed / self.hud_fade_duration
-                    overlay_alpha = int(255 * (1.0 - fade_progress))
-                    if overlay_alpha > 20:  # Only render if visible
-                        self._render_race_start_hud(overlay_alpha)
         
         # Render IDLE screen on top if in IDLE state
         if self.game_state == 'IDLE':

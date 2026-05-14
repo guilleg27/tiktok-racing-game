@@ -70,6 +70,8 @@ FLAG_RADIUS = 8
 RACE_COUNTRIES = [
     "Argentina", "Brasil", "Mexico", "Colombia",
     "Chile", "Peru", "Venezuela", "Uruguay",
+    "Guatemala", "Honduras", "Panama", "Ecuador",
+    "Paraguay", "Puerto Rico", "Bolivia",
 ]
 
 # Country shortcuts for COMMENT mode (siglas + números)
@@ -98,18 +100,46 @@ COUNTRY_SHORTCUTS = {
     # Uruguay
     "8": "Uruguay", "uru": "Uruguay", "uruguay": "Uruguay",
     "uy": "Uruguay",
+
+    # Guatemala
+    "9": "Guatemala", "gua": "Guatemala", "guatemala": "Guatemala",
+
+    # Honduras
+    "10": "Honduras", "hon": "Honduras", "honduras": "Honduras",
+
+    # Panama
+    "11": "Panama", "pan": "Panama", "panama": "Panama", "panamá": "Panama",
+
+    # Ecuador
+    "12": "Ecuador", "ecu": "Ecuador", "ecuador": "Ecuador",
+
+    # Paraguay
+    "13": "Paraguay", "par": "Paraguay", "paraguay": "Paraguay",
+
+    # Puerto Rico
+    "14": "Puerto Rico", "pri": "Puerto Rico", "pr": "Puerto Rico", "puerto rico": "Puerto Rico",
+
+    # Bolivia
+    "15": "Bolivia", "bol": "Bolivia", "bolivia": "Bolivia",
 }
 
 # Country abbreviations for display (3 letters)
 COUNTRY_ABBREV = {
-    "Argentina": "ARG",
-    "Brasil": "BRA",
-    "Mexico": "MEX",
-    "Colombia": "COL",
-    "Chile": "CHI",
-    "Peru": "PER",
-    "Venezuela": "VEN",
-    "Uruguay": "URU",
+    "Argentina":   "ARG",
+    "Brasil":      "BRA",
+    "Mexico":      "MEX",
+    "Colombia":    "COL",
+    "Chile":       "CHI",
+    "Peru":        "PER",
+    "Venezuela":   "VEN",
+    "Uruguay":     "URU",
+    "Guatemala":   "GUA",
+    "Honduras":    "HON",
+    "Panama":      "PAN",
+    "Ecuador":     "ECU",
+    "Paraguay":    "PAR",
+    "Puerto Rico": "PRI",
+    "Bolivia":     "BOL",
 }
 
 # Comment mode settings
@@ -231,7 +261,14 @@ GIFT_COLORS = {
     "Colombia": (255, 205, 0),         # Yellow
     "Chile": (0, 57, 166),             # Blue
     "Peru": (212, 0, 0),               # Red
-    "Venezuela": (255, 221, 0),        # Yellow
+    "Venezuela":   (255, 221, 0),        # Yellow
+    "Guatemala":   (0, 122, 60),
+    "Honduras":    (0, 73, 144),
+    "Panama":      (213, 43, 30),
+    "Ecuador":     (255, 215, 0),
+    "Paraguay":    (210, 16, 52),
+    "Puerto Rico": (0, 56, 168),
+    "Bolivia":     (210, 16, 52),
     # Default fallback
     "default": (255, 255, 255),
 }
@@ -389,6 +426,27 @@ COUNTRY_KEYWORDS = {
     # Uruguay
     'uru': 'Uruguay', 'uruguay': 'Uruguay', 'uy': 'Uruguay',
     '🇺🇾': 'Uruguay',
+
+    # Guatemala
+    'gua': 'Guatemala', 'guatemala': 'Guatemala', '🇬🇹': 'Guatemala',
+
+    # Honduras
+    'hon': 'Honduras', 'honduras': 'Honduras', '🇭🇳': 'Honduras',
+
+    # Panama
+    'pan': 'Panama', 'panama': 'Panama', 'panamá': 'Panama', '🇵🇦': 'Panama',
+
+    # Ecuador
+    'ecu': 'Ecuador', 'ecuador': 'Ecuador', '🇪🇨': 'Ecuador',
+
+    # Paraguay
+    'par': 'Paraguay', 'paraguay': 'Paraguay', '🇵🇾': 'Paraguay',
+
+    # Puerto Rico
+    'pri': 'Puerto Rico', 'pr': 'Puerto Rico', 'puerto rico': 'Puerto Rico', '🇵🇷': 'Puerto Rico',
+
+    # Bolivia
+    'bol': 'Bolivia', 'bolivia': 'Bolivia', '🇧🇴': 'Bolivia',
 }
 
 # Anti-spam para joins
@@ -453,6 +511,7 @@ MOTOGP_MODE             = False
 MOTOGP_LITE_PARTICLES   = False
 MOTOGP_GIFT_COUNTRY_MAP: dict = {}
 COMBAT_FORCE_MULTIPLIER = 1.0
+MOTOGP_SPRITE_HEIGHT    = 0  # 0 = auto (lane_height + 6); override in motos/config.py
 
 # Path to racer sprites (flags for countries, motorcycles for motos)
 RACER_ASSETS_PATH = "assets/flags"

@@ -5,7 +5,9 @@ from core.config import GIFT_DIAMOND_VALUES as _BASE_GIFT_MAP
 
 # ── DIVERGED overrides ──────────────────────────────────────────────────────
 FPS = 30  # CPU headroom for Live Studio
-FLAG_RADIUS = 12
+FLAG_RADIUS = 10
+LANE_HEIGHT = 28
+MOTOGP_SPRITE_HEIGHT = 22  # px — sprite size independent of lane spacing
 
 GRADIENT_TOP = (100, 105, 125)        # Azul pizarra claro
 GRADIENT_BOTTOM = (75, 78, 95)        # Azul pizarra medio
@@ -47,21 +49,42 @@ METEOR_BOOST_MAX = 8
 MOTOGP_GIFT_COUNTRY_MAP = {
     # Argentina
     "rosa": "Argentina",
-    "rose": "Argentina",        # EN confirmed
+    "rose": "Argentina",
     # Brasil
     "tiktok": "Brasil",
     # Mexico
-    "it's corn": "Mexico",  # EN confirmed
+    "it's corn": "Mexico",
     # Colombia
     "pop": "Colombia",
     # Chile
     "cono de helado": "Chile",
-    "ice cream cone": "Chile",  # EN confirmed
+    "ice cream cone": "Chile",
     # Peru
-    "te adoro": "Peru",         # ⚠️ verify EN name via console log
+    "te adoro": "Peru",
     "love you so much": "Peru",
     # Venezuela
-    "maracas": "Venezuela",     # ⚠️ verify EN name via console log
+    "maracas": "Venezuela",
     # Uruguay
     "gg": "Uruguay",
+    # Guatemala
+    "clasicos": "Guatemala",
+    "classics": "Guatemala",       # ⚠️ verificar EN via console log
+    # Honduras
+    "cake slice": "Honduras",      # ⚠️ verificar EN via console log
+    "porcion de torta": "Honduras",
+    # Panama
+    "rayo": "Panama",
+    "lightning bolt": "Panama",    # ⚠️ verificar EN via console log
+    # Ecuador
+    "glow stick": "Ecuador",
+    "batuta luminosa": "Ecuador",  # ⚠️ verificar EN via console log
+    # Paraguay
+    "guiño guiño": "Paraguay",
+    "wink wink": "Paraguay",       # ⚠️ verificar EN via console log
+    # Puerto Rico
+    "youre awesome": "Puerto Rico",
+    "you're awesome": "Puerto Rico",  # ⚠️ verificar apóstrofo via console log
+    # Bolivia
+    "alas guardianes": "Bolivia",
+    "guardian wings": "Bolivia",   # ⚠️ verificar EN via console log
 }

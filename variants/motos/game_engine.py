@@ -189,6 +189,99 @@ class MotosGameEngine(GameEngine):
         """No-op: the motos variant does not show the final classification table."""
 
     # ------------------------------------------------------------------
+    # Floating text font override
+    # ------------------------------------------------------------------
+
+    _FLOATING_FONT = "avenirnextcondensed"  # falls back to nearest SysFont match
+
+    def _render_floating_texts(self) -> None:
+        """Inject condensed font into every floating text before drawing."""
+        for t in self.floating_texts:
+            t.font_name = self._FLOATING_FONT
+        super()._render_floating_texts()
+
+    # ------------------------------------------------------------------
+    # Moto-in-motion: suspension bounce + forward lean
+    # ------------------------------------------------------------------
+
+    _MOTO_BOUNCE_AMP   = 0.7   # px — vertical suspension oscillation
+    _MOTO_BOUNCE_HZ    = 9.0   # rad/s — fast enough to feel like road vibration
+    _MOTO_LEAN_DEG     = 5.0   # degrees clockwise — constant forward lean
+
+    def _render_racer(self, racer, is_winner: bool = False) -> None:
+        """Override: add suspension bounce + forward lean before delegating to super."""
+        phase = self.leader_glow_time * self._MOTO_BOUNCE_HZ + racer.lane * 0.8
+        y_bump = math.sin(phase) * self._MOTO_BOUNCE_AMP
+
+        old_y_offset = getattr(racer, "y_offset", 0.0)
+        old_angle    = racer.body.angle
+
+        racer.y_offset    = old_y_offset + y_bump
+        racer.body.angle  = math.radians(self._MOTO_LEAN_DEG)
+
+        super()._render_racer(racer, is_winner)
+
+        racer.y_offset   = old_y_offset
+        racer.body.angle = old_angle
+
+    # ------------------------------------------------------------------
+    # Country badge — circle with 3-letter abbrev to the left of each moto
+    # ------------------------------------------------------------------
+
+    def _render_captain_label(self, racer, flag_x: int, flag_y: int) -> None:
+        """No-op: captain shown in the lane badge to the left of the moto."""
+
+    def _render_neon_lane_labels(self) -> None:
+        """Render neon country name (center, via super) + clean captain pill (left of moto)."""
+        super()._render_neon_lane_labels()  # original neon label in the center
+
+        from core.config import COUNTRY_ABBREV
+
+        # Modern condensed font — DIN/Avenir feel, falls back gracefully
+        font = _get_font("avenirnextcondensed", 9, bold=True) or _get_font("dincondensed", 9, bold=True) or _get_font("Verdana", 8, bold=False)
+        gap = 4
+        pad_x, pad_y = 5, 2
+
+        for country, racer in self.physics_world.get_racers().items():
+            rx = float(racer.body.position.x)
+            ry = float(racer.body.position.y + (racer.y_offset if hasattr(racer, "y_offset") else 0.0))
+
+            captain = self.current_captains.get(country, "")
+            is_new  = bool(captain) and country in self.captain_change_timer
+            label   = captain[:9] if captain else COUNTRY_ABBREV.get(country, country[:3].upper())
+
+            text_w, text_h = font.size(label)
+            pill_w = text_w + pad_x * 2
+            pill_h = text_h + pad_y * 2
+            radius = pill_h // 2
+
+            sprite_half_w = racer.sprite.get_width() // 2 if racer.sprite else self.physics_world.lane_height
+            pill_right = int(rx - sprite_half_w - gap)
+            pill_left  = max(2, pill_right - pill_w)
+
+            # No glow needed — clean black pill
+            surf_w = pill_w + 4
+            surf_h = pill_h + 4
+            s  = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
+            cx = surf_w // 2
+            cy = surf_h // 2
+            pill_rect = pygame.Rect(cx - pill_w // 2, cy - pill_h // 2, pill_w, pill_h)
+
+            # Black fill
+            pygame.draw.rect(s, (0, 0, 0, 210), pill_rect, border_radius=radius)
+
+            # White border (gold flash for new captain)
+            border_col = (255, 215, 0) if is_new else (255, 255, 255)
+            pygame.draw.rect(s, (*border_col, 220), pill_rect, width=1, border_radius=radius)
+
+            # White text (gold for new captain)
+            text_col  = (255, 215, 0) if is_new else (255, 255, 255)
+            text_surf = font.render(label, True, text_col)
+            s.blit(text_surf, (cx - text_w // 2, cy - text_h // 2))
+
+            self.render_surface.blit(s, (pill_left - 2, int(ry) - surf_h // 2))
+
+    # ------------------------------------------------------------------
     # Victory trigger
     # ------------------------------------------------------------------
 
