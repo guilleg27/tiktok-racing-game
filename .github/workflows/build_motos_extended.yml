@@ -1,0 +1,126 @@
+name: Build MotoRace Extended
+
+on:
+  push:
+    branches: [ main, master, variant-motos-extended ]
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build executable
+      run: python build_app.py --variant motos_extended
+
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MotoRaceExtended-Windows
+        path: dist/MotoRaceExtended/
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build executable
+      run: python build_app.py --variant motos_extended
+
+    - name: Upload macOS artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MotoRaceExtended-macOS
+        path: dist/MotoRaceExtended.app/
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Syntax check core/
+      run: python -m py_compile core/*.py
+
+    - name: Syntax check motos_extended/
+      run: python -m py_compile variants/motos_extended/main.py variants/motos_extended/config.py variants/motos_extended/game_engine.py
+
+    - name: Run tests
+      run: python -m pytest tests/ -v --ignore=tests/test_e2e_cloud_sync.py --ignore=tests/test_multiple_races.py --ignore=tests/test_global_ranking.py
+      continue-on-error: true
+
+  release:
+    needs: [build-windows, build-macos, test]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: MotoRaceExtended-Windows
+        path: ./windows
+
+    - name: Download macOS artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: MotoRaceExtended-macOS
+        path: ./macos
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          windows/
+          macos/
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
