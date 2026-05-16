@@ -56,24 +56,44 @@ os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# Configure logging - write to file if frozen (windowed executable)
-if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-    log_file = os.path.join(os.path.dirname(sys.executable), 'motorace.log')
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
+# ── Logging: show only connection, assets, and gift events ──────────────────
+class _MotoFilter(logging.Filter):
+    _OWN   = {"__main__", "variants.motos.main", "variants.motos.game_engine"}
+    _GIFTS = ("REGALO", "🎁", "🚀", "WINNER", "🏆")
+    _CONN  = ("Connected", "Conectad", "Reconnect", "Disconnect",
+              "conexión", "Conexión", "timeout", "Timeout")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        if record.name in self._OWN:
+            return True
+        if record.name == "core.tiktok_manager":
+            return any(kw in record.getMessage() for kw in self._CONN)
+        if record.name == "core.asset_manager":
+            return True
+        if record.name in ("core.game_engine", "core.physics_world"):
+            return any(kw in record.getMessage() for kw in self._GIFTS)
+        return False
+
+
+def _setup_logging() -> None:
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        log_file = os.path.join(os.path.dirname(sys.executable), 'motorace.log')
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter(fmt))
+        file_handler.addFilter(_MotoFilter())
+        logging.root.addHandler(file_handler)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter(fmt))
+    stream_handler.addFilter(_MotoFilter())
+    logging.root.addHandler(stream_handler)
+    logging.root.setLevel(logging.DEBUG)  # filter decides, not level
     logging.getLogger("httpx").setLevel(logging.WARNING)
-else:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+_setup_logging()
 
 logger = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from typing import Optional
@@ -316,6 +317,21 @@ class MotosGameEngine(GameEngine):
 
         super()._trigger_victory_sequence(winner_country, winner_captain)
 
+        # Replace core victory.wav with the moto-specific track
+        self.audio_manager.stop_victory_sound()
+        try:
+            mp3_path = resource_path(os.path.join("assets", "audio", "victory_moto.mp3"))
+            pygame.mixer.music.load(mp3_path)
+            pygame.mixer.music.set_volume(0.65)
+            pygame.mixer.music.play(-1)  # loop until victory ends
+        except Exception as exc:
+            logger.warning(f"[MotosGE] victory_moto.mp3 could not play: {exc}")
+
+    def on_physics_race_reset(self) -> None:
+        """Stop moto victory music before delegating to core."""
+        pygame.mixer.music.stop()
+        super().on_physics_race_reset()
+
     # ------------------------------------------------------------------
     # Victory screen render
     # ------------------------------------------------------------------
@@ -388,28 +404,44 @@ class MotosGameEngine(GameEngine):
         CONTENT_H = 420
         y = max(play_top + 8, play_cy - CONTENT_H // 2)
 
-        # ── 4a. Winner flag sprite ────────────────────────────────────────
-        flag_sz = 120
+        # ── 4a. Winner moto — styled panel ───────────────────────────────
+        panel_w = int(sw * 0.74)
+        panel_h = 120
+        panel_x = cx - panel_w // 2
+        panel_y = y
+
+        # Background panel: dark with a subtle winner-colour tint
+        panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        r0, g0, b0 = w_accent[0], w_accent[1], w_accent[2]
+        for row in range(panel_h):
+            # Very slight vertical gradient — slightly lighter at centre
+            center_factor = 1.0 - abs(row / panel_h - 0.5) * 0.6
+            rv = int(8  + r0 * 0.05 * center_factor)
+            gv = int(8  + g0 * 0.05 * center_factor)
+            bv = int(16 + b0 * 0.08 * center_factor)
+            pygame.draw.line(panel_surf, (rv, gv, bv, 210), (0, row), (panel_w, row))
+
+        # Rounded accent border
+        pygame.draw.rect(panel_surf, (*w_accent[:3], 130),
+                         (0, 0, panel_w, panel_h), 2, border_radius=14)
+        # Inner highlight line at top for depth
+        pygame.draw.line(panel_surf, (255, 255, 255, 30), (14, 1), (panel_w - 14, 1))
+
+        surface.blit(panel_surf, (panel_x, panel_y))
+
+        # Moto sprite — centred inside the panel
+        moto_h = 90
+        entry  = min(1.0, t * 3.0)
         bounce = 1.0 + 0.04 * math.sin(t * 3.8)
-        draw_sz = int(flag_sz * bounce * min(1.0, t * 3.0))
+        moto_surf = self.asset_manager.get_sprite_for_racer(winner, moto_h)
+        if moto_surf and entry > 0.05:
+            draw_h = max(1, int(moto_h * bounce * entry))
+            draw_w = max(1, int(moto_surf.get_width() * draw_h / moto_h))
+            scaled = pygame.transform.smoothscale(moto_surf, (draw_w, draw_h))
+            surface.blit(scaled, scaled.get_rect(
+                centerx=cx, centery=panel_y + panel_h // 2))
 
-        flag_surf = self.asset_manager.get_sprite(winner, flag_sz)
-        if flag_surf and draw_sz > 10:
-            scaled = pygame.transform.smoothscale(flag_surf, (draw_sz, draw_sz))
-            surface.blit(scaled, scaled.get_rect(centerx=cx, centery=y + flag_sz // 2))
-
-        # Golden rings around the flag
-        ring_pulse = 0.5 + 0.5 * math.sin(t * 4.2)
-        for i in range(3):
-            ring_a = int(ring_pulse * (130 - i * 40))
-            if ring_a > 0:
-                pygame.draw.circle(
-                    surface, (255, 215, 0),
-                    (cx, y + flag_sz // 2),
-                    flag_sz // 2 + 6 + i * 7, max(1, 3 - i)
-                )
-
-        y += flag_sz + 12
+        y = panel_y + panel_h + 12
 
         # ── 4b. Country name ──────────────────────────────────────────────
         title_text = f"¡{winner.upper()} GANA!"
@@ -590,6 +622,7 @@ class MotosGameEngine(GameEngine):
 
     def _return_to_idle(self) -> None:
         """Clean up motos stats and video, then delegate to parent."""
+        pygame.mixer.music.stop()
         self._stop_video()
         self._comment_counts.clear()
         self._diamond_totals.clear()

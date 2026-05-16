@@ -24,6 +24,8 @@ GIFT_DIAMOND_VALUES = {
     "Maracas": 1, "maracas": 1,
     "Te adoro": 1, "te adoro": 1,
     "love you so much": 1,
+    "Oldies": 1, "oldies": 1, "clasicos": 1,  # EN confirmed → Guatemala
+    "white rose": 1,  # Panama
     # Value adjustments
     "Doughnut": 30, "Rosquilla": 30,
 }
@@ -68,13 +70,12 @@ MOTOGP_GIFT_COUNTRY_MAP = {
     "gg": "Uruguay",
     # Guatemala
     "clasicos": "Guatemala",
-    "classics": "Guatemala",       # ⚠️ verificar EN via console log
+    "oldies": "Guatemala",         # EN confirmed
     # Honduras
     "cake slice": "Honduras",      # ⚠️ verificar EN via console log
     "porcion de torta": "Honduras",
     # Panama
-    "rayo": "Panama",
-    "lightning bolt": "Panama",    # ⚠️ verificar EN via console log
+    "white rose": "Panama",
     # Ecuador
     "glow stick": "Ecuador",
     "batuta luminosa": "Ecuador",  # ⚠️ verificar EN via console log
