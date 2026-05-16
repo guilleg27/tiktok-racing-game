@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TikTok Live Interactive Bot - Motos variant entry point
+TikTok Live Interactive Bot - Motos Extended variant entry point
 
 Usage:
-    python variants/motos/main.py @username
-    python variants/motos/main.py --idle
+    python variants/motos_extended/main.py @username
+    python variants/motos_extended/main.py --idle
 """
 
 # Ensure project root is on sys.path when invoked directly from a subdirectory.
@@ -18,7 +18,7 @@ del _sys, _Path
 # ensures all subsequent `from .config import NAME` bindings in core/ capture
 # the motos values (e.g. MOTOGP_MODE=True).
 import core.config as _c
-import variants.motos.config as _vc
+import variants.motos_extended.config as _vc
 for _k, _v in vars(_vc).items():
     if not _k.startswith('_'):
         setattr(_c, _k, _v)
@@ -45,7 +45,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from src.config import FPS
 from core.events import EventType, GameEvent, ConnectionState
 from core.tiktok_manager import TikTokManager
-from variants.motos.game_engine import MotosGameEngine as GameEngine
+from variants.motos_extended.game_engine import MotosGameEngine as GameEngine
 from src.database import Database
 from src.resources import is_frozen
 from src.event_buffer import HumanizedEventBuffer
@@ -56,24 +56,44 @@ os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# Configure logging - write to file if frozen (windowed executable)
-if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-    log_file = os.path.join(os.path.dirname(sys.executable), 'motorace.log')
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
+# ── Logging: show only connection, assets, and gift events ──────────────────
+class _MotoFilter(logging.Filter):
+    _OWN   = {"__main__", "variants.motos_extended.main", "variants.motos_extended.game_engine"}
+    _GIFTS = ("REGALO", "🎁", "🚀", "WINNER", "🏆")
+    _CONN  = ("Connected", "Conectad", "Reconnect", "Disconnect",
+              "conexión", "Conexión", "timeout", "Timeout")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        if record.name in self._OWN:
+            return True
+        if record.name == "core.tiktok_manager":
+            return any(kw in record.getMessage() for kw in self._CONN)
+        if record.name == "core.asset_manager":
+            return True
+        if record.name in ("core.game_engine", "core.physics_world"):
+            return any(kw in record.getMessage() for kw in self._GIFTS)
+        return False
+
+
+def _setup_logging() -> None:
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        log_file = os.path.join(os.path.dirname(sys.executable), 'motorace.log')
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter(fmt))
+        file_handler.addFilter(_MotoFilter())
+        logging.root.addHandler(file_handler)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter(fmt))
+    stream_handler.addFilter(_MotoFilter())
+    logging.root.addHandler(stream_handler)
+    logging.root.setLevel(logging.DEBUG)  # filter decides, not level
     logging.getLogger("httpx").setLevel(logging.WARNING)
-else:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+_setup_logging()
 
 logger = logging.getLogger(__name__)
 

@@ -5,13 +5,9 @@ from core.config import GIFT_DIAMOND_VALUES as _BASE_GIFT_MAP
 
 # ── DIVERGED overrides ──────────────────────────────────────────────────────
 FPS = 30  # CPU headroom for Live Studio
-FLAG_RADIUS = 12
-
-# Lock to the original 8 countries — extended variant adds more
-RACE_COUNTRIES = [
-    "Argentina", "Brasil", "Mexico", "Colombia",
-    "Chile", "Peru", "Venezuela", "Uruguay",
-]
+FLAG_RADIUS = 10
+LANE_HEIGHT = 28
+MOTOGP_SPRITE_HEIGHT = 22  # px — sprite size independent of lane spacing
 
 GRADIENT_TOP = (100, 105, 125)        # Azul pizarra claro
 GRADIENT_BOTTOM = (75, 78, 95)        # Azul pizarra medio
@@ -28,6 +24,8 @@ GIFT_DIAMOND_VALUES = {
     "Maracas": 1, "maracas": 1,
     "Te adoro": 1, "te adoro": 1,
     "love you so much": 1,
+    "Oldies": 1, "oldies": 1, "clasicos": 1,  # EN confirmed → Guatemala
+    "white rose": 1,  # Panama
     # Value adjustments
     "Doughnut": 30, "Rosquilla": 30,
 }
@@ -53,21 +51,41 @@ METEOR_BOOST_MAX = 8
 MOTOGP_GIFT_COUNTRY_MAP = {
     # Argentina
     "rosa": "Argentina",
-    "rose": "Argentina",        # EN confirmed
+    "rose": "Argentina",
     # Brasil
     "tiktok": "Brasil",
     # Mexico
-    "it's corn": "Mexico",  # EN confirmed
+    "it's corn": "Mexico",
     # Colombia
     "pop": "Colombia",
     # Chile
     "cono de helado": "Chile",
-    "ice cream cone": "Chile",  # EN confirmed
+    "ice cream cone": "Chile",
     # Peru
-    "te adoro": "Peru",         # ⚠️ verify EN name via console log
+    "te adoro": "Peru",
     "love you so much": "Peru",
     # Venezuela
-    "maracas": "Venezuela",     # ⚠️ verify EN name via console log
+    "maracas": "Venezuela",
     # Uruguay
     "gg": "Uruguay",
+    # Guatemala
+    "clasicos": "Guatemala",
+    "oldies": "Guatemala",         # EN confirmed
+    # Honduras
+    "cake slice": "Honduras",      # EN confirmed
+    "porcion de torta": "Honduras",
+    # Panama
+    "white rose": "Panama",
+    # Ecuador
+    "glow stick": "Ecuador",
+    "batuta luminosa": "Ecuador",
+    # Paraguay
+    "guiño guiño": "Paraguay",
+    "wink wink": "Paraguay",       # EN confirmed
+    # Puerto Rico
+    "youre awesome": "Puerto Rico",
+    "you're awesome": "Puerto Rico",  # EN confirmed (apóstrofo estándar)
+    # Bolivia
+    "alas guardianes": "Bolivia",
+    "guardian wings": "Bolivia",
 }
