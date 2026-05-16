@@ -3,6 +3,7 @@
 import asyncio
 import collections
 import logging
+import unicodedata
 from typing import Optional, Dict
 import math
 import random
@@ -1510,7 +1511,7 @@ class GameEngine:
             return
 
         # Team join: user joins a country via keyword
-        username = event.username
+        username = self.sanitize_username(event.username)
         requested_country = event.content
         keyword = event.extra.get("keyword", "") if event.extra else ""
         
@@ -1606,7 +1607,7 @@ class GameEngine:
 
     async def _handle_follow_event(self, event: GameEvent) -> None:
         """Handle new follower: queue banner, register hype, log message."""
-        username = event.username or "someone"
+        username = self.sanitize_username(event.username or "someone")
         self.notification_manager.enqueue(username)
         self.hype_manager.register_event()
         self._on_real_activity()
@@ -3904,22 +3905,30 @@ class GameEngine:
             self.fps_update_timer = 0.0
     
     def sanitize_username(self, username: str) -> str:
-        """Limpia usernames problemáticos que pueden romper el renderizado."""
-        # Eliminar solo caracteres de control; permitir acentos y la mayoría de símbolos
-        sanitized = ''.join(
-            ch for ch in username
-            if ch.isprintable() and ch not in {'\n', '\r', '\t'}
-        )
-        
-        # Limitar longitud
+        """Strip emoji, flags, and unrenderable Unicode; keep Latin letters and accents."""
+        result = []
+        for ch in username:
+            cp = ord(ch)
+            # Supplementary plane (U+10000+): emoji, math-font Unicode, regional flags
+            # — all require fonts that pygame SysFont doesn't have → render as squares
+            if cp > 0xFFFF:
+                continue
+            # Variation selectors (U+FE00–U+FE0F): invisible modifiers attached to emoji
+            if 0xFE00 <= cp <= 0xFE0F:
+                continue
+            cat = unicodedata.category(ch)
+            # So = Symbol Other (BMP emoji: ✨ ☀ ♠ …)
+            # Cs = Surrogate, Co = Private Use, Cf = Format (ZWJ, ZWNBSP …)
+            if cat in ('So', 'Cs', 'Co', 'Cf'):
+                continue
+            if not ch.isprintable():
+                continue
+            result.append(ch)
+
+        sanitized = ' '.join(''.join(result).split())  # collapse stray spaces
         if len(sanitized) > 20:
             sanitized = sanitized[:17] + "..."
-        
-        # Fallback si queda vacío
-        if not sanitized.strip():
-            sanitized = "Usuario"
-        
-        return sanitized
+        return sanitized or "user"
     
     def _next_float_dx(self, speed: float = 2.8) -> float:
         """Return alternating ±speed and flip the direction toggle.

@@ -72,20 +72,20 @@ MOTOGP_GIFT_COUNTRY_MAP = {
     "clasicos": "Guatemala",
     "oldies": "Guatemala",         # EN confirmed
     # Honduras
-    "cake slice": "Honduras",      # ⚠️ verificar EN via console log
+    "cake slice": "Honduras",      # EN confirmed
     "porcion de torta": "Honduras",
     # Panama
     "white rose": "Panama",
     # Ecuador
     "glow stick": "Ecuador",
-    "batuta luminosa": "Ecuador",  # ⚠️ verificar EN via console log
+    "batuta luminosa": "Ecuador",
     # Paraguay
     "guiño guiño": "Paraguay",
-    "wink wink": "Paraguay",       # ⚠️ verificar EN via console log
+    "wink wink": "Paraguay",       # EN confirmed
     # Puerto Rico
     "youre awesome": "Puerto Rico",
-    "you're awesome": "Puerto Rico",  # ⚠️ verificar apóstrofo via console log
+    "you're awesome": "Puerto Rico",  # EN confirmed (apóstrofo estándar)
     # Bolivia
     "alas guardianes": "Bolivia",
-    "guardian wings": "Bolivia",   # ⚠️ verificar EN via console log
+    "guardian wings": "Bolivia",
 }

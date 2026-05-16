@@ -3,7 +3,7 @@
 Victory screen features:
 - Video background (assets/motos/videos/festejo.mp4) via OpenCV
 - Winner country flag + name
-- Stat cards: QUIEN MAS VOTO / TOP DONADOR
+- Stat cards: TOP VOTADOR / TOP DONADOR
 - Countdown bar to next race
 - No final-classification table
 """
@@ -239,7 +239,7 @@ class MotosGameEngine(GameEngine):
         from core.config import COUNTRY_ABBREV
 
         # Modern condensed font — DIN/Avenir feel, falls back gracefully
-        font = _get_font("avenirnextcondensed", 9, bold=True) or _get_font("dincondensed", 9, bold=True) or _get_font("Verdana", 8, bold=False)
+        font = _get_font("Arial", 11, bold=False)
         gap = 4
         pad_x, pad_y = 5, 2
 
@@ -344,7 +344,7 @@ class MotosGameEngine(GameEngine):
         2. Dark overlay
         3. Radial glow in winner colour
         4. Winner flag sprite (large, bouncing) + country name
-        5. Two stat cards: QUIEN MAS VOTO | TOP DONADOR
+        5. Two stat cards: TOP VOTADOR | TOP DONADOR
         6. Countdown bar
         """
         if not self.victory_sequence_active:
@@ -523,7 +523,7 @@ class MotosGameEngine(GameEngine):
 
         _stat_card(
             card_l_x, y,
-            "QUIEN MAS VOTO",
+            "TOP VOTADOR",
             commenter_user, commenter_count, "votos",
             (100, 180, 255),  # Blue accent
         )
