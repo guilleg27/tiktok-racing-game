@@ -1,0 +1,1869 @@
+"""
+FulbitoGameEngine — subclase de GameEngine para el modo fulbito (4 carriles, Mundial 2026).
+
+Sobrescribe la lógica que difiere del core:
+  • 4 equipos por carrera (no 12), fixture dinámico entre carreras
+  • Sistema híbrido King + Crowd + Wildcard para selección de fixture
+  • Carriles alternados (→ ← → ←), cada país corre en una dirección
+  • Gifts van al equipo que va último (FULBITO_GIFT_TO_LAST)
+  • Intermission con votación de chat entre carreras
+  • Estadísticas de sesión acumuladas
+"""
+
+import asyncio
+import logging
+import math
+import random
+import time
+from typing import Optional
+
+from core.game_engine import GameEngine, FloatingText
+from core.events import EventType
+
+
+class _GrassBackground:
+    """Replaces BackgroundManager for fulbito — draws alternating grass stripes."""
+
+    scroll_speed = 0.0  # core reads this via: self.original_parallax_speed = self.background_manager.scroll_speed
+
+    def __init__(self, engine: "FulbitoGameEngine") -> None:
+        self._engine = engine
+
+    def render(self, surface) -> None:
+        import pygame
+        from core.config import GAME_AREA_TOP, SCREEN_WIDTH
+
+        pw = self._engine.physics_world
+        if pw is None:
+            return
+
+        lane_h = pw.lane_height
+        lane_y_offset = pw.lane_y_offset
+        num_lanes = len(self._engine.current_fixture) if self._engine.current_fixture else 4
+
+        STRIPE_H = 10
+
+        LANE_COLORS = [
+            ((29, 82, 16), (35, 79, 20)),
+            ((24, 86, 14), (29, 90, 18)),
+            ((29, 82, 16), (35, 79, 20)),
+            ((24, 86, 14), (29, 90, 18)),
+        ]
+
+        surface.fill((15, 15, 15))
+
+        for i in range(num_lanes):
+            dark, light = LANE_COLORS[i % len(LANE_COLORS)]
+            lane_y = GAME_AREA_TOP + lane_y_offset + i * lane_h
+
+            stripe_idx = 0
+            y = lane_y
+            while y < lane_y + lane_h:
+                color = dark if stripe_idx % 2 == 0 else light
+                stripe_bottom = min(y + STRIPE_H, lane_y + lane_h)
+                pygame.draw.rect(
+                    surface,
+                    color,
+                    (0, y, SCREEN_WIDTH, stripe_bottom - y)
+                )
+                y += STRIPE_H
+                stripe_idx += 1
+
+        for i in range(1, num_lanes):
+            y = GAME_AREA_TOP + lane_y_offset + i * lane_h
+            pygame.draw.line(surface, (20, 55, 8), (0, y), (SCREEN_WIDTH, y), 1)
+
+    def update(self, dt: float) -> None:
+        pass
+
+    def activate_hype_mode(self) -> None:
+        pass
+
+    def deactivate_hype_mode(self) -> None:
+        pass
+
+    def set_scroll_speed(self, speed: float) -> None:
+        pass
+
+    def activate_warp_mode(self) -> None:
+        pass
+
+    def deactivate_warp_mode(self) -> None:
+        pass
+
+    def activate_tension_mode(self) -> None:
+        pass
+
+    def deactivate_tension_mode(self) -> None:
+        pass
+from core.config import MAX_MESSAGES, COMMENT_DISTANCE_MULTIPLIER
+from variants.fulbito.config import (
+    FULBITO_DEFAULT_FIXTURE,
+    FULBITO_ALL_COUNTRIES,
+    FULBITO_RACE_COUNTRY_COUNT,
+    FULBITO_INTERMISSION_SECONDS,
+    FULBITO_CROWD_PICKS,
+    resolve_alias,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class FulbitoGameEngine(GameEngine):
+    """Motor de juego para la variante Fulbito — Mundial 2026."""
+
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        streamer_name: str,
+        database=None,
+    ):
+        # Patch core.config before super().__init__() so the core physics_world
+        # is created with the 4 fulbito countries, not the 15 core countries.
+        import core.config as _cc
+        import variants.fulbito.config as _fc
+        from core.config import GIFT_COLORS as _base_colors
+
+        _FULBITO_COLORS = {
+            "ARG": (116, 172, 72),
+            "BRA": (0, 156, 59),
+            "MEX": (206, 17, 38),
+            "COL": (252, 209, 22),
+            "URU": (0, 56, 168),
+            "ECU": (255, 210, 0),
+            "PER": (210, 16, 52),
+            "VEN": (207, 0, 0),
+            "CHI": (212, 16, 52),
+            "BOL": (0, 122, 51),
+            "PAR": (0, 56, 168),
+            "PAN": (0, 56, 168),
+            "GUA": (0, 116, 54),
+            "ENG": (200, 16, 46),
+            "FRA": (0, 35, 149),
+            "CRO": (255, 0, 0),
+            "POR": (0, 102, 0),
+            "ALE": (0, 0, 0),
+            "HOL": (255, 102, 0),
+            "ESP": (170, 21, 27),
+            "USA": (60, 59, 110),
+            "CAN": (255, 0, 0),
+        }
+
+        _cc.RACE_COUNTRIES = list(_fc.FULBITO_DEFAULT_FIXTURE)
+        _cc.COUNTRY_ABBREV = {c: c for c in _fc.FULBITO_ALL_COUNTRIES}
+        _cc.GIFT_COLORS = {**_base_colors, **_FULBITO_COLORS}
+
+        # 4 carriles × 85px = 340px total, centrado en 721px game area
+        _cc.LANE_HEIGHT = 85
+
+        # Disable core features irrelevant to fulbito
+        _cc.HYPE_TIMER_ENABLED = False
+        _cc.HYPE_TIMER_INTERVAL = 99999
+        _cc.METEOR_COUNT = 0
+        _cc.METEOR_BOOST_MIN = 0
+        _cc.METEOR_BOOST_MAX = 0
+
+        super().__init__(queue, streamer_name, database=database)
+
+        # Silence all background and victory audio for fulbito.
+        # Monkey-patching the instance is necessary because play_bgm() re-applies
+        # VOL_BGM (a module-level constant) on every call, so config overrides don't stick.
+        import pygame
+        pygame.mixer.stop()
+        _am = self.audio_manager
+        _noop = lambda *a, **kw: None
+        _am.play_bgm            = _noop
+        _am.play_bgm_normal     = _noop
+        _am.play_bgm_tension    = _noop
+        _am.stop_bgm            = _noop
+        _am.play_victory_sound  = _noop
+        _am.stop_victory_sound  = _noop
+        _am.play_final_stretch_sound = _noop
+        _am.play_combo_fire_sound    = _noop
+
+        self.game_state = 'FIXTURE_SETUP'
+
+        # Fixture y estado de carrera
+        self.current_fixture: list[str] = list(FULBITO_DEFAULT_FIXTURE)
+        self.race_number: int = 0
+        self.king: Optional[str] = None
+        self.viewer_teams: dict[str, str] = {}
+        self.intermission_votes: dict[str, str] = {}
+        self.vote_counts: dict[str, int] = {}
+        self.race_finished_timer: float = 0.0
+        self.intermission_timer: float = 0.0
+        self.fixture_setup_timer: float = 0.0
+        self.wildcard_country: Optional[str] = None
+        self._race_start_time: Optional[float] = None
+        self._app_start_time: float = time.time()
+        self._fixture_selected_slot: int = 0
+        self._fixture_error_msg: str = ''
+        self._fixture_error_timer: float = 0.0
+        # Randomizar fixture inicial (sin duplicados) para el sorteo FIFA
+        _chosen = random.sample(range(len(FULBITO_ALL_COUNTRIES)), FULBITO_RACE_COUNTRY_COUNT)
+        self._fixture_country_index: dict[int, int] = {i: _chosen[i] for i in range(FULBITO_RACE_COUNTRY_COUNT)}
+
+        # Estado de la animación "sorteo FIFA"
+        self._draw_phase: str = 'animating'            # 'animating' | 'manual'
+        self._draw_slot_idx: int = 0                   # slot actualmente girando
+        self._draw_slot_timer: float = 0.0             # tiempo transcurrido en este slot
+        self._draw_slot_duration: float = 1.5          # segundos por slot
+        self._draw_spin_time: float = 0.0              # acumulador global del giro
+        self._draw_settled: list[bool] = [False] * FULBITO_RACE_COUNTRY_COUNT
+
+        # Estadísticas de sesión
+        self.session_total_diamonds: int = 0
+        self.session_unique_viewers: set[str] = set()
+        self.session_top_donor: dict[str, int] = {}
+        self.session_country_diamonds: dict[str, int] = {}
+
+        # Visual impact flashes: country → (start_time, diamond_count)
+        self._gift_flashes: dict[str, tuple[float, int]] = {}
+
+        # Per-race, per-country donor leaderboard: country → {username → diamonds}
+        self._race_country_donors: dict[str, dict[str, int]] = {}
+        # MVP of the winning country: (username, diamonds) or None
+        self._victory_mvp: tuple[str, int] | None = None
+        # Victory particle list — each entry: [x, y, vx, vy, r, g, b, life, decay, size, kind, angle, spin]
+        # kind: 0 = spark circle, 1 = confetti rectangle
+        self._victory_particles: list = []
+        self._firework_timer: float = 0.0
+
+        # Reemplazar physics_world con FulbitoPhysicsWorld
+        self._init_fulbito_physics()
+
+    def _init_fulbito_physics(self) -> None:
+        from variants.fulbito.physics_world import FulbitoPhysicsWorld
+        if self.asset_manager:
+            from core.asset_manager import AssetManager
+            self.asset_manager = AssetManager(
+                assets_path="variants/fulbito/assets"
+            )
+        self.physics_world = FulbitoPhysicsWorld(
+            countries=self.current_fixture,
+            asset_manager=self.asset_manager,
+            game_engine=self,
+        )
+
+    # ── Pygame init ──────────────────────────────────────────────────────────
+
+    def init_pygame(self) -> None:
+        super().init_pygame()
+        import pygame
+        from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        pygame.display.set_caption("Fulbito — Mundial 2026")
+        self.outer_background = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT))
+        self.outer_background.fill((10, 10, 10))
+        self.background_manager = _GrassBackground(self)
+
+    # ── Finish line — football goals ─────────────────────────────────────────
+
+    def _render_finish_line(self) -> None:
+        """Arcos de fútbol en los extremos visuales de la pantalla."""
+        import pygame
+        from core.config import SCREEN_WIDTH, GAME_AREA_TOP
+        from variants.fulbito.config import FULBITO_LANE_DIRECTIONS
+
+        lane_h = self.physics_world.lane_height
+        lane_y_offset = self.physics_world.lane_y_offset
+
+        for i, country in enumerate(self.current_fixture):
+            going_right = FULBITO_LANE_DIRECTIONS.get(i, True)
+            goal_x = SCREEN_WIDTH - 8 if going_right else 8
+            lane_cy = (
+                GAME_AREA_TOP + lane_y_offset
+                + i * lane_h + lane_h // 2
+            )
+            self._draw_goal(goal_x, lane_cy, going_right, lane_h)
+
+    def _draw_goal(
+        self,
+        x: int,
+        center_y: int,
+        facing_right: bool,
+        lane_h: int,
+    ) -> None:
+        import pygame
+        import math
+
+        GW      = 16
+        GoH     = int(lane_h * 0.55)
+        SMALL_W = 26
+        SMALL_H = int(lane_h * 0.70)
+        BIG_W   = 50
+        BIG_H   = int(lane_h * 0.90)
+        PD      = (SMALL_W + BIG_W) // 2
+
+        lx  = x
+        dir = -1 if facing_right else 1
+        C   = (255, 255, 255, 115)
+
+        def line(x1, y1, x2, y2, w=1):
+            surf = pygame.Surface((abs(x2 - x1) + w, abs(y2 - y1) + w), pygame.SRCALPHA)
+            pygame.draw.line(surf, C,
+                             (0, 0) if x1 <= x2 else (abs(x2 - x1), 0),
+                             (abs(x2 - x1), abs(y2 - y1)) if x1 <= x2 else (0, abs(y2 - y1)), w)
+            self.render_surface.blit(surf, (min(x1, x2), min(y1, y2)))
+
+        def hline(y, x1, x2): line(x1, y, x2, y)
+        def vline(xp, y1, y2): line(xp, y1, xp, y2)
+
+        # Área grande
+        bt  = center_y - BIG_H // 2
+        bb  = center_y + BIG_H // 2
+        bex = lx + dir * BIG_W
+        hline(bt, min(lx, bex), max(lx, bex))
+        hline(bb, min(lx, bex), max(lx, bex))
+        vline(bex, bt, bb)
+
+        # Área chica
+        st  = center_y - SMALL_H // 2
+        sb  = center_y + SMALL_H // 2
+        sex = lx + dir * SMALL_W
+        hline(st, min(lx, sex), max(lx, sex))
+        hline(sb, min(lx, sex), max(lx, sex))
+        vline(sex, st, sb)
+
+        # Punto penal
+        px = lx + dir * PD
+        pygame.draw.circle(self.render_surface, C, (px, center_y), 3)
+
+        # Medialuna
+        moon_dy = BIG_H // 2 * 0.5
+        dx      = abs(bex - px)
+        moon_r  = int(math.sqrt(dx * dx + moon_dy * moon_dy))
+        ha      = math.atan2(moon_dy, dx)
+
+        points = []
+        if facing_right:
+            start_a = math.pi - ha
+            end_a   = math.pi + ha
+        else:
+            start_a = -ha
+            end_a   = ha
+
+        steps = 32
+        for i in range(steps + 1):
+            t = start_a + (end_a - start_a) * i / steps
+            mx = int(px + moon_r * math.cos(t))
+            my = int(center_y + moon_r * math.sin(t))
+            points.append((mx, my))
+
+        if len(points) > 1:
+            moon_surf = pygame.Surface(
+                (self.render_surface.get_width(), self.render_surface.get_height()),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.lines(moon_surf, C, False, points, 1)
+            self.render_surface.blit(moon_surf, (0, 0))
+
+        # Red dentro del arco
+        goal_l = lx - GW if facing_right else lx
+        goal_r = lx if facing_right else lx + GW
+        goal_t = center_y - GoH // 2
+        goal_b = center_y + GoH // 2
+
+        net_surf  = pygame.Surface(
+            (self.render_surface.get_width(), self.render_surface.get_height()),
+            pygame.SRCALPHA,
+        )
+        net_color = (255, 255, 255, 45)
+        for nx in range(goal_l + 3, goal_r, 4):
+            pygame.draw.line(net_surf, net_color, (nx, goal_t), (nx, goal_b), 1)
+        for ny in range(goal_t + 3, goal_b, 4):
+            pygame.draw.line(net_surf, net_color, (goal_l, ny), (goal_r, ny), 1)
+        self.render_surface.blit(net_surf, (0, 0))
+
+        # Marco del arco
+        post_color = (220, 220, 220)
+        pygame.draw.line(self.render_surface, post_color,
+                         (goal_l, goal_t), (goal_r, goal_t), 2)
+        pygame.draw.line(self.render_surface, post_color,
+                         (goal_l, goal_b), (goal_r, goal_b), 2)
+        back_x = goal_r if facing_right else goal_l
+        pygame.draw.line(self.render_surface, post_color,
+                         (back_x, goal_t), (back_x, goal_b), 2)
+
+        # Poste delantero dorado
+        front_x = goal_l if facing_right else goal_r
+        pygame.draw.line(self.render_surface, (255, 215, 0),
+                         (front_x, goal_t - 3), (front_x, goal_b + 3), 3)
+
+    # ── Core render suppression ───────────────────────────────────────────────
+    # These methods are no-ops: fulbito does not use hype timer, milestone
+    # banners, final-stretch announcements, the core leaderboard, the likes
+    # bar ("PRÓXIMO NITRO BOOST"), or the core idle screen.
+
+    def _render_hype_timer(self, surface) -> None:
+        pass
+
+    def _update_hype_timer(self) -> None:
+        pass
+
+    def _render_milestone_banner(self) -> None:
+        pass
+
+    def _render_final_stretch_announcement(self) -> None:
+        pass
+
+    def _render_final_stretch_line(self) -> None:
+        pass
+
+    def _render_lanes(self) -> None:
+        pass
+
+    def _render_victory_sequence(self) -> None:
+        pass
+
+    def _render_winner_spotlight(self, racer) -> None:
+        pass
+
+    def _render_leader_spotlight(self, racer) -> None:
+        pass
+
+    def _render_victory_flash(self) -> None:
+        pass
+
+    def _render_particles(self) -> None:
+        pass
+
+    def _render_combo_flashes(self) -> None:
+        pass
+
+    def _render_leaderboard(self) -> None:
+        pass
+
+    def _render_likes_bar(self) -> None:
+        pass
+
+    def _render_idle_screen(self) -> None:
+        pass
+
+    def _render_header(self) -> None:
+        pass
+
+    def _render_audio_toast(self) -> None:
+        pass
+
+    def _render_meteors(self) -> None:
+        pass
+
+    def _trigger_meteor_shower(self) -> None:
+        pass
+
+    def _update_meteors(self, dt: float) -> None:
+        pass
+
+    async def _handle_join_event(self, event) -> None:
+        pass
+
+    async def _handle_vote_event(self, event) -> None:
+        pass
+
+    def _get_user_country_with_autojoin(
+        self, username: str, gift_name: str
+    ) -> tuple[str, str]:
+        if username in self.viewer_teams:
+            return self.viewer_teams[username], "viewer_team"
+        country = self._get_last_place_country()
+        return country, "last_place"
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _resolve_country_name_to_code(self, name: str) -> Optional[str]:
+        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
+        for code, full in FULBITO_COUNTRY_NAMES.items():
+            if full.lower() == name.lower():
+                return code
+        return None
+
+    def _get_last_place_country(self) -> str:
+        if not self.physics_world.racers:
+            return self.current_fixture[0]
+        return min(
+            self.current_fixture,
+            key=lambda c: self.physics_world.get_progress(c),
+        )
+
+    def _pick_wildcard(self) -> str:
+        candidates = [c for c in FULBITO_ALL_COUNTRIES if c not in self.current_fixture]
+        if not candidates:
+            return random.choice(FULBITO_ALL_COUNTRIES)
+        return random.choice(candidates)
+
+    def _build_fixture_from_votes(self) -> list[str]:
+        fixture: list[str] = []
+
+        # King se queda automáticamente
+        if self.king and self.king in FULBITO_ALL_COUNTRIES:
+            fixture.append(self.king)
+
+        # Top votos del chat (excluyendo al king)
+        crowd_candidates = {
+            c: v for c, v in self.vote_counts.items()
+            if c not in fixture and c in FULBITO_ALL_COUNTRIES
+        }
+        crowd_sorted = sorted(crowd_candidates, key=crowd_candidates.get, reverse=True)
+        for c in crowd_sorted[:FULBITO_CROWD_PICKS]:
+            fixture.append(c)
+
+        # Rellenar hasta FULBITO_RACE_COUNTRY_COUNT con wildcard o aleatorio
+        while len(fixture) < FULBITO_RACE_COUNTRY_COUNT:
+            wc = self.wildcard_country
+            if wc and wc not in fixture:
+                fixture.append(wc)
+            else:
+                candidates = [c for c in FULBITO_ALL_COUNTRIES if c not in fixture]
+                if candidates:
+                    fixture.append(random.choice(candidates))
+
+        return fixture[:FULBITO_RACE_COUNTRY_COUNT]
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    async def _handle_event(self, event) -> None:
+        if event.created_at_sec is not None:
+            latency = time.perf_counter() - event.created_at_sec
+            if latency > self.LAG_WARNING_THRESHOLD_SEC:
+                logger.warning("[LAG] %.0fms type=%s", latency * 1000, event.type.name)
+
+        if event.type == EventType.QUIT:
+            self.running = False
+            return
+
+        if event.type == EventType.CONNECTION_STATUS:
+            if event.extra and "state" in event.extra:
+                self.connection_state = event.extra["state"]
+            message = event.format_message()
+            self.messages.append((message, event.type))
+            if len(self.messages) > MAX_MESSAGES:
+                self.messages = self.messages[-MAX_MESSAGES:]
+
+        elif event.type == EventType.GIFT:
+            await self._handle_fulbito_gift(event)
+
+        elif event.type == EventType.COMMENT:
+            await self._handle_fulbito_comment(event)
+
+        else:
+            await super()._handle_event(event)
+
+    async def _handle_fulbito_gift(self, event) -> None:
+        if self.game_state == 'FIXTURE_SETUP':
+            return
+        if self.game_state == 'IDLE':
+            self._race_country_donors.clear()
+            self._victory_mvp = None
+            self._transition_to_race_running()
+
+        if self.game_state != 'RACE_RUNNING':
+            return
+
+        username = self.sanitize_username(event.username)
+        gift_name = event.content or ''
+        diamond_count = event.extra.get('diamond_count', 1) if event.extra else 1
+        gift_count = event.extra.get('count', 1) if event.extra else 1
+        total_diamonds = diamond_count * gift_count
+
+        if username in self.viewer_teams:
+            country = self.viewer_teams[username]
+        elif username in self.user_assignments:
+            full_name = self.user_assignments[username]
+            country = self._resolve_country_name_to_code(full_name) or self._get_last_place_country()
+            self.viewer_teams[username] = country
+        else:
+            country = self._get_last_place_country()
+
+        if country not in self.current_fixture:
+            country = self._get_last_place_country()
+
+        self.physics_world.apply_gift_impulse(country, gift_name, total_diamonds)
+        self._gift_flashes[country] = (time.time(), total_diamonds)
+        self._on_real_activity()
+
+        self.session_total_diamonds += total_diamonds
+        self.session_unique_viewers.add(username)
+        self.session_top_donor[username] = (
+            self.session_top_donor.get(username, 0) + total_diamonds
+        )
+        self.session_country_diamonds[country] = (
+            self.session_country_diamonds.get(country, 0) + total_diamonds
+        )
+        country_donors = self._race_country_donors.setdefault(country, {})
+        country_donors[username] = country_donors.get(username, 0) + total_diamonds
+
+        if self.cloud_manager:
+            asyncio.create_task(
+                self.cloud_manager.sync_gift_event_v2(
+                    session_id=self.session_id,
+                    variant='fulbito',
+                    username=username,
+                    gift_name=gift_name,
+                    diamond_count=diamond_count,
+                    gift_count=gift_count,
+                    country=country,
+                    race_number=self.race_number,
+                )
+            )
+
+        self._add_floating_text(f"+{total_diamonds} → {country}")
+
+    async def _handle_fulbito_comment(self, event) -> None:
+        if self.game_state == 'FIXTURE_SETUP':
+            return
+
+        username = self.sanitize_username(event.username)
+        text = (event.content or '').strip().lower()
+        country = resolve_alias(text)
+
+        if not country or country not in FULBITO_ALL_COUNTRIES:
+            return
+
+        if self.game_state == 'IDLE':
+            if country in self.current_fixture:
+                self.viewer_teams[username] = country
+                self.user_assignments[username] = country
+                self.session_unique_viewers.add(username)
+                self._transition_to_race_running()
+            impulse = 1 * COMMENT_DISTANCE_MULTIPLIER
+            self.physics_world.apply_gift_impulse(country, impulse, 1)
+
+        elif self.game_state == 'RACE_RUNNING':
+            if country not in self.current_fixture:
+                return
+            is_new = username not in self.viewer_teams
+            if is_new:
+                self.viewer_teams[username] = country
+                self.user_assignments[username] = country
+                self.session_unique_viewers.add(username)
+                self._add_floating_text(
+                    f"{username} → {country}", color=(200, 200, 255)
+                )
+            elif self.viewer_teams[username] != country:
+                return
+            impulse = 1 * COMMENT_DISTANCE_MULTIPLIER
+            self.physics_world.apply_gift_impulse(country, impulse, 1)
+
+        elif self.game_state == 'RACE_INTERMISSION':
+            self.viewer_teams[username] = country
+            self.user_assignments[username] = country
+            self.session_unique_viewers.add(username)
+            self.intermission_votes[username] = country
+            self.vote_counts = {}
+            for v in self.intermission_votes.values():
+                self.vote_counts[v] = self.vote_counts.get(v, 0) + 1
+
+    def _add_floating_text(
+        self,
+        text: str,
+        color: tuple[int, int, int] = (255, 255, 100),
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+    ) -> None:
+        from core.config import SCREEN_WIDTH, SCREEN_HEIGHT
+        fx = x if x is not None else SCREEN_WIDTH / 2
+        fy = y if y is not None else SCREEN_HEIGHT / 2
+        self.floating_texts.append(
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
+        )
+        if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+            self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
+    # ── State transitions ─────────────────────────────────────────────────────
+
+    def _transition_to_race_running(self) -> None:
+        self.game_state = 'RACE_RUNNING'
+        self.race_number += 1
+        self._race_start_time = time.time()
+        logger.info("Carrera %d arrancando: %s", self.race_number, self.current_fixture)
+
+    def _on_race_finished(self) -> None:
+        winner = self.physics_world.winner
+        self.king = winner
+        self.game_state = 'RACE_FINISHED'
+        self.race_finished_timer = 0.0
+        duration = int(time.time() - self._race_start_time) if self._race_start_time else 0
+        if self.cloud_manager:
+            asyncio.create_task(
+                self.cloud_manager.sync_match_result(
+                    session_id=self.session_id,
+                    variant='fulbito',
+                    teams=self.current_fixture,
+                    winner=winner,
+                    duration_secs=duration,
+                )
+            )
+        logger.info("Carrera %d terminada. Ganador: %s", self.race_number, winner)
+
+        # Compute race MVP for the winning country.
+        self._victory_mvp = None
+        if winner and winner in self._race_country_donors:
+            donors = self._race_country_donors[winner]
+            if donors:
+                mvp_user = max(donors, key=donors.__getitem__)
+                self._victory_mvp = (mvp_user, donors[mvp_user])
+
+        # Kick off victory particle system.
+        self._victory_particles.clear()
+        self._firework_timer = 0.0
+        if winner and winner in self.physics_world.racers:
+            from core.config import GIFT_COLORS
+            racer = self.physics_world.racers[winner]
+            color = GIFT_COLORS.get(winner, (255, 215, 0))
+            bx = float(racer.body.position.x)
+            by = float(racer.body.position.y)
+            self._spawn_victory_burst(bx, by, color, count=50, speed_range=(3.0, 14.0))
+
+    def _start_intermission(self) -> None:
+        self.game_state = 'RACE_INTERMISSION'
+        self.intermission_timer = 0.0
+        self.intermission_votes = {}
+        self.vote_counts = {}
+        self.wildcard_country = self._pick_wildcard()
+        self._victory_particles.clear()
+        logger.info("Intermission. King=%s Wildcard=%s", self.king, self.wildcard_country)
+
+    def _resolve_next_fixture(self) -> list[str]:
+        return self._build_fixture_from_votes()
+
+    def _start_next_race(self) -> None:
+        new_fixture = self._resolve_next_fixture()
+        self.current_fixture = new_fixture
+        self._init_fulbito_physics()
+        self.viewer_teams = {
+            u: c for u, c in self.viewer_teams.items()
+            if c in self.current_fixture
+        }
+        self._race_country_donors.clear()
+        self._victory_mvp = None
+        self._transition_to_race_running()
+
+    def _confirm_fixture(self) -> None:
+        self.current_fixture = [
+            FULBITO_ALL_COUNTRIES[self._fixture_country_index[i]]
+            for i in range(FULBITO_RACE_COUNTRY_COUNT)
+        ]
+        self._init_fulbito_physics()
+        self.game_state = 'IDLE'
+        logger.info("Fixture confirmado: %s", self.current_fixture)
+
+    # ── Update ────────────────────────────────────────────────────────────────
+
+    def update(self, dt: float) -> None:
+        if self.game_state == 'FIXTURE_SETUP':
+            self.fixture_setup_timer += dt
+
+            if self._draw_phase == 'animating':
+                self._draw_spin_time += dt
+                self._draw_slot_timer += dt
+                if self._draw_slot_timer >= self._draw_slot_duration:
+                    self._draw_settled[self._draw_slot_idx] = True
+                    self._draw_slot_idx += 1
+                    self._draw_slot_timer = 0.0
+                    if self._draw_slot_idx >= FULBITO_RACE_COUNTRY_COUNT:
+                        self._draw_phase = 'manual'
+            else:
+                if self._fixture_error_timer > 0:
+                    self._fixture_error_timer -= dt
+                    if self._fixture_error_timer <= 0:
+                        self._fixture_error_msg = ''
+
+            if self.fixture_setup_timer >= 120.0:
+                self._confirm_fixture()
+            return
+
+        super().update(dt)
+
+        if self.game_state == 'RACE_RUNNING':
+            if self.physics_world.race_finished:
+                self._on_race_finished()
+
+        elif self.game_state == 'RACE_FINISHED':
+            self.race_finished_timer += dt
+            if self.physics_world.winner:
+                self.winner_animation_time += dt
+                pulse_speed = 2.0
+                self.winner_scale_pulse = 1.0 + 0.3 * math.sin(
+                    self.winner_animation_time * pulse_speed * math.pi
+                )
+            self._update_victory_particles(dt)
+            self._firework_timer += dt
+            if self._firework_timer >= 0.75:
+                self._firework_timer = 0.0
+                self._spawn_random_fireworks()
+                self._spawn_confetti_rain()
+            if self.race_finished_timer >= 5.0:
+                self._start_intermission()
+
+        elif self.game_state == 'RACE_INTERMISSION':
+            self.intermission_timer += dt
+            if self.intermission_timer >= FULBITO_INTERMISSION_SECONDS:
+                self._start_next_race()
+
+    # ── Fixture setup keys ────────────────────────────────────────────────────
+
+    def _handle_fixture_setup_keys(self, event) -> None:
+        import pygame
+        if self._draw_phase == 'animating':
+            return
+        if event.key == pygame.K_UP:
+            self._fixture_selected_slot = (
+                self._fixture_selected_slot - 1
+            ) % FULBITO_RACE_COUNTRY_COUNT
+
+        elif event.key == pygame.K_DOWN:
+            self._fixture_selected_slot = (
+                self._fixture_selected_slot + 1
+            ) % FULBITO_RACE_COUNTRY_COUNT
+
+        elif event.key == pygame.K_LEFT:
+            slot = self._fixture_selected_slot
+            self._fixture_country_index[slot] = (
+                self._fixture_country_index.get(slot, 0) - 1
+            ) % len(FULBITO_ALL_COUNTRIES)
+
+        elif event.key == pygame.K_RIGHT:
+            slot = self._fixture_selected_slot
+            self._fixture_country_index[slot] = (
+                self._fixture_country_index.get(slot, 0) + 1
+            ) % len(FULBITO_ALL_COUNTRIES)
+
+        elif event.key == pygame.K_RETURN:
+            selected = [
+                FULBITO_ALL_COUNTRIES[self._fixture_country_index.get(i, 0)]
+                for i in range(FULBITO_RACE_COUNTRY_COUNT)
+            ]
+            if len(set(selected)) < FULBITO_RACE_COUNTRY_COUNT:
+                self._fixture_error_msg = 'Hay países duplicados'
+                self._fixture_error_timer = 2.5
+                return
+            self.current_fixture = selected
+            self._confirm_fixture()
+
+    # ── Pygame event loop ─────────────────────────────────────────────────────
+
+    def handle_pygame_events(self) -> None:
+        import pygame
+        # Handle all events in one pass to avoid double-consuming the queue.
+        # Common events (QUIT, ESC) are handled inline; super() is NOT called
+        # since core.handle_pygame_events() would drain pygame.event.get() first.
+        try:
+            events = pygame.event.get()
+        except Exception as e:
+            logger.exception("Error getting pygame events: %s", e)
+            return
+
+        for event in events:
+            if event.type == pygame.QUIT:
+                self.running = False
+                return
+            if event.type != pygame.KEYDOWN:
+                continue
+
+            if event.key == pygame.K_ESCAPE:
+                _now = time.time()
+                if not self._esc_quit_requested:
+                    self._esc_quit_requested = True
+                    self._esc_quit_time = _now
+                elif (_now - self._esc_quit_time) < self._esc_quit_window:
+                    self.running = False
+                else:
+                    self._esc_quit_requested = True
+                    self._esc_quit_time = _now
+                continue
+
+            if self.game_state == 'FIXTURE_SETUP':
+                self._handle_fixture_setup_keys(event)
+                continue
+
+            # Demo keys — cualquier estado excepto FIXTURE_SETUP
+            if event.key == pygame.K_f:
+                from core.events import GameEvent
+                fake = GameEvent(
+                    type=EventType.GIFT,
+                    username='testviewer',
+                    content='Hand Heart',
+                    extra={'diamond_count': 150, 'count': 1},
+                )
+                asyncio.create_task(self._handle_fulbito_gift(fake))
+
+            elif event.key == pygame.K_c:
+                from core.events import GameEvent
+                fake = GameEvent(
+                    type=EventType.COMMENT,
+                    username='testviewer',
+                    content='ARG',
+                    extra={},
+                )
+                asyncio.create_task(self._handle_fulbito_comment(fake))
+
+            elif event.key == pygame.K_w:
+                if self.game_state == 'RACE_INTERMISSION':
+                    self.wildcard_country = self._pick_wildcard()
+                    logger.info("Wildcard rerolleado: %s", self.wildcard_country)
+
+            elif event.key == pygame.K_RETURN:
+                if self.game_state == 'RACE_INTERMISSION':
+                    self._start_next_race()
+
+            elif event.key == pygame.K_r:
+                self.game_state = 'FIXTURE_SETUP'
+                self.fixture_setup_timer = 0.0
+                self.race_number = 0
+                self.king = None
+                self.viewer_teams = {}
+                self.current_fixture = list(FULBITO_DEFAULT_FIXTURE)
+                self._init_fulbito_physics()
+                logger.info("Reset completo a FIXTURE_SETUP")
+
+    # ── Render ────────────────────────────────────────────────────────────────
+
+    def render_background(self) -> None:
+        import pygame
+        if self.screen:
+            self.screen.blit(self.outer_background, (0, 0))
+
+    def render(self) -> None:
+        import pygame
+        if self.game_state == 'FIXTURE_SETUP':
+            self.render_background()
+            self._render_fixture_setup()
+            pygame.display.flip()
+            return
+        super().render()
+        # Fulbito HUD is injected via _pre_flip_screen_overlay(),
+        # called by super().render() just before display.flip().
+
+    def _render_racer(self, racer, is_winner: bool = False) -> None:
+        import pygame
+        import math
+        import random
+
+        if racer.sprite is None:
+            super()._render_racer(racer, is_winner)
+            return
+
+        country = racer.country
+        angle = self.physics_world._rotation_angles.get(country, 0.0)
+
+        x = float(racer.body.position.x)
+        y = float(racer.body.position.y) + (racer.y_offset if hasattr(racer, 'y_offset') else 0.0)
+
+        is_frozen = self.physics_world.is_country_frozen(country)
+        if is_frozen:
+            x += random.uniform(-3, 3)
+            y += random.uniform(-2, 2)
+        elif country in self.on_fire_countries:
+            x += random.uniform(-2, 2)
+            y += random.uniform(-2, 2)
+
+        scale = self.winner_scale_pulse if is_winner else 1.0
+        size = int(racer.draw_radius * 2 * scale)
+        if size < 4:
+            return
+
+        scaled = pygame.transform.smoothscale(racer.sprite, (size, size))
+        rotated = pygame.transform.rotate(scaled, -angle)
+
+        blit_x = self._safe_int(x, self.physics_world.start_x) - rotated.get_width() // 2
+        blit_y = self._safe_int(y, 0) - rotated.get_height() // 2
+        self.render_surface.blit(rotated, (blit_x, blit_y))
+
+        if is_winner:
+            glow = pygame.Surface((rotated.get_width(), rotated.get_height()), pygame.SRCALPHA)
+            pygame.draw.circle(
+                glow, (255, 215, 0, 40),
+                (rotated.get_width() // 2, rotated.get_height() // 2),
+                rotated.get_width() // 2,
+            )
+            self.render_surface.blit(glow, (blit_x, blit_y))
+
+    def _pre_flip_screen_overlay(self) -> None:
+        if self.game_state == 'IDLE':
+            self._render_overlay_text()
+        elif self.game_state == 'RACE_RUNNING':
+            self._render_gift_flashes()
+            self._render_direction_arrows()
+            self._render_viewer_counts()
+            self._render_country_names()
+            if self._race_start_time and (time.time() - self._race_start_time) < 30.0:
+                self._render_overlay_text()
+        elif self.game_state == 'RACE_FINISHED':
+            self._render_country_names()
+            self._render_winner_banner()
+        elif self.game_state == 'RACE_INTERMISSION':
+            self._render_country_names()
+            self._render_intermission_panel()
+
+    def _render_gift_flashes(self) -> None:
+        """Draw a brief impact flash on racers that just received a gift impulse.
+
+        Two-phase effect lasting ``_FLASH_DURATION`` seconds:
+        - Phase 1 (0–0.2 s): white burst ring expands outward + bright filled core.
+        - Phase 2 (0.2–1.0 s): country-colored glow ring fades out.
+
+        Larger diamond counts produce a proportionally bigger burst radius.
+        """
+        import pygame
+        _FLASH_DURATION = 1.0
+        _BURST_END = 0.2
+
+        now = time.time()
+        expired = []
+
+        for country, (start_t, diamonds) in list(self._gift_flashes.items()):
+            elapsed = now - start_t
+            if elapsed >= _FLASH_DURATION:
+                expired.append(country)
+                continue
+
+            if country not in self.physics_world.racers:
+                expired.append(country)
+                continue
+
+            racer = self.physics_world.racers[country]
+            cx = int(racer.body.position.x)
+            cy = int(racer.body.position.y)
+            base_r = racer.draw_radius
+
+            # Scale burst with gift size: small, medium, large tiers.
+            scale = 1.0 + min(0.8, diamonds / 50.0)
+
+            from core.config import GIFT_COLORS
+            country_color = GIFT_COLORS.get(country, (255, 220, 60))
+
+            if elapsed < _BURST_END:
+                t = elapsed / _BURST_END  # 0 → 1
+
+                # White burst ring expanding outward.
+                ring_r = int(base_r * scale * (1.0 + t * 1.8))
+                ring_alpha = int(255 * (1.0 - t * 0.5))
+                ring_surf = pygame.Surface((ring_r * 2 + 6, ring_r * 2 + 6), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    ring_surf, (255, 255, 255, ring_alpha),
+                    (ring_r + 3, ring_r + 3), ring_r, 4,
+                )
+                self.screen.blit(ring_surf, (cx - ring_r - 3, cy - ring_r - 3))
+
+                # Bright country-colored filled core that fades quickly.
+                core_r = int(base_r * scale * (0.9 - t * 0.6))
+                if core_r > 0:
+                    core_alpha = int(220 * (1.0 - t))
+                    bright = tuple(min(255, int(c * 1.5)) for c in country_color)
+                    core_surf = pygame.Surface((core_r * 2, core_r * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        core_surf, (*bright, core_alpha),
+                        (core_r, core_r), core_r,
+                    )
+                    self.screen.blit(core_surf, (cx - core_r, cy - core_r))
+
+            else:
+                t = (elapsed - _BURST_END) / (_FLASH_DURATION - _BURST_END)  # 0 → 1
+
+                # Country-colored glow ring that shrinks and fades.
+                glow_r = int(base_r * scale * (2.5 - t * 1.2))
+                glow_alpha = int(180 * (1.0 - t))
+                glow_surf = pygame.Surface((glow_r * 2 + 4, glow_r * 2 + 4), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    glow_surf, (*country_color, glow_alpha),
+                    (glow_r + 2, glow_r + 2), glow_r, 3,
+                )
+                self.screen.blit(glow_surf, (cx - glow_r - 2, cy - glow_r - 2))
+
+        for c in expired:
+            self._gift_flashes.pop(c, None)
+
+    def _render_overlay_text(self, text: str = '') -> None:
+        import pygame
+        from core.config import SCREEN_WIDTH, SCREEN_HEIGHT
+        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
+
+        if not self.current_fixture:
+            return
+
+        font_big   = pygame.font.SysFont('Arial', 18, bold=True)
+        font_small = pygame.font.SysFont('Arial', 14)
+
+        line1 = "Escribi el nombre de tu pais en el chat para unirte:"
+        names = [FULBITO_COUNTRY_NAMES.get(c, c) for c in self.current_fixture]
+        line2 = "  |  ".join(names)
+
+        y1 = SCREEN_HEIGHT - 75
+        for surf, offset in [
+            (font_big.render(line1, True, (0, 0, 0)), 1),
+            (font_big.render(line1, True, (255, 255, 180)), 0),
+        ]:
+            x = SCREEN_WIDTH // 2 - surf.get_width() // 2
+            self.screen.blit(surf, (x + offset, y1 + offset))
+
+        y2 = SCREEN_HEIGHT - 50
+        for surf, offset in [
+            (font_small.render(line2, True, (0, 0, 0)), 1),
+            (font_small.render(line2, True, (255, 230, 50)), 0),
+        ]:
+            x = SCREEN_WIDTH // 2 - surf.get_width() // 2
+            self.screen.blit(surf, (x + offset, y2 + offset))
+
+    def _render_direction_arrows(self) -> None:
+        import pygame
+        from core.config import GAME_AREA_TOP, SCREEN_WIDTH
+        from variants.fulbito.config import FULBITO_LANE_DIRECTIONS
+
+        BAR_H   = 8    # altura de la barra
+        BAR_W   = 60   # ancho de la barra sin la punta
+        ARROW_W = 12   # ancho de la punta triangular
+        ARROW_H = 16   # altura total de la punta
+
+        for i, country in enumerate(self.current_fixture):
+            if country not in self.physics_world.racers:
+                continue
+            racer = self.physics_world.racers[country]
+            cy = int(racer.body.position.y)
+            going_right = FULBITO_LANE_DIRECTIONS.get(i, True)
+
+            if going_right:
+                bar_x = 8
+                bar_y = cy - BAR_H // 2
+                color_solid = (100, 255, 100)
+                grad_surf = pygame.Surface((BAR_W, BAR_H), pygame.SRCALPHA)
+                for px in range(BAR_W):
+                    alpha = int(255 * (px / BAR_W))
+                    pygame.draw.line(grad_surf, (*color_solid, alpha),
+                                     (px, 0), (px, BAR_H))
+                self.screen.blit(grad_surf, (bar_x, bar_y))
+                tip_x = bar_x + BAR_W
+                pygame.draw.polygon(self.screen, color_solid, [
+                    (tip_x, cy - ARROW_H // 2),
+                    (tip_x + ARROW_W, cy),
+                    (tip_x, cy + ARROW_H // 2),
+                ])
+            else:
+                color_solid = (100, 150, 255)
+                tip_x = 8
+                bar_x = tip_x + ARROW_W
+                bar_y = cy - BAR_H // 2
+                pygame.draw.polygon(self.screen, color_solid, [
+                    (tip_x + ARROW_W, cy - ARROW_H // 2),
+                    (tip_x,           cy),
+                    (tip_x + ARROW_W, cy + ARROW_H // 2),
+                ])
+                grad_surf = pygame.Surface((BAR_W, BAR_H), pygame.SRCALPHA)
+                for px in range(BAR_W):
+                    alpha = int(255 * (1 - px / BAR_W))
+                    pygame.draw.line(grad_surf, (*color_solid, alpha),
+                                     (px, 0), (px, BAR_H))
+                self.screen.blit(grad_surf, (bar_x, bar_y))
+
+    # ── Victory particle system ───────────────────────────────────────────────
+
+    def _spawn_victory_burst(
+        self,
+        cx: float,
+        cy: float,
+        color: tuple,
+        count: int = 30,
+        speed_range: tuple = (2.0, 9.0),
+    ) -> None:
+        """Emit a radial burst of sparks and confetti from (cx, cy).
+
+        Args:
+            cx: Horizontal center of the burst in screen coordinates.
+            cy: Vertical center of the burst in screen coordinates.
+            color: Base RGB tuple for the burst; alternated with gold.
+            count: Number of particles to emit.
+            speed_range: (min, max) initial speed in px/frame.
+        """
+        r, g, b = int(color[0]), int(color[1]), int(color[2])
+        for _ in range(count):
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(*speed_range)
+            cr, cg, cb = (r, g, b) if random.random() < 0.5 else (255, 210, 30)
+            kind = 1 if random.random() < 0.35 else 0
+            # [x, y, vx, vy, r, g, b, life, decay, size, kind, angle, spin]
+            self._victory_particles.append([
+                cx + random.uniform(-6, 6),
+                cy + random.uniform(-6, 6),
+                math.cos(angle) * speed,
+                math.sin(angle) * speed - random.uniform(0, 2.5),
+                cr, cg, cb,
+                1.0,
+                random.uniform(0.45, 1.1),
+                random.randint(3, 7),
+                kind,
+                random.uniform(0.0, 360.0),
+                random.uniform(-9.0, 9.0),
+            ])
+
+    def _spawn_random_fireworks(self) -> None:
+        """Launch 2–3 firework bursts at random positions across the game area.
+
+        Uses the winning country's color mixed with gold and white accents.
+        """
+        from core.config import GAME_AREA_TOP, SCREEN_HEIGHT, GAME_AREA_BOTTOM, ACTUAL_WIDTH, GIFT_COLORS
+        winner = self.physics_world.winner or ''
+        base_color = GIFT_COLORS.get(winner, (255, 215, 0))
+        game_top = GAME_AREA_TOP
+        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        burst_colors = [base_color, (255, 210, 30), (255, 255, 255)]
+        for _ in range(random.randint(2, 3)):
+            bx = random.uniform(ACTUAL_WIDTH * 0.15, ACTUAL_WIDTH * 0.85)
+            by = random.uniform(game_top + 20, game_top + (game_bottom - game_top) * 0.55)
+            color = random.choice(burst_colors)
+            self._spawn_victory_burst(bx, by, color, count=random.randint(22, 32), speed_range=(2.5, 10.0))
+
+    def _spawn_confetti_rain(self, count: int = 12) -> None:
+        """Release confetti pieces falling from the top of the game area.
+
+        Args:
+            count: Number of confetti pieces to spawn.
+        """
+        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH
+        colors = [
+            (255, 80, 80), (80, 200, 80), (80, 120, 255),
+            (255, 220, 50), (200, 80, 200), (60, 210, 210),
+            (255, 140, 30),
+        ]
+        for _ in range(count):
+            cr, cg, cb = random.choice(colors)
+            self._victory_particles.append([
+                random.uniform(15.0, float(ACTUAL_WIDTH) - 15.0),
+                float(GAME_AREA_TOP),
+                random.uniform(-1.2, 1.2),
+                random.uniform(2.0, 4.5),
+                cr, cg, cb,
+                1.0,
+                random.uniform(0.12, 0.3),
+                random.randint(4, 8),
+                1,
+                random.uniform(0.0, 360.0),
+                random.uniform(-5.0, 5.0),
+            ])
+
+    def _update_victory_particles(self, dt: float) -> None:
+        """Advance physics for all victory particles and remove expired ones.
+
+        Args:
+            dt: Frame delta time in seconds.
+        """
+        gravity = 0.20
+        friction = 0.982
+        surviving = []
+        for p in self._victory_particles:
+            p[0] += p[2]
+            p[1] += p[3]
+            p[3] += gravity
+            p[2] *= friction
+            p[7] -= p[8] * dt
+            p[11] += p[12]
+            if p[7] > 0:
+                surviving.append(p)
+        self._victory_particles = surviving
+
+    def _render_victory_particles(self) -> None:
+        """Blit all active victory particles onto the screen surface."""
+        import pygame
+        for p in self._victory_particles:
+            life = p[7]
+            if life <= 0:
+                continue
+            alpha = min(255, int(255 * life))
+            x, y = int(p[0]), int(p[1])
+            size = max(1, int(p[9]))
+            color = (int(p[4]), int(p[5]), int(p[6]))
+            kind = int(p[10])
+            if kind == 0:
+                diam = size * 2
+                surf = pygame.Surface((diam, diam), pygame.SRCALPHA)
+                pygame.draw.circle(surf, (*color, alpha), (size, size), size)
+                self.screen.blit(surf, (x - size, y - size))
+            else:
+                w, h = size + 2, max(1, size // 2 + 1)
+                base = pygame.Surface((w, h), pygame.SRCALPHA)
+                base.fill((*color, alpha))
+                rotated = pygame.transform.rotate(base, p[11])
+                rw, rh = rotated.get_size()
+                self.screen.blit(rotated, (x - rw // 2, y - rh // 2))
+
+    # ── Winner banner ─────────────────────────────────────────────────────────
+
+    def _render_winner_banner(self) -> None:
+        """Render the victory overlay: fireworks, winner flag, country name, MVP, countdown."""
+        import pygame
+        from core.config import (
+            SCREEN_HEIGHT, GAME_AREA_TOP, GAME_AREA_BOTTOM, ACTUAL_WIDTH, GIFT_COLORS,
+        )
+        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
+
+        winner = self.physics_world.winner or ''
+        if not winner:
+            return
+
+        remaining = max(0, 5.0 - self.race_finished_timer)
+        winner_name = FULBITO_COUNTRY_NAMES.get(winner, winner)
+        country_color = GIFT_COLORS.get(winner, (255, 215, 0))
+
+        game_top    = GAME_AREA_TOP
+        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        game_h      = game_bottom - game_top
+        center_x    = ACTUAL_WIDTH // 2
+        center_y    = game_top + game_h // 2
+
+        # ── Dark overlay ──────────────────────────────────────────────────────
+        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 210))
+        self.screen.blit(overlay, (0, game_top))
+
+        # ── Fireworks / confetti ──────────────────────────────────────────────
+        self._render_victory_particles()
+
+        # ── Pulsing country flag sprite ───────────────────────────────────────
+        if winner in self.physics_world.racers:
+            racer = self.physics_world.racers[winner]
+            if racer.sprite:
+                sprite_size = int(120 * self.winner_scale_pulse)
+                scaled = pygame.transform.smoothscale(racer.sprite, (sprite_size, sprite_size))
+                self.screen.blit(
+                    scaled,
+                    (center_x - sprite_size // 2, center_y - sprite_size // 2 - 55),
+                )
+
+        # ── "¡GANÓ!" ──────────────────────────────────────────────────────────
+        font_gano = pygame.font.SysFont('Arial', 26, bold=True)
+        gano_surf = font_gano.render("¡GANÓ!", True, (255, 255, 255))
+        gx = center_x - gano_surf.get_width() // 2
+        gy = center_y + 42
+        self.screen.blit(font_gano.render("¡GANÓ!", True, (0, 0, 0)), (gx + 2, gy + 2))
+        self.screen.blit(gano_surf, (gx, gy))
+
+        # ── Country name ──────────────────────────────────────────────────────
+        font_name = pygame.font.SysFont('Arial', 46, bold=True)
+        name_surf = font_name.render(winner_name, True, (255, 220, 0))
+        nx = center_x - name_surf.get_width() // 2
+        ny = center_y + 70
+        self.screen.blit(font_name.render(winner_name, True, (0, 0, 0)), (nx + 2, ny + 2))
+        self.screen.blit(name_surf, (nx, ny))
+
+        # ── MVP section ───────────────────────────────────────────────────────
+        mvp = self._victory_mvp
+        if mvp:
+            mvp_user, mvp_diamonds = mvp
+            mvp_y = center_y + 128
+
+            # Label
+            font_label = pygame.font.SysFont('Arial', 13, bold=True)
+            label_surf = font_label.render("MVP DE LA CARRERA", True, (200, 200, 200))
+            lx = center_x - label_surf.get_width() // 2
+            self.screen.blit(font_label.render("MVP DE LA CARRERA", True, (0, 0, 0)), (lx + 1, mvp_y + 1))
+            self.screen.blit(label_surf, (lx, mvp_y))
+
+            # Avatar circle with first letter of username
+            avatar_r = 18
+            avatar_cx = center_x - 75
+            avatar_cy = mvp_y + 32
+            pygame.draw.circle(self.screen, country_color, (avatar_cx, avatar_cy), avatar_r)
+            pygame.draw.circle(self.screen, (255, 255, 255), (avatar_cx, avatar_cy), avatar_r, 2)
+            font_av = pygame.font.SysFont('Arial', 18, bold=True)
+            letter = (mvp_user[0].upper()) if mvp_user else '?'
+            av_surf = font_av.render(letter, True, (255, 255, 255))
+            self.screen.blit(av_surf, (avatar_cx - av_surf.get_width() // 2, avatar_cy - av_surf.get_height() // 2))
+
+            # Username + diamond count
+            display_name = f"@{mvp_user[:14]}"
+            font_mvp = pygame.font.SysFont('Arial', 16, bold=True)
+            mvp_text = font_mvp.render(display_name, True, (255, 255, 255))
+            tx = avatar_cx + avatar_r + 8
+            self.screen.blit(font_mvp.render(display_name, True, (0, 0, 0)), (tx + 1, avatar_cy - 10 + 1))
+            self.screen.blit(mvp_text, (tx, avatar_cy - 10))
+
+            font_dia = pygame.font.SysFont('Arial', 13)
+            dia_text = font_dia.render(f"{mvp_diamonds} diamantes", True, (150, 220, 255))
+            self.screen.blit(dia_text, (tx, avatar_cy + 8))
+
+        # ── Countdown ─────────────────────────────────────────────────────────
+        cd_y = center_y + (192 if mvp else 150)
+        font_cd = pygame.font.SysFont('Arial', 15)
+        cd_text = f"Próxima carrera en {remaining:.0f}s"
+        cd_surf = font_cd.render(cd_text, True, (170, 170, 170))
+        cx2 = center_x - cd_surf.get_width() // 2
+        self.screen.blit(font_cd.render(cd_text, True, (0, 0, 0)), (cx2 + 1, cd_y + 1))
+        self.screen.blit(cd_surf, (cx2, cd_y))
+
+    def _render_intermission_panel(self) -> None:
+        import pygame
+        from core.config import (
+            SCREEN_WIDTH, SCREEN_HEIGHT,
+            GAME_AREA_TOP, GAME_AREA_BOTTOM,
+            ACTUAL_WIDTH
+        )
+        from variants.fulbito.config import (
+            FULBITO_COUNTRY_NAMES,
+            FULBITO_INTERMISSION_SECONDS
+        )
+
+        remaining = max(0, FULBITO_INTERMISSION_SECONDS - self.intermission_timer)
+        game_top    = GAME_AREA_TOP
+        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        game_h      = game_bottom - game_top
+        cx          = ACTUAL_WIDTH // 2
+        cy          = game_top + game_h // 2
+
+        # Overlay oscuro sobre todo el game area
+        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 215))
+        self.screen.blit(overlay, (0, game_top))
+
+        # Título
+        font_title = pygame.font.SysFont('Arial', 16, bold=True)
+        title_surf = font_title.render("PRÓXIMA CARRERA", True, (255, 255, 255))
+        tx = cx - title_surf.get_width() // 2
+        self.screen.blit(font_title.render("PRÓXIMA CARRERA", True, (0,0,0)),
+                        (tx+2, game_top+20+2))
+        self.screen.blit(title_surf, (tx, game_top + 20))
+
+        # Línea separadora bajo el título
+        pygame.draw.line(self.screen,
+            (255, 255, 255, 50),
+            (20, game_top + 42),
+            (ACTUAL_WIDTH - 20, game_top + 42), 1)
+
+        # Countdown grande centrado
+        font_cd = pygame.font.SysFont('Arial', 56, bold=True)
+        cd_text = f"{remaining:.0f}"
+        cd_color = (255, 60, 60) if remaining <= 5 else (255, 100, 100)
+        cd_surf = font_cd.render(cd_text, True, cd_color)
+        cdx = cx - cd_surf.get_width() // 2
+        cdy = cy - 120
+        self.screen.blit(font_cd.render(cd_text, True, (0,0,0)), (cdx+2, cdy+2))
+        self.screen.blit(cd_surf, (cdx, cdy))
+
+        # "segundos para votar"
+        font_sub = pygame.font.SysFont('Arial', 13)
+        sub_surf = font_sub.render("segundos para votar", True, (200, 200, 200))
+        self.screen.blit(sub_surf,
+            (cx - sub_surf.get_width()//2, cdy + 70))
+
+        # ── CTA dinámico ─────────────────────────────────────────────────────
+        # Rotates every 5 s, pulses at ~3 Hz. Sits in the gap between the
+        # countdown subtext and the candidates separator.
+        CTA_MESSAGES = [
+            (
+                "\u00bfTu pa\u00eds no est\u00e1? \u00a1Coment\u00e1lo ahora!",
+                "Los 2 m\u00e1s comentados entran a la pr\u00f3xima",
+            ),
+            (
+                "\u00a1El chat decide el fixture!",
+                "Escrib\u00ed el nombre de tu pa\u00eds para votar",
+            ),
+            (
+                "\u00a1Llev\u00e1 a tu selecci\u00f3n a la victoria!",
+                "M\u00e1s comentarios = m\u00e1s posibilidades de entrar",
+            ),
+        ]
+        pulse = 0.5 + 0.5 * math.sin(self.intermission_timer * math.pi * 3.0)
+        msg_idx = int(self.intermission_timer / 5) % len(CTA_MESSAGES)
+        cta_line1, cta_line2 = CTA_MESSAGES[msg_idx]
+
+        cta_margin = 18
+        cta_top = cdy + 90
+        cta_h = 68
+        cta_w = ACTUAL_WIDTH - cta_margin * 2
+
+        # Semi-transparent warm background
+        bg_alpha = int(35 + 25 * pulse)
+        cta_bg = pygame.Surface((cta_w, cta_h), pygame.SRCALPHA)
+        cta_bg.fill((255, 160, 0, bg_alpha))
+        self.screen.blit(cta_bg, (cta_margin, cta_top))
+
+        # Pulsing border
+        border_alpha = int(140 + 115 * pulse)
+        border_surf = pygame.Surface((cta_w, cta_h), pygame.SRCALPHA)
+        pygame.draw.rect(border_surf, (255, 210, 30, border_alpha),
+                         (0, 0, cta_w, cta_h), 2)
+        self.screen.blit(border_surf, (cta_margin, cta_top))
+
+        # Line 1 — main CTA message
+        font_cta1 = pygame.font.SysFont('Arial', 14, bold=True)
+        s1 = font_cta1.render(cta_line1, True, (255, 240, 80))
+        x1 = cx - s1.get_width() // 2
+        y1 = cta_top + 8
+        self.screen.blit(font_cta1.render(cta_line1, True, (0, 0, 0)), (x1 + 1, y1 + 1))
+        self.screen.blit(s1, (x1, y1))
+
+        # Line 2 — supporting text
+        font_cta2 = pygame.font.SysFont('Arial', 12)
+        s2 = font_cta2.render(cta_line2, True, (255, 255, 255))
+        x2 = cx - s2.get_width() // 2
+        y2 = cta_top + 28
+        self.screen.blit(font_cta2.render(cta_line2, True, (0, 0, 0)), (x2 + 1, y2 + 1))
+        self.screen.blit(s2, (x2, y2))
+
+        # Animated ">>> COMENTÁ >>>" arrows — intensity grows as time runs out
+        urgency = 1.0 - max(0.0, remaining / FULBITO_INTERMISSION_SECONDS)
+        arrow_count = 1 + int(urgency * 2)  # 1-3 arrows
+        arrows = '>' * arrow_count
+        arrow_text = f"{arrows}  COMENT\u00c1  {arrows[::-1]}"
+        arrow_r = int(220 + 35 * pulse)
+        arrow_g = int(100 + 80 * (1.0 - urgency))
+        font_arrow = pygame.font.SysFont('Arial', 11, bold=True)
+        arrow_surf = font_arrow.render(arrow_text, True, (arrow_r, arrow_g, 0))
+        ax = cx - arrow_surf.get_width() // 2 + int(3 * pulse)
+        self.screen.blit(arrow_surf, (ax, cta_top + 48))
+
+        # Línea separadora
+        pygame.draw.line(self.screen,
+            (255, 255, 255, 30),
+            (20, cy + 50),
+            (ACTUAL_WIDTH - 20, cy + 50), 1)
+
+        # Candidatos — pelotas con etiquetas
+        # Resolver fixture siguiente: King + Wildcard + slot de votos
+        candidates = []
+
+        # King
+        if self.king:
+            candidates.append({
+                'code': self.king,
+                'name': FULBITO_COUNTRY_NAMES.get(self.king, self.king),
+                'tag': 'KING',
+                'tag_color': (255, 215, 0),
+            })
+
+        # Top votos Crowd
+        sorted_votes = sorted(
+            self.vote_counts.items(),
+            key=lambda x: x[1], reverse=True
+        )
+        for country, votes in sorted_votes[:2]:
+            if country != self.king:
+                candidates.append({
+                    'code': country,
+                    'name': FULBITO_COUNTRY_NAMES.get(country, country),
+                    'tag': f'{votes} votos',
+                    'tag_color': (150, 220, 255),
+                })
+
+        # Wildcard
+        if self.wildcard_country and self.wildcard_country not in [c['code'] for c in candidates]:
+            candidates.append({
+                'code': self.wildcard_country,
+                'name': FULBITO_COUNTRY_NAMES.get(self.wildcard_country, self.wildcard_country),
+                'tag': 'Wildcard',
+                'tag_color': (150, 255, 150),
+            })
+
+        # Distribuir pelotas horizontalmente
+        n = len(candidates)
+        if n > 0:
+            ball_y = cy + 65
+            spacing = ACTUAL_WIDTH // (n + 1)
+            font_ball  = pygame.font.SysFont('Arial', 9, bold=True)
+            font_tag   = pygame.font.SysFont('Arial', 11)
+
+            for i, cand in enumerate(candidates):
+                bx = spacing * (i + 1)
+                radius = 32
+
+                code = cand['code']
+                sprite = self._get_country_sprite(code, radius * 2)
+                if sprite:
+                    self.screen.blit(sprite, (bx - radius, ball_y - radius))
+                else:
+                    pygame.draw.circle(self.screen, (100,100,100), (bx, ball_y), radius)
+
+                # Nombre del país
+                name_s = font_ball.render(cand['name'], True, (255,255,255))
+                self.screen.blit(name_s,
+                    (bx - name_s.get_width()//2, ball_y + radius + 4))
+
+                # Tag (King / votos / Wildcard)
+                tag_s = font_tag.render(cand['tag'], True, cand['tag_color'])
+                self.screen.blit(tag_s,
+                    (bx - tag_s.get_width()//2, ball_y + radius + 18))
+
+        # ── Bottom urgency hint ───────────────────────────────────────────────
+        # Color shifts from calm white→yellow to urgent red as time runs low.
+        urgency_b = 1.0 - max(0.0, remaining / FULBITO_INTERMISSION_SECONDS)
+        if remaining <= 5:
+            hint_color = (255, int(80 * (remaining / 5)), 0)
+            hint = f"\u00a1{remaining:.0f}s! \u00a1ESCRIB\u00cd TU PA\u00cdS EN EL CHAT YA!"
+        else:
+            t = urgency_b
+            hint_color = (255, int(255 - 75 * t), int(180 - 180 * t))
+            hint = "\u25ba  Escrib\u00ed el nombre de tu pa\u00eds para votar  \u25c4"
+        font_hint = pygame.font.SysFont('Arial', 12, bold=(remaining <= 5))
+        hint_surf = font_hint.render(hint, True, hint_color)
+        hint_shadow = font_hint.render(hint, True, (0, 0, 0))
+        hx = cx - hint_surf.get_width() // 2
+        hy = game_bottom - 20
+        self.screen.blit(hint_shadow, (hx + 1, hy + 1))
+        self.screen.blit(hint_surf, (hx, hy))
+
+    def _get_country_sprite(self, country: str, size: int):
+        import pygame
+        from core.resources import resource_path
+        if country in self.physics_world.racers:
+            racer = self.physics_world.racers[country]
+            if racer.sprite:
+                return pygame.transform.smoothscale(racer.sprite, (size, size))
+        path = resource_path(f"variants/fulbito/assets/{country}.png")
+        try:
+            img = pygame.image.load(path).convert_alpha()
+            return pygame.transform.smoothscale(img, (size, size))
+        except Exception:
+            return None
+
+    def _render_viewer_counts(self) -> None:
+        import pygame
+        from core.config import SCREEN_WIDTH
+        if not self.current_fixture:
+            return
+
+        counts: dict[str, int] = {c: 0 for c in self.current_fixture}
+        for country in self.viewer_teams.values():
+            if country in counts:
+                counts[country] += 1
+
+        font = pygame.font.SysFont('Arial', 13, bold=True)
+        for country in self.current_fixture:
+            if country not in self.physics_world.racers:
+                continue
+            racer = self.physics_world.racers[country]
+            lane_center_y = int(racer.body.position.y)
+            count = counts.get(country, 0)
+            label = f"{country}: {count}"
+            y = lane_center_y + 14
+            surf = font.render(label, True, (255, 255, 255))
+            shadow = font.render(label, True, (0, 0, 0))
+            tx = max(5, min(8, SCREEN_WIDTH - surf.get_width() - 5))
+            self.screen.blit(shadow, (tx + 1, y + 1))
+            self.screen.blit(surf, (tx, y))
+
+    def _render_country_names(self) -> None:
+        import pygame
+        from core.config import SCREEN_WIDTH
+        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
+
+        font = pygame.font.SysFont('Arial', 13, bold=True)
+        for country, racer in self.physics_world.racers.items():
+            name = FULBITO_COUNTRY_NAMES.get(country, country)
+            cx = int(racer.body.position.x)
+            cy = int(racer.body.position.y)
+            radius = int(racer.draw_radius)
+            text_y = cy + radius + 4
+            surf = font.render(name, True, (255, 255, 255))
+            shadow = font.render(name, True, (0, 0, 0))
+            tx = cx - surf.get_width() // 2
+            tx = max(5, min(tx, SCREEN_WIDTH - surf.get_width() - 5))
+            self.screen.blit(shadow, (tx + 1, text_y + 1))
+            self.screen.blit(surf, (tx, text_y))
+
+    def _render_fixture_setup(self) -> None:
+        import pygame
+        from core.config import (
+            SCREEN_WIDTH, SCREEN_HEIGHT,
+            GAME_AREA_TOP, GAME_AREA_BOTTOM,
+            ACTUAL_WIDTH
+        )
+        from variants.fulbito.config import (
+            FULBITO_ALL_COUNTRIES,
+            FULBITO_COUNTRY_NAMES,
+            FULBITO_RACE_COUNTRY_COUNT,
+        )
+
+        game_top    = GAME_AREA_TOP
+        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        game_h      = game_bottom - game_top
+        cx          = ACTUAL_WIDTH // 2
+        cy          = game_top + game_h // 2
+
+        # Fondo negro base
+        self.screen.fill((10, 10, 10))
+
+        # Overlay oscuro sobre game area
+        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 230))
+        self.screen.blit(overlay, (0, game_top))
+
+        # Título
+        font_title = pygame.font.SysFont('Arial', 22, bold=True)
+        title = font_title.render("FULBITO — MUNDIAL 2026", True, (255, 255, 180))
+        tx = cx - title.get_width() // 2
+        self.screen.blit(font_title.render("FULBITO — MUNDIAL 2026", True, (0,0,0)),
+                        (tx+2, game_top+22+2))
+        self.screen.blit(title, (tx, game_top + 22))
+
+        # Subtítulo
+        font_sub = pygame.font.SysFont('Arial', 13)
+        sub = font_sub.render("Configura el fixture inicial", True, (180, 180, 180))
+        self.screen.blit(sub, (cx - sub.get_width()//2, game_top + 52))
+
+        # Línea separadora
+        pygame.draw.line(self.screen,
+            (255, 255, 255, 40),
+            (30, game_top + 68),
+            (ACTUAL_WIDTH - 30, game_top + 68), 1)
+
+        # Slots — 4 filas con pelota del país
+        font_slot  = pygame.font.SysFont('Arial', 18, bold=True)
+        font_hint  = pygame.font.SysFont('Arial', 12)
+        slot_start_y = cy - 90
+        slot_spacing = 55
+
+        # Detectar duplicados (solo relevante en fase manual)
+        all_selected = [
+            FULBITO_ALL_COUNTRIES[self._fixture_country_index.get(i, 0)]
+            for i in range(FULBITO_RACE_COUNTRY_COUNT)
+        ]
+        is_duplicate = [
+            all_selected.count(all_selected[i]) > 1
+            for i in range(FULBITO_RACE_COUNTRY_COUNT)
+        ]
+
+        # Índice visual del slot actualmente girando
+        if self._draw_phase == 'animating' and self._draw_slot_idx < FULBITO_RACE_COUNTRY_COUNT:
+            spin_progress = min(1.0, self._draw_slot_timer / self._draw_slot_duration)
+            spin_speed    = 20.0 * max(0.0, 1.0 - spin_progress ** 0.5)
+            spin_vis_idx  = int(self._draw_spin_time * spin_speed) % len(FULBITO_ALL_COUNTRIES)
+        else:
+            spin_vis_idx  = 0
+
+        for i in range(FULBITO_RACE_COUNTRY_COUNT):
+            sy     = slot_start_y + i * slot_spacing
+            is_sel = (i == self._fixture_selected_slot)
+            is_dup = is_duplicate[i] if self._draw_phase == 'manual' else False
+
+            # ── Slot no alcanzado aún (gris, "???") ──────────────────────
+            if self._draw_phase == 'animating' and i > self._draw_slot_idx:
+                pending = pygame.Surface((ACTUAL_WIDTH - 60, 42), pygame.SRCALPHA)
+                pending.fill((40, 40, 40, 120))
+                self.screen.blit(pending, (30, sy - 5))
+                pygame.draw.rect(self.screen, (80, 80, 80),
+                    (30, sy - 5, ACTUAL_WIDTH - 60, 42), 1, border_radius=4)
+                unk = font_slot.render("???", True, (80, 80, 80))
+                self.screen.blit(unk, (cx - 76, sy + 1))
+                continue
+
+            # ── Slot actualmente girando ──────────────────────────────────
+            if self._draw_phase == 'animating' and i == self._draw_slot_idx:
+                spin_country = FULBITO_ALL_COUNTRIES[spin_vis_idx]
+                spin_name    = FULBITO_COUNTRY_NAMES.get(spin_country, spin_country)
+                # Borde blanco pulsante
+                pulse_alpha = int(180 + 75 * math.sin(self._draw_spin_time * 10))
+                spin_surf = pygame.Surface((ACTUAL_WIDTH - 60, 42), pygame.SRCALPHA)
+                spin_surf.fill((255, 255, 255, 18))
+                self.screen.blit(spin_surf, (30, sy - 5))
+                pygame.draw.rect(self.screen, (255, 255, 255),
+                    (30, sy - 5, ACTUAL_WIDTH - 60, 42), 1, border_radius=4)
+                # Sprite girando
+                sp = self._get_country_sprite(spin_country, 36)
+                if sp:
+                    self.screen.blit(sp, (cx - 120, sy - 2))
+                # Nombre girando
+                spin_color = (pulse_alpha, pulse_alpha, pulse_alpha)
+                ns = font_slot.render(spin_name, True, spin_color)
+                self.screen.blit(font_slot.render(spin_name, True, (0, 0, 0)), (cx - 75, sy + 2))
+                self.screen.blit(ns, (cx - 76, sy + 1))
+                continue
+
+            # ── Slot fijado / fase manual ─────────────────────────────────
+            idx     = self._fixture_country_index.get(i, 0)
+            country = FULBITO_ALL_COUNTRIES[idx]
+            name    = FULBITO_COUNTRY_NAMES.get(country, country)
+
+            if is_dup:
+                border_color = (220, 50, 50)
+                fill_color   = (220, 50, 50, 20)
+            elif is_sel:
+                border_color = (255, 215, 0)
+                fill_color   = (255, 215, 0, 25)
+            elif self._draw_settled[i] and self._draw_phase == 'animating':
+                # Recién fijado — borde verde tenue
+                border_color = (80, 200, 80)
+                fill_color   = (80, 200, 80, 15)
+            else:
+                border_color = None
+                fill_color   = None
+
+            if border_color:
+                sel_surf = pygame.Surface((ACTUAL_WIDTH - 60, 42), pygame.SRCALPHA)
+                sel_surf.fill(fill_color)
+                self.screen.blit(sel_surf, (30, sy - 5))
+                pygame.draw.rect(self.screen, border_color,
+                    (30, sy - 5, ACTUAL_WIDTH - 60, 42), 1, border_radius=4)
+
+            sprite = self._get_country_sprite(country, 36)
+            if sprite:
+                self.screen.blit(sprite, (cx - 120, sy - 2))
+
+            if is_dup:
+                color = (220, 80, 80)
+            elif is_sel:
+                color = (255, 215, 0)
+            else:
+                color = (220, 220, 220)
+            name_surf = font_slot.render(name, True, color)
+            shadow    = font_slot.render(name, True, (0, 0, 0))
+            self.screen.blit(shadow, (cx - 75, sy + 2))
+            self.screen.blit(name_surf, (cx - 76, sy + 1))
+
+        # Hints de navegación
+        remaining = max(0, 120 - self.fixture_setup_timer)
+        if self._draw_phase == 'animating':
+            hints = ["Sorteando fixture..."]
+        else:
+            hints = [
+                "Arriba/Abajo: cambiar slot   Izquierda/Derecha: cambiar pais",
+                f"ENTER para confirmar  |  Auto en {remaining:.0f}s",
+            ]
+        for j, hint in enumerate(hints):
+            h = font_hint.render(hint, True, (140, 140, 160))
+            self.screen.blit(h, (cx - h.get_width()//2,
+                                 game_bottom - 40 + j * 18))
+
+        # Mensaje de error (duplicados)
+        if self._fixture_error_msg:
+            font_err = pygame.font.SysFont('Arial', 14, bold=True)
+            err_surf = font_err.render(self._fixture_error_msg, True, (220, 80, 80))
+            ex = cx - err_surf.get_width() // 2
+            ey = game_bottom - 60
+            self.screen.blit(font_err.render(self._fixture_error_msg, True, (0, 0, 0)),
+                            (ex+1, ey+1))
+            self.screen.blit(err_surf, (ex, ey))
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+
+    def _update_hype_mode(self, dt: float = 0) -> None:
+        pass  # no hype multiplier in fulbito
+
+    def _update_rosa_combo(self, *args, **kwargs) -> None:
+        pass  # no rosa combo in fulbito
+
+    def cleanup(self) -> None:
+        top_donor = max(
+            self.session_top_donor,
+            key=self.session_top_donor.get,
+            default='',
+        ) if self.session_top_donor else ''
+        top_country = max(
+            self.session_country_diamonds,
+            key=self.session_country_diamonds.get,
+            default='',
+        ) if self.session_country_diamonds else ''
+        if self.cloud_manager:
+            try:
+                asyncio.create_task(
+                    self.cloud_manager.sync_session_summary(
+                        session_id=self.session_id,
+                        variant='fulbito',
+                        streamer=self.streamer_name,
+                        total_races=self.race_number,
+                        total_diamonds=self.session_total_diamonds,
+                        unique_viewers=len(self.session_unique_viewers),
+                        duration_secs=int(time.time() - self._app_start_time),
+                        top_donor=top_donor,
+                        top_country=top_country,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Session summary sync failed: %s", e)
+        super().cleanup()
