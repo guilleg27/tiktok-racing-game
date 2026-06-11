@@ -1,12 +1,7 @@
 name: Build TikTok Racing GO Game
 
 on:
-  push:
-    branches: [ main, master, feat/core-events-motos ]
-    tags:
-      - 'v*'
-  # pull_request:
-  #   branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-windows:

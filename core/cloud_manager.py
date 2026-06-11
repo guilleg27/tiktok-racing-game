@@ -474,3 +474,151 @@ class CloudManager:
                 e,
             )
             return False
+
+    async def sync_match_result(
+        self,
+        session_id: str,
+        variant: str,
+        teams: list[str],
+        winner: str,
+        duration_secs: int,
+    ) -> None:
+        """Insert a match result. Non-blocking fire-and-forget."""
+        if not self.enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._sync_match_result_blocking,
+                session_id, variant, teams, winner, duration_secs,
+            )
+        except Exception as e:
+            logger.debug("[Match] sync error: %s", e)
+
+    def _sync_match_result_blocking(
+        self,
+        session_id: str,
+        variant: str,
+        teams: list[str],
+        winner: str,
+        duration_secs: int,
+    ) -> None:
+        try:
+            self.client.table("match_results").insert({
+                "session_id":    session_id,
+                "variant":       variant,
+                "team_a":        teams[0] if len(teams) > 0 else None,
+                "team_b":        teams[1] if len(teams) > 1 else None,
+                "team_c":        teams[2] if len(teams) > 2 else None,
+                "team_d":        teams[3] if len(teams) > 3 else None,
+                "winner":        winner,
+                "duration_secs": duration_secs,
+                "date":          datetime.now().isoformat(),
+            }).execute()
+            logger.info("match synced: %s won in %s", winner, variant)
+        except Exception as e:
+            logger.warning("[Match] insert error: %s", e)
+
+    async def sync_gift_event_v2(
+        self,
+        session_id: str,
+        variant: str,
+        username: str,
+        gift_name: str,
+        diamond_count: int,
+        gift_count: int,
+        country: str,
+        race_number: int,
+    ) -> None:
+        """Insert a gift event with variant and race context. Non-blocking fire-and-forget."""
+        if not self.enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._sync_gift_event_v2_blocking,
+                session_id, variant, username, gift_name, diamond_count, gift_count, country, race_number,
+            )
+        except Exception as e:
+            logger.debug("[Monitor] gift_v2 sync error: %s", e)
+
+    def _sync_gift_event_v2_blocking(
+        self,
+        session_id: str,
+        variant: str,
+        username: str,
+        gift_name: str,
+        diamond_count: int,
+        gift_count: int,
+        country: str,
+        race_number: int,
+    ) -> None:
+        try:
+            self.client.table("live_gift_events").insert({
+                "session_id":    session_id,
+                "variant":       variant,
+                "username":      username,
+                "gift_name":     gift_name,
+                "diamond_count": diamond_count,
+                "gift_count":    gift_count,
+                "country":       country,
+                "race_number":   race_number,
+            }).execute()
+        except Exception as e:
+            logger.warning("[Monitor] gift_v2 insert error: %s", e)
+
+    async def sync_session_summary(
+        self,
+        session_id: str,
+        variant: str,
+        streamer: str,
+        total_races: int,
+        total_diamonds: int,
+        unique_viewers: int,
+        duration_secs: int,
+        top_donor: str,
+        top_country: str,
+    ) -> None:
+        """Upsert session summary. Non-blocking fire-and-forget."""
+        if not self.enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._sync_session_summary_blocking,
+                session_id, variant, streamer, total_races, total_diamonds,
+                unique_viewers, duration_secs, top_donor, top_country,
+            )
+        except Exception as e:
+            logger.debug("[Session] summary sync error: %s", e)
+
+    def _sync_session_summary_blocking(
+        self,
+        session_id: str,
+        variant: str,
+        streamer: str,
+        total_races: int,
+        total_diamonds: int,
+        unique_viewers: int,
+        duration_secs: int,
+        top_donor: str,
+        top_country: str,
+    ) -> None:
+        try:
+            self.client.table("session_summary").upsert({
+                "session_id":     session_id,
+                "variant":        variant,
+                "streamer":       streamer,
+                "total_races":    total_races,
+                "total_diamonds": total_diamonds,
+                "unique_viewers": unique_viewers,
+                "duration_secs":  duration_secs,
+                "top_donor":      top_donor,
+                "top_country":    top_country,
+            }, on_conflict="session_id").execute()
+            logger.info("session summary synced: %s races, %s diamonds", total_races, total_diamonds)
+        except Exception as e:
+            logger.warning("[Session] summary upsert error: %s", e)

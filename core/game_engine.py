@@ -1773,7 +1773,7 @@ class GameEngine:
 
                     countries = list(self.physics_world.racers.keys())
                     country = random.choice(countries)
-                    diamonds = random.randint(25, 50)
+                    diamonds = random.randint(300, 500)
 
                     self.physics_world.apply_gift_impulse(
                         country=country,
