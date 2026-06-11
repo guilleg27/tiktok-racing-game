@@ -34,13 +34,15 @@ VOL_VICTORY = 0.0
 # Clave: código ISO-2 en mayúsculas (usado como ID interno, key de assets, y Supabase)
 
 FULBITO_ALL_COUNTRIES = [
-    # LATAM (9)
+    # LATAM (8)
     "ARG", "BRA", "MEX", "COL", "URU",
-    "ECU", "PAR", "PAN", "GUA",
+    "ECU", "PAR", "PAN",
     # Europa (7)
     "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",
     # Norte América (2)
     "USA", "CAN",
+    # Otros (4)
+    "AUS", "AUST", "COR", "BEL",
 ]
 
 # Nombres para display en pantalla y Supabase
@@ -53,7 +55,6 @@ FULBITO_COUNTRY_NAMES = {
     "ECU": "Ecuador",
     "PAR": "Paraguay",
     "PAN": "Panamá",
-    "GUA": "Guatemala",
     "ENG": "Inglaterra",
     "FRA": "Francia",
     "CRO": "Croacia",
@@ -63,6 +64,10 @@ FULBITO_COUNTRY_NAMES = {
     "ESP": "España",
     "USA": "USA",
     "CAN": "Canadá",
+    "AUS": "Australia",
+    "AUST": "Austria",
+    "COR": "Corea del Sur",
+    "BEL": "Bélgica",
 }
 
 # Aliases de chat → código ISO
@@ -85,8 +90,6 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "par": "PAR", "paraguay": "PAR",
     # PAN
     "pan": "PAN", "panama": "PAN", "panamá": "PAN",
-    # GUA
-    "gua": "GUA", "guatemala": "GUA", "guate": "GUA",
     # ENG
     "eng": "ENG", "england": "ENG", "inglaterra": "ENG", "ing": "ENG",
     # FRA
@@ -106,6 +109,14 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "usa": "USA", "estados unidos": "USA", "eeuu": "USA",
     # CAN
     "can": "CAN", "canada": "CAN", "canadá": "CAN",
+    # AUS
+    "aus": "AUS", "australia": "AUS",
+    # AUST
+    "aust": "AUST", "austria": "AUST",
+    # COR
+    "cor": "COR", "corea": "COR", "korea": "COR", "corea del sur": "COR",
+    # BEL
+    "bel": "BEL", "belgica": "BEL", "bélgica": "BEL", "belgium": "BEL",
 }
 
 # ─────────────────────────────────────────────
@@ -116,7 +127,7 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
 FULBITO_RACE_COUNTRY_COUNT = 4
 
 # Máximo de países en el pool activo del stream (el streamer lo configura antes de arrancar)
-FULBITO_POOL_MAX = 18  # igual que el total — puede usar todos
+FULBITO_POOL_MAX = 21  # igual que el total — puede usar todos
 
 # Fixture por defecto si el streamer no configura nada (los 4 más populares de LATAM)
 FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
@@ -216,11 +227,12 @@ FULBITO_FLAG_PATH = "variants/fulbito/assets/flags/"
 # Tamaño de la bandera en pantalla (px). Más grande que motos (12) porque son banderas, no sprites complejos.
 FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco de 46px)
 
-# Todos los 18 assets están listos:
+# Todos los 21 assets están listos:
 FULBITO_ASSETS_READY = [
-    "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN", "GUA",  # LATAM
-    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",                  # Europa
-    "USA", "CAN",                                                       # Norte América
+    "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN",  # LATAM
+    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",          # Europa
+    "USA", "CAN",                                               # Norte América
+    "AUS", "AUST", "COR", "BEL",                               # Otros
 ]
 
 FULBITO_ASSETS_PENDING: list[str] = []
