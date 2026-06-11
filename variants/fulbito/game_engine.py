@@ -874,6 +874,21 @@ class FulbitoGameEngine(GameEngine):
         self._race_start_time = time.time()
         logger.info("Partido %d arrancando: %s", self.race_number, self.current_fixture)
 
+    def _play_goal_sound(self) -> None:
+        import pygame
+        from core.resources import resource_path
+        import os
+        path = resource_path("variants/fulbito/assets/goal_sound.mp3")
+        if not os.path.exists(path):
+            logger.warning("Goal sound not found: %s", path)
+            return
+        try:
+            sound = pygame.mixer.Sound(path)
+            sound.set_volume(1.0)
+            sound.play()
+        except Exception as exc:
+            logger.warning("Could not play goal sound: %s", exc)
+
     def _on_race_finished(self) -> None:
         winner = self.physics_world.winner
         self.king = winner
@@ -891,6 +906,9 @@ class FulbitoGameEngine(GameEngine):
                 )
             )
         logger.info("Partido %d terminado. Ganador: %s", self.race_number, winner)
+        import pygame
+        pygame.mixer.music.set_volume(0.05)
+        self._play_goal_sound()
         self._open_winner_video()
 
         # Compute race MVP for the winning country.
@@ -923,6 +941,8 @@ class FulbitoGameEngine(GameEngine):
             self._winner_video_cap.release()
             self._winner_video_cap = None
             self._winner_video_current_surf = None
+        import pygame
+        pygame.mixer.music.set_volume(0.3)
         logger.info("Intermission. King=%s Wildcard=%s", self.king, self.wildcard_country)
 
     def _resolve_next_fixture(self) -> list[str]:
