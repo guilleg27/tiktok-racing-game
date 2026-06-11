@@ -109,10 +109,10 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
 }
 
 # ─────────────────────────────────────────────
-# FIXTURE — SELECCIÓN POR CARRERA
+# FIXTURE — SELECCIÓN POR PARTIDO
 # ─────────────────────────────────────────────
 
-# Máximo de países activos por carrera (4 carriles)
+# Máximo de países activos por partido (4 carriles)
 FULBITO_RACE_COUNTRY_COUNT = 4
 
 # Máximo de países en el pool activo del stream (el streamer lo configura antes de arrancar)
@@ -125,7 +125,7 @@ FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
 # SISTEMA DE SELECCIÓN HÍBRIDA
 # ─────────────────────────────────────────────
 
-# King: el ganador de la carrera anterior se queda automáticamente
+# King: el ganador del partido anterior se queda automáticamente
 FULBITO_KING_STAYS = True
 
 # Crowd: cantidad de países elegidos por voto del chat (excluyendo al King)
@@ -137,10 +137,10 @@ FULBITO_WILDCARD_COUNT = 1
 # Tecla para forzar nuevo wildcard manualmente durante la intermission
 FULBITO_WILDCARD_KEY = pygame.K_w  # noqa: F405
 
-FULBITO_INTERMISSION_SECONDS = 15   # countdown entre carreras
+FULBITO_INTERMISSION_SECONDS = 15   # countdown entre partidos
 
 # Ventana de votación Crowd: los viewers votan durante RACE_INTERMISSION
-# Los 2 países con más votos únicos de viewers entran a la siguiente carrera
+# Los 2 países con más votos únicos de viewers entran al siguiente partido
 FULBITO_VOTE_WINDOW_SECONDS = FULBITO_INTERMISSION_SECONDS
 
 # ─────────────────────────────────────────────
@@ -167,7 +167,7 @@ FULBITO_LANE_DIRECTIONS: dict[int, bool] = {
 # 1.0 = llegó al extremo opuesto del carril
 FULBITO_WIN_THRESHOLD = 0.95
 
-# La carrera termina en el instante en que el primer corredor llega a la meta
+# El partido termina en el instante en que el primer corredor llega a la meta
 FULBITO_SUDDEN_DEATH = True
 
 # Posición inicial de cada corredor según la dirección de su carril
@@ -214,7 +214,7 @@ GAME_MODE = "GIFT"
 FULBITO_FLAG_PATH = "variants/fulbito/assets/flags/"
 
 # Tamaño de la bandera en pantalla (px). Más grande que motos (12) porque son banderas, no sprites complejos.
-FLAG_RADIUS = 28   # radio del círculo de bandera
+FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco de 46px)
 
 # Todos los 18 assets están listos:
 FULBITO_ASSETS_READY = [
@@ -235,7 +235,7 @@ FULBITO_SUPABASE_VARIANT = "fulbito"
 # Schema de match_results (referencia — la tabla ya existe en Supabase):
 # session_id TEXT, date TIMESTAMP, team_a TEXT, team_b TEXT,
 # team_c TEXT, team_d TEXT, winner TEXT, duration_secs INT, variant TEXT
-# Nota: 4 equipos por carrera (a diferencia de las variantes 1v1)
+# Nota: 4 equipos por partido (a diferencia de las variantes 1v1)
 
 # ─────────────────────────────────────────────
 # HUD Y UI
@@ -246,7 +246,7 @@ HYPE_TIMER_LABEL = "TIEMPO RESTANTE"
 HYPE_DISASTER_TITLE = "¡ÚLTIMA VUELTA! MAX CAOS"
 
 # Banner de intermission
-FULBITO_INTERMISSION_TITLE = "PRÓXIMA CARRERA"
+FULBITO_INTERMISSION_TITLE = "PRÓXIMO PARTIDO"
 FULBITO_INTERMISSION_SUBTITLE = "¡Votá tu país en el chat!"
 
 # Banner de victoria
@@ -258,7 +258,7 @@ FULBITO_VICTORY_LABEL = "¡GANÓ"          # se concatena: "¡GANÓ [País]!"
 
 def validate_fixture(countries: list[str]) -> list[str]:
     """
-    Valida y normaliza un fixture antes de arrancar una carrera.
+    Valida y normaliza un fixture antes de arrancar un partido.
     - Acepta entre 2 y FULBITO_RACE_COUNTRY_COUNT países.
     - Todos deben estar en FULBITO_ALL_COUNTRIES.
     - Retorna la lista validada o lanza ValueError con mensaje descriptivo.

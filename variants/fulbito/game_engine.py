@@ -2,11 +2,11 @@
 FulbitoGameEngine — subclase de GameEngine para el modo fulbito (4 carriles, Mundial 2026).
 
 Sobrescribe la lógica que difiere del core:
-  • 4 equipos por carrera (no 12), fixture dinámico entre carreras
+  • 4 equipos por partido (no 12), fixture dinámico entre partidos
   • Sistema híbrido King + Crowd + Wildcard para selección de fixture
   • Carriles alternados (→ ← → ←), cada país corre en una dirección
   • Gifts van al equipo que va último (FULBITO_GIFT_TO_LAST)
-  • Intermission con votación de chat entre carreras
+  • Intermission con votación de chat entre partidos
   • Estadísticas de sesión acumuladas
 """
 
@@ -73,6 +73,16 @@ class _GrassBackground:
             y = GAME_AREA_TOP + lane_y_offset + i * lane_h
             pygame.draw.line(surface, (20, 55, 8), (0, y), (SCREEN_WIDTH, y), 1)
 
+        # Draw pixel-art crowd stands above and below the pitch.
+        engine = self._engine
+        from core.config import SCREEN_HEIGHT, GAME_AREA_BOTTOM
+        if hasattr(engine, '_tribuna_top'):
+            engine._tribuna_top.render(surface, x=0, y=0, flip=False)
+        if hasattr(engine, '_tribuna_bot'):
+            engine._tribuna_bot.render(
+                surface, x=0, y=SCREEN_HEIGHT - GAME_AREA_BOTTOM, flip=True
+            )
+
     def update(self, dt: float) -> None:
         pass
 
@@ -107,6 +117,117 @@ from variants.fulbito.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _StadiumTribuna:
+    """Stadium crowd stands with perspective, wave, raised arms, and photo flashes."""
+
+    CROWD_COLORS = [
+        (231, 76,  60),  (52, 152, 219), (241, 196,  15),
+        (46, 204, 113),  (230, 126,  34), (155,  89, 182),
+        (255, 255, 255), (255, 152,   0), (233,  30,  99),
+        (0,  188, 212),
+    ]
+
+    def __init__(self, width: int, height: int):
+        self.width  = width
+        self.height = height
+        self.time   = 0.0
+        self._rng = lambda s: abs(math.sin(s + 1) * 10000) % 1
+
+    def update(self, dt: float) -> None:
+        self.time += dt
+
+    def render(self, surface, x: int, y: int,
+               flip: bool = False) -> None:
+        import pygame
+        w, h = self.width, self.height
+        t = self.time
+
+        # Gradient background
+        for row_y in range(h):
+            progress = row_y / h if not flip else 1 - row_y / h
+            r = int(5  + progress * 8)
+            g = int(5  + progress * 15)
+            b = int(16 + progress * 28)
+            pygame.draw.line(surface, (r, g, b),
+                             (x, y + row_y), (x + w, y + row_y))
+
+        # Seat-row lines
+        GRADE_COUNT = h // 8
+        for g_idx in range(GRADE_COUNT):
+            gy = y + h - g_idx * 8 - 4 if flip else y + g_idx * 8 + 4
+            alpha = max(0, min(255, int(8 + g_idx * 2)))
+            grade_surf = pygame.Surface((w, 1), pygame.SRCALPHA)
+            grade_surf.fill((255, 255, 255, alpha))
+            surface.blit(grade_surf, (x, gy))
+
+        # People
+        ROWS = h // 9
+        for row in range(ROWS):
+            progress = (ROWS - row) / ROWS if flip else row / ROWS
+            person_h = int(4 + progress * 4)
+            person_w = int(3 + progress * 3)
+            spacing  = max(5, int(7 - progress * 2))
+            cols     = w // spacing
+            row_alpha = 0.15 + progress * 0.65
+
+            for col in range(cols):
+                phase      = self._rng(row * 41 + col * 17) * math.pi * 2
+                wave_speed = 0.8 + self._rng(row * 7 + col * 3) * 0.8
+                main_wave  = math.sin(t * wave_speed + col * 0.3 + phase) * person_h * 0.6
+                micro_wave = math.sin(t * 2.1 + col * 0.7 + row * 0.4) * 1.5
+                total_wave = main_wave + micro_wave
+
+                px = x + col * spacing + spacing // 2
+                if flip:
+                    row_y = y + h - row * 9 - person_h
+                else:
+                    row_y = y + row * 9 + person_h
+                py = int(row_y + total_wave)
+
+                color_idx = int(self._rng(row * 31 + col * 13) * len(self.CROWD_COLORS))
+                color = self.CROWD_COLORS[color_idx]
+                alpha = row_alpha * (0.6 + math.sin(t * 0.5 + phase) * 0.4)
+                alpha = max(0.05, min(0.95, alpha))
+                a_int = int(alpha * 255)
+
+                body = pygame.Surface((person_w, person_h), pygame.SRCALPHA)
+                body.fill((*color, a_int))
+                surface.blit(body, (px - person_w // 2, py))
+
+                head_r = max(1, int(person_w * 0.55))
+                head_surf = pygame.Surface((head_r * 2, head_r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(head_surf, (212, 165, 116, a_int),
+                                   (head_r, head_r), head_r)
+                surface.blit(head_surf, (px - head_r, py - int(person_h * 0.4) - head_r))
+
+                # Raised arms during wave
+                if (self._rng(row * 53 + col * 29) > 0.65
+                        and math.sin(t * wave_speed + col * 0.3 + phase) > 0.3):
+                    arm_a = int(alpha * 0.7 * 255)
+                    arm_surf = pygame.Surface((w, h), pygame.SRCALPHA)
+                    arm_color = (*color, arm_a)
+                    pygame.draw.line(arm_surf, arm_color,
+                                     (px - person_w, py + person_h // 3),
+                                     (px - person_w // 3, py - person_h // 3), 1)
+                    pygame.draw.line(arm_surf, arm_color,
+                                     (px + person_w, py + person_h // 3),
+                                     (px + person_w // 3, py - person_h // 3), 1)
+                    surface.blit(arm_surf, (0, 0))
+
+        # Camera flashes
+        for f in range(3):
+            fx = x + int(self._rng(t * 0.3 + f * 7) * w)
+            fy_ratio = self._rng(t * 0.2 + f * 11) * 0.7
+            fy = int(y + h - fy_ratio * h) if flip else int(y + fy_ratio * h)
+            intensity = max(0, math.sin(t * 5 + f * 2.1))
+            if intensity > 0.85:
+                flash_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
+                fa = int(intensity * 150)
+                pygame.draw.circle(flash_surf, (255, 255, 255, fa), (10, 10), 2)
+                pygame.draw.circle(flash_surf, (255, 255, 255, fa // 4), (10, 10), 8)
+                surface.blit(flash_surf, (fx - 10, fy - 10))
 
 
 class FulbitoGameEngine(GameEngine):
@@ -181,9 +302,11 @@ class FulbitoGameEngine(GameEngine):
         _am.play_final_stretch_sound = _noop
         _am.play_combo_fire_sound    = _noop
 
+        self._start_fulbito_bgm()
+
         self.game_state = 'FIXTURE_SETUP'
 
-        # Fixture y estado de carrera
+        # Fixture y estado de partido
         self.current_fixture: list[str] = list(FULBITO_DEFAULT_FIXTURE)
         self.race_number: int = 0
         self.king: Optional[str] = None
@@ -196,6 +319,10 @@ class FulbitoGameEngine(GameEngine):
         self.wildcard_country: Optional[str] = None
         self._race_start_time: Optional[float] = None
         self._app_start_time: float = time.time()
+        self._winner_video_cap = None
+        self._winner_video_next_frame_at: float = 0.0
+        self._winner_video_current_surf = None
+        self._winner_video_rect: tuple = (0, 0, 1, 1)
         self._fixture_selected_slot: int = 0
         self._fixture_error_msg: str = ''
         self._fixture_error_timer: float = 0.0
@@ -228,6 +355,12 @@ class FulbitoGameEngine(GameEngine):
         # kind: 0 = spark circle, 1 = confetti rectangle
         self._victory_particles: list = []
         self._firework_timer: float = 0.0
+
+        # Stadium crowd stands
+        from core.config import ACTUAL_WIDTH, GAME_AREA_TOP, GAME_AREA_BOTTOM, SCREEN_HEIGHT
+        self._tribuna_top = _StadiumTribuna(ACTUAL_WIDTH, GAME_AREA_TOP - 4)
+        self._tribuna_bot = _StadiumTribuna(ACTUAL_WIDTH,
+            SCREEN_HEIGHT - (SCREEN_HEIGHT - GAME_AREA_BOTTOM) - 4)
 
         # Reemplazar physics_world con FulbitoPhysicsWorld
         self._init_fulbito_physics()
@@ -438,6 +571,70 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_idle_screen(self) -> None:
         pass
+
+    def _open_winner_video(self) -> None:
+        try:
+            import cv2
+        except ImportError:
+            logger.warning("cv2 not available — winner video disabled")
+            return
+        from core.resources import resource_path
+        import os
+        path = resource_path("variants/fulbito/assets/winner_video.mp4")
+        if not os.path.exists(path):
+            logger.warning("Winner video not found: %s", path)
+            return
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            logger.warning("Could not open winner video")
+            return
+        self._winner_video_cap = cap
+        self._winner_video_next_frame_at = 0.0
+        self._winner_video_current_surf = None
+        # Compute video rect: from bottom of last lane to bottom of screen
+        from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        pw = self.physics_world
+        video_top = pw.game_area_top + pw.lane_y_offset + pw.lane_height * len(self.current_fixture)
+        self._winner_video_rect = (0, video_top, ACTUAL_WIDTH, ACTUAL_HEIGHT - video_top)
+        logger.info("Winner video opened, rect=%s", self._winner_video_rect)
+
+    def _advance_winner_video(self) -> None:
+        try:
+            import cv2
+        except ImportError:
+            return
+        import pygame
+        cap = self._winner_video_cap
+        if cap is None:
+            return
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        if self.race_finished_timer < self._winner_video_next_frame_at:
+            return
+        ret, frame = cap.read()
+        if not ret:
+            return
+        self._winner_video_next_frame_at += 1.0 / fps
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        surf = pygame.image.frombuffer(rgb.tobytes(), (w, h), 'RGB')
+        _, _, vw, vh = self._winner_video_rect
+        self._winner_video_current_surf = pygame.transform.smoothscale(surf, (vw, vh))
+
+    def _start_fulbito_bgm(self) -> None:
+        import pygame
+        from core.resources import resource_path
+        import os
+        bgm_path = resource_path("variants/fulbito/assets/bgm_fulbito.mp3")
+        if not os.path.exists(bgm_path):
+            logger.warning("Fulbito BGM not found: %s", bgm_path)
+            return
+        try:
+            pygame.mixer.music.load(bgm_path)
+            pygame.mixer.music.set_volume(0.3)
+            pygame.mixer.music.play(loops=-1)
+            logger.info("Fulbito BGM started: %s", bgm_path)
+        except Exception as exc:
+            logger.warning("Could not start Fulbito BGM: %s", exc)
 
     def _render_header(self) -> None:
         pass
@@ -675,7 +872,7 @@ class FulbitoGameEngine(GameEngine):
         self.game_state = 'RACE_RUNNING'
         self.race_number += 1
         self._race_start_time = time.time()
-        logger.info("Carrera %d arrancando: %s", self.race_number, self.current_fixture)
+        logger.info("Partido %d arrancando: %s", self.race_number, self.current_fixture)
 
     def _on_race_finished(self) -> None:
         winner = self.physics_world.winner
@@ -693,7 +890,8 @@ class FulbitoGameEngine(GameEngine):
                     duration_secs=duration,
                 )
             )
-        logger.info("Carrera %d terminada. Ganador: %s", self.race_number, winner)
+        logger.info("Partido %d terminado. Ganador: %s", self.race_number, winner)
+        self._open_winner_video()
 
         # Compute race MVP for the winning country.
         self._victory_mvp = None
@@ -721,6 +919,10 @@ class FulbitoGameEngine(GameEngine):
         self.vote_counts = {}
         self.wildcard_country = self._pick_wildcard()
         self._victory_particles.clear()
+        if self._winner_video_cap is not None:
+            self._winner_video_cap.release()
+            self._winner_video_cap = None
+            self._winner_video_current_surf = None
         logger.info("Intermission. King=%s Wildcard=%s", self.king, self.wildcard_country)
 
     def _resolve_next_fixture(self) -> list[str]:
@@ -750,6 +952,9 @@ class FulbitoGameEngine(GameEngine):
     # ── Update ────────────────────────────────────────────────────────────────
 
     def update(self, dt: float) -> None:
+        self._tribuna_top.update(dt)
+        self._tribuna_bot.update(dt)
+
         if self.game_state == 'FIXTURE_SETUP':
             self.fixture_setup_timer += dt
 
@@ -792,7 +997,7 @@ class FulbitoGameEngine(GameEngine):
                 self._firework_timer = 0.0
                 self._spawn_random_fireworks()
                 self._spawn_confetti_rain()
-            if self.race_finished_timer >= 5.0:
+            if self.race_finished_timer >= 7.0:
                 self._start_intermission()
 
         elif self.game_state == 'RACE_INTERMISSION':
@@ -984,7 +1189,6 @@ class FulbitoGameEngine(GameEngine):
         elif self.game_state == 'RACE_RUNNING':
             self._render_gift_flashes()
             self._render_direction_arrows()
-            self._render_viewer_counts()
             self._render_country_names()
             if self._race_start_time and (time.time() - self._race_start_time) < 30.0:
                 self._render_overlay_text()
@@ -1075,7 +1279,7 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_overlay_text(self, text: str = '') -> None:
         import pygame
-        from core.config import SCREEN_WIDTH, SCREEN_HEIGHT
+        from core.config import SCREEN_WIDTH, GAME_AREA_TOP, GAME_MARGIN
         from variants.fulbito.config import FULBITO_COUNTRY_NAMES
 
         if not self.current_fixture:
@@ -1088,20 +1292,26 @@ class FulbitoGameEngine(GameEngine):
         names = [FULBITO_COUNTRY_NAMES.get(c, c) for c in self.current_fixture]
         line2 = "  |  ".join(names)
 
-        y1 = SCREEN_HEIGHT - 75
+        pw = self.physics_world
+        num_lanes = len(self.current_fixture)
+        # last_lane_bottom is in render_surface coords; add GAME_MARGIN for screen coords
+        last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
+        y1 = last_lane_bottom + GAME_MARGIN + 10
+        y2 = y1 + 22
+
+        from core.config import ACTUAL_WIDTH
         for surf, offset in [
             (font_big.render(line1, True, (0, 0, 0)), 1),
             (font_big.render(line1, True, (255, 255, 180)), 0),
         ]:
-            x = SCREEN_WIDTH // 2 - surf.get_width() // 2
+            x = ACTUAL_WIDTH // 2 - surf.get_width() // 2
             self.screen.blit(surf, (x + offset, y1 + offset))
 
-        y2 = SCREEN_HEIGHT - 50
         for surf, offset in [
             (font_small.render(line2, True, (0, 0, 0)), 1),
             (font_small.render(line2, True, (255, 230, 50)), 0),
         ]:
-            x = SCREEN_WIDTH // 2 - surf.get_width() // 2
+            x = ACTUAL_WIDTH // 2 - surf.get_width() // 2
             self.screen.blit(surf, (x + offset, y2 + offset))
 
     def _render_direction_arrows(self) -> None:
@@ -1139,14 +1349,17 @@ class FulbitoGameEngine(GameEngine):
                 ])
             else:
                 color_solid = (100, 150, 255)
-                tip_x = 8
+                # Tip points LEFT; right edge of arrowhead at SCREEN_WIDTH - 8
+                tip_x = SCREEN_WIDTH - 8 - ARROW_W
                 bar_x = tip_x + ARROW_W
                 bar_y = cy - BAR_H // 2
+
                 pygame.draw.polygon(self.screen, color_solid, [
-                    (tip_x + ARROW_W, cy - ARROW_H // 2),
                     (tip_x,           cy),
+                    (tip_x + ARROW_W, cy - ARROW_H // 2),
                     (tip_x + ARROW_W, cy + ARROW_H // 2),
                 ])
+
                 grad_surf = pygame.Surface((BAR_W, BAR_H), pygame.SRCALPHA)
                 for px in range(BAR_W):
                     alpha = int(255 * (1 - px / BAR_W))
@@ -1298,7 +1511,7 @@ class FulbitoGameEngine(GameEngine):
         if not winner:
             return
 
-        remaining = max(0, 5.0 - self.race_finished_timer)
+        remaining = max(0, 7.0 - self.race_finished_timer)
         winner_name = FULBITO_COUNTRY_NAMES.get(winner, winner)
         country_color = GIFT_COLORS.get(winner, (255, 215, 0))
 
@@ -1343,46 +1556,16 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(font_name.render(winner_name, True, (0, 0, 0)), (nx + 2, ny + 2))
         self.screen.blit(name_surf, (nx, ny))
 
-        # ── MVP section ───────────────────────────────────────────────────────
-        mvp = self._victory_mvp
-        if mvp:
-            mvp_user, mvp_diamonds = mvp
-            mvp_y = center_y + 128
-
-            # Label
-            font_label = pygame.font.SysFont('Arial', 13, bold=True)
-            label_surf = font_label.render("MVP DE LA CARRERA", True, (200, 200, 200))
-            lx = center_x - label_surf.get_width() // 2
-            self.screen.blit(font_label.render("MVP DE LA CARRERA", True, (0, 0, 0)), (lx + 1, mvp_y + 1))
-            self.screen.blit(label_surf, (lx, mvp_y))
-
-            # Avatar circle with first letter of username
-            avatar_r = 18
-            avatar_cx = center_x - 75
-            avatar_cy = mvp_y + 32
-            pygame.draw.circle(self.screen, country_color, (avatar_cx, avatar_cy), avatar_r)
-            pygame.draw.circle(self.screen, (255, 255, 255), (avatar_cx, avatar_cy), avatar_r, 2)
-            font_av = pygame.font.SysFont('Arial', 18, bold=True)
-            letter = (mvp_user[0].upper()) if mvp_user else '?'
-            av_surf = font_av.render(letter, True, (255, 255, 255))
-            self.screen.blit(av_surf, (avatar_cx - av_surf.get_width() // 2, avatar_cy - av_surf.get_height() // 2))
-
-            # Username + diamond count
-            display_name = f"@{mvp_user[:14]}"
-            font_mvp = pygame.font.SysFont('Arial', 16, bold=True)
-            mvp_text = font_mvp.render(display_name, True, (255, 255, 255))
-            tx = avatar_cx + avatar_r + 8
-            self.screen.blit(font_mvp.render(display_name, True, (0, 0, 0)), (tx + 1, avatar_cy - 10 + 1))
-            self.screen.blit(mvp_text, (tx, avatar_cy - 10))
-
-            font_dia = pygame.font.SysFont('Arial', 13)
-            dia_text = font_dia.render(f"{mvp_diamonds} diamantes", True, (150, 220, 255))
-            self.screen.blit(dia_text, (tx, avatar_cy + 8))
+        # ── Winner video (below last lane → bottom of screen) ────────────────
+        self._advance_winner_video()
+        if self._winner_video_current_surf:
+            vx, vy, _, _ = self._winner_video_rect
+            self.screen.blit(self._winner_video_current_surf, (vx, vy))
 
         # ── Countdown ─────────────────────────────────────────────────────────
-        cd_y = center_y + (192 if mvp else 150)
+        cd_y = center_y + 150
         font_cd = pygame.font.SysFont('Arial', 15)
-        cd_text = f"Próxima carrera en {remaining:.0f}s"
+        cd_text = f"Próximo partido en {remaining:.0f}s"
         cd_surf = font_cd.render(cd_text, True, (170, 170, 170))
         cx2 = center_x - cd_surf.get_width() // 2
         self.screen.blit(font_cd.render(cd_text, True, (0, 0, 0)), (cx2 + 1, cd_y + 1))
@@ -1412,20 +1595,6 @@ class FulbitoGameEngine(GameEngine):
         overlay.fill((0, 0, 0, 215))
         self.screen.blit(overlay, (0, game_top))
 
-        # Título
-        font_title = pygame.font.SysFont('Arial', 16, bold=True)
-        title_surf = font_title.render("PRÓXIMA CARRERA", True, (255, 255, 255))
-        tx = cx - title_surf.get_width() // 2
-        self.screen.blit(font_title.render("PRÓXIMA CARRERA", True, (0,0,0)),
-                        (tx+2, game_top+20+2))
-        self.screen.blit(title_surf, (tx, game_top + 20))
-
-        # Línea separadora bajo el título
-        pygame.draw.line(self.screen,
-            (255, 255, 255, 50),
-            (20, game_top + 42),
-            (ACTUAL_WIDTH - 20, game_top + 42), 1)
-
         # Countdown grande centrado
         font_cd = pygame.font.SysFont('Arial', 56, bold=True)
         cd_text = f"{remaining:.0f}"
@@ -1435,6 +1604,14 @@ class FulbitoGameEngine(GameEngine):
         cdy = cy - 120
         self.screen.blit(font_cd.render(cd_text, True, (0,0,0)), (cdx+2, cdy+2))
         self.screen.blit(cd_surf, (cdx, cdy))
+
+        # Título justo encima del countdown
+        font_title = pygame.font.SysFont('Arial', 16, bold=True)
+        title_surf = font_title.render("PRÓXIMO PARTIDO", True, (255, 255, 255))
+        tx = cx - title_surf.get_width() // 2
+        ty = cdy - title_surf.get_height() - 6
+        self.screen.blit(font_title.render("PRÓXIMO PARTIDO", True, (0, 0, 0)), (tx + 2, ty + 2))
+        self.screen.blit(title_surf, (tx, ty))
 
         # "segundos para votar"
         font_sub = pygame.font.SysFont('Arial', 13)
@@ -1565,10 +1742,12 @@ class FulbitoGameEngine(GameEngine):
 
                 code = cand['code']
                 sprite = self._get_country_sprite(code, radius * 2)
+                roll_angle = math.sin(self.intermission_timer * 1.4 + i * 1.1) * 18
                 if sprite:
-                    self.screen.blit(sprite, (bx - radius, ball_y - radius))
+                    rotated = pygame.transform.rotate(sprite, roll_angle)
+                    self.screen.blit(rotated, (bx - rotated.get_width() // 2, ball_y - rotated.get_height() // 2))
                 else:
-                    pygame.draw.circle(self.screen, (100,100,100), (bx, ball_y), radius)
+                    pygame.draw.circle(self.screen, (100, 100, 100), (bx, ball_y), radius)
 
                 # Nombre del país
                 name_s = font_ball.render(cand['name'], True, (255,255,255))
@@ -1594,7 +1773,7 @@ class FulbitoGameEngine(GameEngine):
         hint_surf = font_hint.render(hint, True, hint_color)
         hint_shadow = font_hint.render(hint, True, (0, 0, 0))
         hx = cx - hint_surf.get_width() // 2
-        hy = game_bottom - 20
+        hy = cy + 65 + 32 + 30
         self.screen.blit(hint_shadow, (hx + 1, hy + 1))
         self.screen.blit(hint_surf, (hx, hy))
 
@@ -1612,50 +1791,40 @@ class FulbitoGameEngine(GameEngine):
         except Exception:
             return None
 
-    def _render_viewer_counts(self) -> None:
+    def _render_country_names(self) -> None:
         import pygame
-        from core.config import SCREEN_WIDTH
+        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH
+        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
+
         if not self.current_fixture:
             return
 
-        counts: dict[str, int] = {c: 0 for c in self.current_fixture}
-        for country in self.viewer_teams.values():
-            if country in counts:
-                counts[country] += 1
-
         font = pygame.font.SysFont('Arial', 13, bold=True)
-        for country in self.current_fixture:
-            if country not in self.physics_world.racers:
-                continue
-            racer = self.physics_world.racers[country]
-            lane_center_y = int(racer.body.position.y)
-            count = counts.get(country, 0)
-            label = f"{country}: {count}"
-            y = lane_center_y + 14
-            surf = font.render(label, True, (255, 255, 255))
-            shadow = font.render(label, True, (0, 0, 0))
-            tx = max(5, min(8, SCREEN_WIDTH - surf.get_width() - 5))
-            self.screen.blit(shadow, (tx + 1, y + 1))
-            self.screen.blit(surf, (tx, y))
+        lane_h = self.physics_world.lane_height
+        lane_y_offset = self.physics_world.lane_y_offset
 
-    def _render_country_names(self) -> None:
-        import pygame
-        from core.config import SCREEN_WIDTH
-        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
-
-        font = pygame.font.SysFont('Arial', 13, bold=True)
-        for country, racer in self.physics_world.racers.items():
+        for i, country in enumerate(self.current_fixture):
             name = FULBITO_COUNTRY_NAMES.get(country, country)
-            cx = int(racer.body.position.x)
-            cy = int(racer.body.position.y)
-            radius = int(racer.draw_radius)
-            text_y = cy + radius + 4
-            surf = font.render(name, True, (255, 255, 255))
+
+            cx = ACTUAL_WIDTH // 2
+            cy = GAME_AREA_TOP + lane_y_offset + i * lane_h + lane_h // 2
+
+            name_surf = font.render(name, True, (255, 255, 255))
+            pad = 6
+            bg_w = name_surf.get_width() + pad * 2
+            bg_h = name_surf.get_height() + pad
+            bg = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
+            pygame.draw.rect(bg, (0, 0, 0, 90),
+                             (0, 0, bg_w, bg_h), border_radius=8)
+            bx = cx - bg_w // 2
+            by = cy - bg_h // 2
+            self.screen.blit(bg, (bx, by))
+
             shadow = font.render(name, True, (0, 0, 0))
-            tx = cx - surf.get_width() // 2
-            tx = max(5, min(tx, SCREEN_WIDTH - surf.get_width() - 5))
-            self.screen.blit(shadow, (tx + 1, text_y + 1))
-            self.screen.blit(surf, (tx, text_y))
+            tx = cx - name_surf.get_width() // 2
+            ty = cy - name_surf.get_height() // 2
+            self.screen.blit(shadow, (tx + 1, ty + 1))
+            self.screen.blit(name_surf, (tx, ty))
 
     def _render_fixture_setup(self) -> None:
         import pygame

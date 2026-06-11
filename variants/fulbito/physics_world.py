@@ -138,7 +138,7 @@ class FulbitoPhysicsWorld(PhysicsWorld):
             self.racers[country] = racer
             self._rotation_angles[country] = 0.0
 
-            target_size = 92
+            target_size = 54
             if self.asset_manager:
                 sprite = self.asset_manager.get_sprite_for_racer(country, target_size)
                 if sprite:
@@ -161,13 +161,18 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         super().update(dt)
 
         PIXELS_PER_DEGREE = 0.8
-        for country, racer in self.racers.items():
+        IDLE_DEG_PER_SEC = 25.0
+        for i, (country, racer) in enumerate(self.racers.items()):
             new_x = float(racer.body.position.x)
             delta = new_x - prev_x.get(country, new_x)
             if abs(delta) > 0.01:
-                self._rotation_angles[country] = (
-                    self._rotation_angles.get(country, 0.0) + delta * PIXELS_PER_DEGREE
-                ) % 360
+                rotation_delta = delta * PIXELS_PER_DEGREE
+            else:
+                direction = 1 if self._get_lane_direction(i) else -1
+                rotation_delta = direction * IDLE_DEG_PER_SEC * dt
+            self._rotation_angles[country] = (
+                self._rotation_angles.get(country, 0.0) + rotation_delta
+            ) % 360
 
     def apply_gift_impulse(
         self, country: str, gift_name: str, diamond_count: int = 1
