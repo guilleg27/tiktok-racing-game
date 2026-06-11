@@ -338,6 +338,9 @@ class FulbitoGameEngine(GameEngine):
         self._draw_spin_time: float = 0.0              # acumulador global del giro
         self._draw_settled: list[bool] = [False] * FULBITO_RACE_COUNTRY_COUNT
 
+        self.session_wins: dict[str, int] = {}
+        self._shield_cache: dict = {}
+
         # Estadísticas de sesión
         self.session_total_diamonds: int = 0
         self.session_unique_viewers: set[str] = set()
@@ -889,9 +892,127 @@ class FulbitoGameEngine(GameEngine):
         except Exception as exc:
             logger.warning("Could not play goal sound: %s", exc)
 
+    def _get_shield(self, country: str, size: int):
+        import pygame
+        from core.resources import resource_path
+        import os
+        cache_key = (country, size)
+        if cache_key in self._shield_cache:
+            return self._shield_cache[cache_key]
+        path = resource_path(f"variants/fulbito/assets/{country}.png")
+        try:
+            if os.path.exists(path):
+                img = pygame.image.load(path).convert_alpha()
+                scaled = pygame.transform.smoothscale(img, (size, size))
+                self._shield_cache[cache_key] = scaled
+                return scaled
+        except Exception:
+            pass
+        sprite = self._get_country_sprite(country, size)
+        self._shield_cache[cache_key] = sprite
+        return sprite
+
+    def _render_session_podio(self) -> None:
+        import pygame
+        from core.config import ACTUAL_WIDTH
+
+        if not self.session_wins:
+            return
+
+        sorted_wins = sorted(self.session_wins.items(), key=lambda x: x[1], reverse=True)[:3]
+
+        # Base justo encima del primer carril (dentro del área de juego visible)
+        pw = self.physics_world
+        first_lane_top = pw.game_area_top + pw.lane_y_offset
+        PODIO_BASE_Y = first_lane_top - 8
+        cx = ACTUAL_WIDTH // 2
+
+        CONFIGS = [
+            {'bh': 20, 'bw': 42, 'mcolor': (192, 192, 192)},  # 2do (izquierda)
+            {'bh': 30, 'bw': 50, 'mcolor': (255, 215, 0)},    # 1ro (centro)
+            {'bh': 14, 'bw': 42, 'mcolor': (205, 127, 50)},   # 3ro (derecha)
+        ]
+        SHIELD_SIZE = 28
+        GAP = 6
+
+        # Orden visual: 2do | 1ro | 3ro
+        # (wins_idx, config_idx): wins[1]=2do→CONFIGS[0](plata), wins[0]=1ro→CONFIGS[1](oro), wins[2]=3ro→CONFIGS[2](bronce)
+        visual_slots = [(1, 0), (0, 1), (2, 2)]
+        visual_order = [
+            (sorted_wins[wi] if wi < len(sorted_wins) else None, CONFIGS[ci])
+            for wi, ci in visual_slots
+        ]
+
+        total_w = sum(c['bw'] for _, c in visual_order) + GAP * (len(visual_order) - 1)
+        start_x = cx - total_w // 2
+
+        font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
+        font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
+        font_label = pygame.font.SysFont('Arial', 8)
+
+        # Label encima del escudo más alto (1ro, bh=30)
+        tallest_shield_top = (PODIO_BASE_Y - 30) - SHIELD_SIZE - 2
+        label_surf = font_label.render('PODIO DEL STREAM', True, (255, 255, 255))
+        ls = pygame.Surface((label_surf.get_width(), label_surf.get_height()), pygame.SRCALPHA)
+        ls.blit(label_surf, (0, 0))
+        ls.set_alpha(100)
+        self.screen.blit(ls, (cx - label_surf.get_width() // 2, tallest_shield_top - label_surf.get_height() - 3))
+
+        x = start_x
+        for entry, config in visual_order:
+            bw     = config['bw']
+            bh     = config['bh']
+            mcolor = config['mcolor']
+            bcx    = x + bw // 2
+            by     = PODIO_BASE_Y - bh
+
+            if entry:
+                country, wins = entry
+
+                block = pygame.Surface((bw, bh), pygame.SRCALPHA)
+                for row in range(bh):
+                    alpha = int(85 * (1 - row / bh) + 34)
+                    pygame.draw.line(block, (*mcolor, alpha), (0, row), (bw, row))
+                self.screen.blit(block, (x, by))
+                pygame.draw.rect(self.screen, (*mcolor, 170), (x, by, bw, bh), 1)
+
+                wins_surf = font_wins.render(f"{wins}v", True, mcolor)
+                self.screen.blit(wins_surf, (
+                    bcx - wins_surf.get_width() // 2,
+                    by + bh // 2 - wins_surf.get_height() // 2,
+                ))
+
+                # Escudo desde /escudos/
+                from core.resources import resource_path as _rp
+                import os as _os
+                shield_path = _rp(f"variants/fulbito/assets/escudos/{country}.png")
+                shield = None
+                try:
+                    if _os.path.exists(shield_path):
+                        _img = pygame.image.load(shield_path).convert_alpha()
+                        shield = pygame.transform.smoothscale(_img, (SHIELD_SIZE, SHIELD_SIZE))
+                except Exception:
+                    pass
+                if shield is None:
+                    shield = self._get_country_sprite(country, SHIELD_SIZE)
+
+                shield_y = by - SHIELD_SIZE - 2
+                pygame.draw.circle(self.screen, (20, 20, 20), (bcx, shield_y + SHIELD_SIZE // 2), SHIELD_SIZE // 2 + 2)
+                pygame.draw.circle(self.screen, mcolor, (bcx, shield_y + SHIELD_SIZE // 2), SHIELD_SIZE // 2 + 2, 1)
+                if shield:
+                    self.screen.blit(shield, (bcx - SHIELD_SIZE // 2, shield_y))
+
+                # Código ISO debajo del bloque
+                iso_surf = font_iso.render(country, True, mcolor)
+                self.screen.blit(iso_surf, (bcx - iso_surf.get_width() // 2, PODIO_BASE_Y + 2))
+
+            x += bw + GAP
+
     def _on_race_finished(self) -> None:
         winner = self.physics_world.winner
         self.king = winner
+        if winner:
+            self.session_wins[winner] = self.session_wins.get(winner, 0) + 1
         self.game_state = 'RACE_FINISHED'
         self.race_finished_timer = 0.0
         duration = int(time.time() - self._race_start_time) if self._race_start_time else 0
@@ -1210,6 +1331,7 @@ class FulbitoGameEngine(GameEngine):
             self._render_gift_flashes()
             self._render_direction_arrows()
             self._render_country_names()
+            self._render_session_podio()
             if self._race_start_time and (time.time() - self._race_start_time) < 30.0:
                 self._render_overlay_text()
         elif self.game_state == 'RACE_FINISHED':

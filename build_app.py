@@ -54,18 +54,27 @@ VARIANT_CONFIG = {
     "countries": {
         "entry_point": "variants/countries/main.py",
         "app_name": "TikTokRacingGoLive",
+        "extra_assets": [],
     },
     "motos": {
         "entry_point": "variants/motos/main.py",
         "app_name": "MotoRace",
+        "extra_assets": [],
     },
     "motos_extended": {
         "entry_point": "variants/motos_extended/main.py",
         "app_name": "MotoRaceExtended",
+        "extra_assets": [],
     },
     "versus": {
         "entry_point": "variants/versus/main.py",
         "app_name": "versus",
+        "extra_assets": [],
+    },
+    "fulbito": {
+        "entry_point": "variants/fulbito/main.py",
+        "app_name": "Fulbito",
+        "extra_assets": ["variants/fulbito/assets"],
     },
 }
 
@@ -128,6 +137,15 @@ def build(variant: str = "countries"):
             print(f"  ✓ Incluyendo: {subfolder_path} -> assets/{subfolder}")
         elif subfolder in ('fonts', 'images'):
             print(f"  ⚠ No encontrada: {subfolder_path} (crea la carpeta si el juego la usa)")
+
+    for extra in cfg.get("extra_assets", []):
+        if os.path.isdir(extra):
+            assets_to_include.extend([
+                "--add-data", f"{extra}{separator}{extra}"
+            ])
+            print(f"  ✓ Incluyendo (variant): {extra} -> {extra}")
+        else:
+            print(f"  ⚠ No encontrada (variant): {extra}")
 
     # Build PyInstaller command. --onedir keeps Windows/macOS runs smooth and output clear.
     cmd = [
@@ -219,7 +237,7 @@ if __name__ == "__main__":
         "--variant",
         choices=list(VARIANT_CONFIG),
         default="countries",
-        help="Which variant to build (default: countries)",
+        help=f"Which variant to build (default: countries). Options: {', '.join(VARIANT_CONFIG)}",
     )
     args = parser.parse_args()
 
