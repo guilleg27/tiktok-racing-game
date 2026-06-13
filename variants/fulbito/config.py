@@ -41,8 +41,9 @@ FULBITO_ALL_COUNTRIES = [
     "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",
     # Norte América (2)
     "USA", "CAN",
-    # Otros (4)
+    # Otros (10)
     "AUS", "AUST", "COR", "BEL",
+    "CHE", "EGI", "JAP", "MAR", "SUE", "NOR",
 ]
 
 # Nombres para display en pantalla y Supabase
@@ -68,6 +69,12 @@ FULBITO_COUNTRY_NAMES = {
     "AUST": "Austria",
     "COR": "Corea del Sur",
     "BEL": "Bélgica",
+    "CHE": "Chequia",
+    "EGI": "Egipto",
+    "JAP": "Japón",
+    "MAR": "Marruecos",
+    "SUE": "Suecia",
+    "NOR": "Noruega",
 }
 
 # Aliases de chat → código ISO
@@ -117,6 +124,18 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "cor": "COR", "corea": "COR", "korea": "COR", "corea del sur": "COR",
     # BEL
     "bel": "BEL", "belgica": "BEL", "bélgica": "BEL", "belgium": "BEL",
+    # CHE
+    "che": "CHE", "chequia": "CHE", "czech": "CHE", "republica checa": "CHE", "república checa": "CHE",
+    # EGI
+    "egi": "EGI", "egipto": "EGI", "egypt": "EGI",
+    # JAP
+    "jap": "JAP", "japon": "JAP", "japón": "JAP", "japan": "JAP",
+    # MAR
+    "mar": "MAR", "marruecos": "MAR", "morocco": "MAR",
+    # SUE
+    "sue": "SUE", "suecia": "SUE", "sweden": "SUE",
+    # NOR
+    "nor": "NOR", "noruega": "NOR", "norway": "NOR",
 }
 
 # ─────────────────────────────────────────────
@@ -127,7 +146,7 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
 FULBITO_RACE_COUNTRY_COUNT = 4
 
 # Máximo de países en el pool activo del stream (el streamer lo configura antes de arrancar)
-FULBITO_POOL_MAX = 21  # igual que el total — puede usar todos
+FULBITO_POOL_MAX = 27  # igual que el total — puede usar todos
 
 # Fixture por defecto si el streamer no configura nada (los 4 más populares de LATAM)
 FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
@@ -227,12 +246,13 @@ FULBITO_FLAG_PATH = "variants/fulbito/assets/flags/"
 # Tamaño de la bandera en pantalla (px). Más grande que motos (12) porque son banderas, no sprites complejos.
 FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco de 46px)
 
-# Todos los 21 assets están listos:
+# Todos los 26 assets están listos:
 FULBITO_ASSETS_READY = [
     "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN",  # LATAM
     "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",          # Europa
     "USA", "CAN",                                               # Norte América
     "AUS", "AUST", "COR", "BEL",                               # Otros
+    "CHE", "EGI", "JAP", "MAR", "SUE", "NOR",                 # Nuevos
 ]
 
 FULBITO_ASSETS_PENDING: list[str] = []

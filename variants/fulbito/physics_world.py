@@ -48,6 +48,18 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         self.hype_speed_multiplier = 1.0
         self.rosa_combo_multiplier = 1.0
 
+        # Sobreescribir posiciones de inicio/fin para usar los extremos reales
+        self.start_x = _TRACK_LEFT + 12          # ≈ 20px
+        self.finish_line_x = _TRACK_RIGHT - 12   # ≈ 440px
+
+        # Reposicionar racers al nuevo start_x (super() los colocó con FULBITO_START_MARGIN)
+        for i, (country, racer) in enumerate(self.racers.items()):
+            going_right = self._get_lane_direction(i)
+            new_x = float(self.start_x if going_right else self.finish_line_x)
+            racer.body.position = (new_x, racer.body.position.y)
+            racer.body.velocity = (0, 0)
+            racer.target_x = new_x
+
     # ─────────────────────────────────────────────
     # Private helpers
     # ─────────────────────────────────────────────
@@ -75,8 +87,11 @@ class FulbitoPhysicsWorld(PhysicsWorld):
 
         # Recompute lane layout for the actual number of racers (4), not the base's 10/15.
         num_racers = len(self.countries)
+        # Lee LANE_HEIGHT en runtime (game_engine lo sobreescribe a 85 antes de instanciar)
+        import core.config as _cc
+        fulbito_lane_height = getattr(_cc, 'LANE_HEIGHT', 85)
         computed_lane_height = self.game_area_height // max(num_racers, 1)
-        self.lane_height = min(computed_lane_height, LANE_HEIGHT)
+        self.lane_height = min(computed_lane_height, fulbito_lane_height)
         total_race_height = self.lane_height * num_racers
         self.lane_y_offset = (self.game_area_height - total_race_height) // 2
 

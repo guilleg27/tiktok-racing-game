@@ -61,11 +61,7 @@ class _GrassBackground:
             while y < lane_y + lane_h:
                 color = dark if stripe_idx % 2 == 0 else light
                 stripe_bottom = min(y + STRIPE_H, lane_y + lane_h)
-                pygame.draw.rect(
-                    surface,
-                    color,
-                    (0, y, SCREEN_WIDTH, stripe_bottom - y)
-                )
+                pygame.draw.rect(surface, color, (0, y, SCREEN_WIDTH, stripe_bottom - y))
                 y += STRIPE_H
                 stripe_idx += 1
 
@@ -73,15 +69,11 @@ class _GrassBackground:
             y = GAME_AREA_TOP + lane_y_offset + i * lane_h
             pygame.draw.line(surface, (20, 55, 8), (0, y), (SCREEN_WIDTH, y), 1)
 
-        # Draw pixel-art crowd stands above and below the pitch.
-        engine = self._engine
-        from core.config import SCREEN_HEIGHT, GAME_AREA_BOTTOM
-        if hasattr(engine, '_tribuna_top'):
-            engine._tribuna_top.render(surface, x=0, y=0, flip=False)
-        if hasattr(engine, '_tribuna_bot'):
-            engine._tribuna_bot.render(
-                surface, x=0, y=SCREEN_HEIGHT - GAME_AREA_BOTTOM, flip=True
-            )
+        # Las franjas de los márgenes laterales (x=0..40 y x=500..540) se pintan
+        # en outer_background via _update_outer_background() — no hace falta hacerlo aquí.
+
+        # Tribuna rendering happens directly on self.screen in FulbitoGameEngine.render()
+        # to cover the full ACTUAL_WIDTH (540px) instead of only render_surface (460px).
 
     def update(self, dt: float) -> None:
         pass
@@ -360,15 +352,22 @@ class FulbitoGameEngine(GameEngine):
         self._firework_timer: float = 0.0
 
         # Stadium crowd stands
-        from core.config import ACTUAL_WIDTH, GAME_AREA_TOP, GAME_AREA_BOTTOM, SCREEN_HEIGHT
+        from core.config import ACTUAL_WIDTH, GAME_AREA_TOP, SCREEN_HEIGHT
         self._tribuna_top = _StadiumTribuna(ACTUAL_WIDTH, GAME_AREA_TOP - 4)
-        self._tribuna_bot = _StadiumTribuna(ACTUAL_WIDTH,
-            SCREEN_HEIGHT - (SCREEN_HEIGHT - GAME_AREA_BOTTOM) - 4)
+        self._tribuna_bot: _StadiumTribuna | None = None
+        self._tribuna_bot_y: int = 0
 
         # Reemplazar physics_world con FulbitoPhysicsWorld
         self._init_fulbito_physics()
 
+        # Tribuna inferior: calculada en _init_fulbito_physics(); GAME_MARGIN se suma en render
+
     def _init_fulbito_physics(self) -> None:
+        import core.config as _cc
+        # Asegurar que los extremos de inicio/fin usen el ancho completo de la cancha
+        _cc.RACE_START_X = 20
+        _cc.RACE_FINISH_X = _cc.SCREEN_WIDTH - 20
+
         from variants.fulbito.physics_world import FulbitoPhysicsWorld
         if self.asset_manager:
             from core.asset_manager import AssetManager
@@ -380,6 +379,25 @@ class FulbitoGameEngine(GameEngine):
             asset_manager=self.asset_manager,
             game_engine=self,
         )
+
+        # Recalcular tribuna inferior en coords de self.screen (incluye GAME_MARGIN)
+        from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT, GAME_MARGIN
+        pw = self.physics_world
+        logger.info(
+            "[FULBITO PHYSICS] game_area_top=%s lane_y_offset=%s "
+            "lane_height=%s countries=%s bot_y=%s tribuna_h=%s",
+            pw.game_area_top, pw.lane_y_offset, pw.lane_height,
+            len(pw.countries),
+            pw.game_area_top + pw.lane_y_offset + pw.lane_height * len(pw.countries),
+            ACTUAL_HEIGHT - (pw.game_area_top + pw.lane_y_offset + pw.lane_height * len(pw.countries)) - 4
+        )
+        bot_y = (pw.game_area_top + pw.lane_y_offset
+                 + pw.lane_height * len(pw.countries))
+        self._tribuna_bot_y = bot_y
+        tribuna_h = max(10, ACTUAL_HEIGHT - (bot_y + GAME_MARGIN) - 4)
+        self._tribuna_bot = _StadiumTribuna(ACTUAL_WIDTH, tribuna_h)
+
+        self._update_outer_background()
 
     # ── Pygame init ──────────────────────────────────────────────────────────
 
@@ -914,26 +932,34 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_session_podio(self) -> None:
         import pygame
-        from core.config import ACTUAL_WIDTH
+        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH, GAME_MARGIN
 
         if not self.session_wins:
             return
 
         sorted_wins = sorted(self.session_wins.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        # Base justo encima del primer carril (dentro del área de juego visible)
         pw = self.physics_world
-        first_lane_top = pw.game_area_top + pw.lane_y_offset
-        PODIO_BASE_Y = first_lane_top - 8
+        # Zona negra entre tribuna (120px) y primer carril
+        # El primer carril en self.screen está en:
+        first_lane_top = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset
+        # El podio va centrado en la zona negra disponible
+        # Tribuna superior ocupa ~120px, primer carril en ~304px
+        # Zona disponible: 120px a 304px = 184px
+        zona_top = 120   # fin de tribuna superior aproximado
+        zona_bot = first_lane_top
+        zona_mid = (zona_top + zona_bot) // 2
+        # Base de los bloques centrada en la zona
+        PODIO_BASE_Y = zona_mid + 15
         cx = ACTUAL_WIDTH // 2
 
         CONFIGS = [
-            {'bh': 20, 'bw': 42, 'mcolor': (192, 192, 192)},  # 2do (izquierda)
-            {'bh': 30, 'bw': 50, 'mcolor': (255, 215, 0)},    # 1ro (centro)
-            {'bh': 14, 'bw': 42, 'mcolor': (205, 127, 50)},   # 3ro (derecha)
+            {'pos': 2, 'bh': 18, 'bw': 38, 'mcolor': (192, 192, 192)},  # 2do
+            {'pos': 1, 'bh': 26, 'bw': 46, 'mcolor': (255, 215, 0)},    # 1ro
+            {'pos': 3, 'bh': 14, 'bw': 38, 'mcolor': (205, 127, 50)},   # 3ro
         ]
-        SHIELD_SIZE = 28
-        GAP = 6
+        SHIELD_SIZE = 20
+        GAP = 4
 
         # Orden visual: 2do | 1ro | 3ro
         # (wins_idx, config_idx): wins[1]=2do→CONFIGS[0](plata), wins[0]=1ro→CONFIGS[1](oro), wins[2]=3ro→CONFIGS[2](bronce)
@@ -948,10 +974,10 @@ class FulbitoGameEngine(GameEngine):
 
         font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
         font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
-        font_label = pygame.font.SysFont('Arial', 8)
+        font_label = pygame.font.SysFont('Arial', 7)
 
-        # Label encima del escudo más alto (1ro, bh=30)
-        tallest_shield_top = (PODIO_BASE_Y - 30) - SHIELD_SIZE - 2
+        # Label encima del escudo más alto (1ro, bh=26)
+        tallest_shield_top = (PODIO_BASE_Y - 26) - SHIELD_SIZE - 2
         label_surf = font_label.render('PODIO DEL STREAM', True, (255, 255, 255))
         ls = pygame.Surface((label_surf.get_width(), label_surf.get_height()), pygame.SRCALPHA)
         ls.blit(label_surf, (0, 0))
@@ -1229,7 +1255,7 @@ class FulbitoGameEngine(GameEngine):
                     type=EventType.GIFT,
                     username='testviewer',
                     content='Hand Heart',
-                    extra={'diamond_count': 150, 'count': 1},
+                    extra={'diamond_count': 500, 'count': 1},
                 )
                 asyncio.create_task(self._handle_fulbito_gift(fake))
 
@@ -1266,13 +1292,78 @@ class FulbitoGameEngine(GameEngine):
 
     def render_background(self) -> None:
         import pygame
+        logger.debug("[RENDER_BG] outer_background size=%s",
+            (self.outer_background.get_width(),
+             self.outer_background.get_height())
+            if self.outer_background else None
+        )
         if self.screen:
             self.screen.blit(self.outer_background, (0, 0))
+
+    def _update_outer_background(self) -> None:
+        """Pinta las franjas verdes de los carriles en outer_background (ancho completo).
+
+        outer_background se blit-ea al inicio de cada frame ANTES del render_surface.
+        render_surface cubre x=40..500; los márgenes x=0..40 y x=500..540 quedan del
+        outer_background, por lo que las franjas aquí extienden el campo de borde a borde.
+        """
+        import pygame
+        from core.config import ACTUAL_WIDTH, GAME_MARGIN, GAME_AREA_TOP
+        ob = getattr(self, 'outer_background', None)
+        pw = getattr(self, 'physics_world', None)
+        if ob is None or pw is None:
+            return
+        # Resetear antes de redibujar para no acumular contenido de partidas anteriores
+        ob.fill((10, 10, 10))
+        STRIPE_H = 10
+        LANE_COLORS = [
+            ((29, 82, 16), (35, 79, 20)),
+            ((24, 86, 14), (29, 90, 18)),
+            ((29, 82, 16), (35, 79, 20)),
+            ((24, 86, 14), (29, 90, 18)),
+        ]
+        for i in range(len(self.current_fixture)):
+            dark, light = LANE_COLORS[i % len(LANE_COLORS)]
+            lane_y_s = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset + i * pw.lane_height
+            stripe_idx = 0
+            y = lane_y_s
+            while y < lane_y_s + pw.lane_height:
+                color = dark if stripe_idx % 2 == 0 else light
+                stripe_bottom = min(y + STRIPE_H, lane_y_s + pw.lane_height)
+                pygame.draw.rect(ob, color, (0, y, ACTUAL_WIDTH, stripe_bottom - y))
+                y += STRIPE_H
+                stripe_idx += 1
+        for i in range(1, len(self.current_fixture)):
+            y = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset + i * pw.lane_height
+            pygame.draw.line(ob, (20, 55, 8), (0, y), (ACTUAL_WIDTH, y), 1)
+        logger.info(
+            "[OB UPDATE] fixture=%s lane_h=%s lane_y_offset=%s "
+            "ob_size=%s carriles_dibujados=%s",
+            self.current_fixture,
+            pw.lane_height,
+            pw.lane_y_offset,
+            (ob.get_width(), ob.get_height()),
+            len(self.current_fixture)
+        )
+
+    def _render_tribunas(self) -> None:
+        """Renderiza tribuna top y bottom directamente en self.screen (ACTUAL_WIDTH completo)."""
+        if hasattr(self, '_tribuna_top'):
+            self._tribuna_top.render(self.screen, x=0, y=0, flip=False)
+        if getattr(self, '_tribuna_bot', None):
+            from core.config import GAME_MARGIN
+            logger.info("[TRIBUNA] bot_y=%s GAME_MARGIN=%s render_y=%s",
+                self._tribuna_bot_y,
+                GAME_MARGIN,
+                self._tribuna_bot_y + GAME_MARGIN + 6)
+            self._tribuna_bot.render(self.screen, x=0,
+                y=self._tribuna_bot_y + GAME_MARGIN + 6, flip=True)
 
     def render(self) -> None:
         import pygame
         if self.game_state == 'FIXTURE_SETUP':
             self.render_background()
+            self._render_tribunas()
             self._render_fixture_setup()
             pygame.display.flip()
             return
@@ -1325,6 +1416,7 @@ class FulbitoGameEngine(GameEngine):
             self.render_surface.blit(glow, (blit_x, blit_y))
 
     def _pre_flip_screen_overlay(self) -> None:
+        self._render_tribunas()
         if self.game_state == 'IDLE':
             self._render_overlay_text()
         elif self.game_state == 'RACE_RUNNING':
