@@ -940,17 +940,10 @@ class FulbitoGameEngine(GameEngine):
         sorted_wins = sorted(self.session_wins.items(), key=lambda x: x[1], reverse=True)[:3]
 
         pw = self.physics_world
-        # Zona negra entre tribuna (120px) y primer carril
-        # El primer carril en self.screen está en:
         first_lane_top = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset
-        # El podio va centrado en la zona negra disponible
-        # Tribuna superior ocupa ~120px, primer carril en ~304px
-        # Zona disponible: 120px a 304px = 184px
-        zona_top = 120   # fin de tribuna superior aproximado
-        zona_bot = first_lane_top
-        zona_mid = (zona_top + zona_bot) // 2
-        # Base de los bloques centrada en la zona
-        PODIO_BASE_Y = zona_mid + 15
+        # Base de los bloques con mínimo padding antes del primer carril
+        # ISO text (~12px) + 2px gap + 4px padding = 18px sobre first_lane_top
+        PODIO_BASE_Y = first_lane_top - 30
         cx = ACTUAL_WIDTH // 2
 
         CONFIGS = [
@@ -974,15 +967,6 @@ class FulbitoGameEngine(GameEngine):
 
         font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
         font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
-        font_label = pygame.font.SysFont('Arial', 7)
-
-        # Label encima del escudo más alto (1ro, bh=26)
-        tallest_shield_top = (PODIO_BASE_Y - 26) - SHIELD_SIZE - 2
-        label_surf = font_label.render('PODIO DEL STREAM', True, (255, 255, 255))
-        ls = pygame.Surface((label_surf.get_width(), label_surf.get_height()), pygame.SRCALPHA)
-        ls.blit(label_surf, (0, 0))
-        ls.set_alpha(100)
-        self.screen.blit(ls, (cx - label_surf.get_width() // 2, tallest_shield_top - label_surf.get_height() - 3))
 
         x = start_x
         for entry, config in visual_order:
@@ -1352,12 +1336,8 @@ class FulbitoGameEngine(GameEngine):
             self._tribuna_top.render(self.screen, x=0, y=0, flip=False)
         if getattr(self, '_tribuna_bot', None):
             from core.config import GAME_MARGIN
-            logger.info("[TRIBUNA] bot_y=%s GAME_MARGIN=%s render_y=%s",
-                self._tribuna_bot_y,
-                GAME_MARGIN,
-                self._tribuna_bot_y + GAME_MARGIN + 6)
             self._tribuna_bot.render(self.screen, x=0,
-                y=self._tribuna_bot_y + GAME_MARGIN + 6, flip=True)
+                y=self._tribuna_bot_y + GAME_MARGIN + 20, flip=True)
 
     def render(self) -> None:
         import pygame
@@ -1530,7 +1510,7 @@ class FulbitoGameEngine(GameEngine):
         num_lanes = len(self.current_fixture)
         # last_lane_bottom is in render_surface coords; add GAME_MARGIN for screen coords
         last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
-        y1 = last_lane_bottom + GAME_MARGIN + 10
+        y1 = last_lane_bottom + GAME_MARGIN + 35
         y2 = y1 + 22
 
         from core.config import ACTUAL_WIDTH
@@ -1738,6 +1718,7 @@ class FulbitoGameEngine(GameEngine):
         import pygame
         from core.config import (
             SCREEN_HEIGHT, GAME_AREA_TOP, GAME_AREA_BOTTOM, ACTUAL_WIDTH, GIFT_COLORS,
+            GAME_MARGIN,
         )
         from variants.fulbito.config import FULBITO_COUNTRY_NAMES
 
@@ -1749,8 +1730,8 @@ class FulbitoGameEngine(GameEngine):
         winner_name = FULBITO_COUNTRY_NAMES.get(winner, winner)
         country_color = GIFT_COLORS.get(winner, (255, 215, 0))
 
-        game_top    = GAME_AREA_TOP
-        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        game_top    = GAME_AREA_TOP + GAME_MARGIN
+        game_bottom = (SCREEN_HEIGHT - GAME_AREA_BOTTOM) + GAME_MARGIN
         game_h      = game_bottom - game_top
         center_x    = ACTUAL_WIDTH // 2
         center_y    = game_top + game_h // 2
@@ -1810,7 +1791,7 @@ class FulbitoGameEngine(GameEngine):
         from core.config import (
             SCREEN_WIDTH, SCREEN_HEIGHT,
             GAME_AREA_TOP, GAME_AREA_BOTTOM,
-            ACTUAL_WIDTH
+            ACTUAL_WIDTH, GAME_MARGIN,
         )
         from variants.fulbito.config import (
             FULBITO_COUNTRY_NAMES,
@@ -1818,8 +1799,8 @@ class FulbitoGameEngine(GameEngine):
         )
 
         remaining = max(0, FULBITO_INTERMISSION_SECONDS - self.intermission_timer)
-        game_top    = GAME_AREA_TOP
-        game_bottom = SCREEN_HEIGHT - GAME_AREA_BOTTOM
+        game_top    = GAME_AREA_TOP + GAME_MARGIN
+        game_bottom = (SCREEN_HEIGHT - GAME_AREA_BOTTOM) + GAME_MARGIN
         game_h      = game_bottom - game_top
         cx          = ACTUAL_WIDTH // 2
         cy          = game_top + game_h // 2
