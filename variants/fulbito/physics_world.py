@@ -10,9 +10,8 @@ import pymunk
 
 from core.physics_world import PhysicsWorld, FlagRacer
 from core.config import (
-    RACE_START_X, RACE_FINISH_X, LANE_HEIGHT,
-    GAME_AREA_TOP, GAME_AREA_BOTTOM, SCREEN_HEIGHT, SCREEN_WIDTH,
-    MOTOGP_MODE, MOTOGP_SPRITE_HEIGHT, GIFT_COLORS,
+    SCREEN_WIDTH,
+    GIFT_COLORS,
 )
 
 # Extremos físicos del campo — coinciden con la posición visual de los arcos
@@ -48,6 +47,18 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         self.hype_speed_multiplier = 1.0
         self.rosa_combo_multiplier = 1.0
 
+        # Sobreescribir posiciones de inicio/fin para usar los extremos reales
+        self.start_x = _TRACK_LEFT + 12          # ≈ 20px
+        self.finish_line_x = _TRACK_RIGHT - 12   # ≈ 440px
+
+        # Reposicionar racers al nuevo start_x (super() los colocó con FULBITO_START_MARGIN)
+        for i, (_, racer) in enumerate(self.racers.items()):
+            going_right = self._get_lane_direction(i)
+            new_x = float(self.start_x if going_right else self.finish_line_x)
+            racer.body.position = (new_x, racer.body.position.y)
+            racer.body.velocity = (0, 0)
+            racer.target_x = new_x
+
     # ─────────────────────────────────────────────
     # Private helpers
     # ─────────────────────────────────────────────
@@ -75,8 +86,11 @@ class FulbitoPhysicsWorld(PhysicsWorld):
 
         # Recompute lane layout for the actual number of racers (4), not the base's 10/15.
         num_racers = len(self.countries)
+        # Lee LANE_HEIGHT en runtime (game_engine lo sobreescribe a 85 antes de instanciar)
+        import core.config as _cc
+        fulbito_lane_height = getattr(_cc, 'LANE_HEIGHT', 85)
         computed_lane_height = self.game_area_height // max(num_racers, 1)
-        self.lane_height = min(computed_lane_height, LANE_HEIGHT)
+        self.lane_height = min(computed_lane_height, fulbito_lane_height)
         total_race_height = self.lane_height * num_racers
         self.lane_y_offset = (self.game_area_height - total_race_height) // 2
 
@@ -90,24 +104,10 @@ class FulbitoPhysicsWorld(PhysicsWorld):
             initial_x = self._get_initial_x(i)
 
             mass = 1.0
-            # Fulbito does not use MOTOGP_MODE; circle bodies only.
-            if MOTOGP_MODE:
-                verts = [
-                    (-FULBITO_FLAG_RADIUS * 3 // 2, -FULBITO_FLAG_RADIUS // 2),
-                    ( FULBITO_FLAG_RADIUS * 3 // 2, -FULBITO_FLAG_RADIUS // 2),
-                    ( FULBITO_FLAG_RADIUS * 3 // 2,  FULBITO_FLAG_RADIUS // 2),
-                    (-FULBITO_FLAG_RADIUS * 3 // 2,  FULBITO_FLAG_RADIUS // 2),
-                ]
-                moment = pymunk.moment_for_poly(mass, verts)
-                body = pymunk.Body(mass, moment)
-                body.moment = float("inf")
-                body.position = (initial_x, lane_y)
-                shape = pymunk.Poly.create_box(body, (FULBITO_FLAG_RADIUS * 3, FULBITO_FLAG_RADIUS))
-            else:
-                moment = pymunk.moment_for_circle(mass, 0, FULBITO_FLAG_RADIUS)
-                body = pymunk.Body(mass, moment)
-                body.position = (initial_x, lane_y)
-                shape = pymunk.Circle(body, FULBITO_FLAG_RADIUS)
+            moment = pymunk.moment_for_circle(mass, 0, FULBITO_FLAG_RADIUS)
+            body = pymunk.Body(mass, moment)
+            body.position = (initial_x, lane_y)
+            shape = pymunk.Circle(body, FULBITO_FLAG_RADIUS)
 
             shape.friction = 0.3
             shape.elasticity = 0.1

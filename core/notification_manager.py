@@ -52,7 +52,7 @@ class FollowerBanner:
 
         if life_used < POP_END:
             t = life_used / POP_END
-            scale = 0.4 + 0.6 * (1.0 + 0.35 * math.sin(t * math.pi))
+            scale = 0.4 + 0.6 * (1.0 + 0.30 * math.sin(t * math.pi))
             alpha = 255
         elif life_used < HOLD_END:
             scale = 1.0
@@ -66,40 +66,48 @@ class FollowerBanner:
         w = max(1, int(self.width * scale))
         h = max(1, int(self.height * scale))
 
-        radius = 14
+        GOLD   = (212, 175, 55)
+        WHITE  = (255, 255, 255)
+        NAVY   = (8, 18, 46)
+        radius = 5
 
-        # Glow halo: rounded, semi-transparent neon pink
-        glow = pygame.Surface((w + 12, h + 12), pygame.SRCALPHA)
-        pygame.draw.rect(glow, (255, 20, 147, int(alpha * 0.35)),
-                         glow.get_rect(), border_radius=radius + 4)
-        glow_rect = glow.get_rect(center=(self.x, self.y))
-        surface.blit(glow, glow_rect)
+        # Outer glow — subtle gold halo
+        glow = pygame.Surface((w + 10, h + 10), pygame.SRCALPHA)
+        pygame.draw.rect(glow, (*GOLD, int(alpha * 0.25)),
+                         glow.get_rect(), border_radius=radius + 3)
+        surface.blit(glow, glow.get_rect(center=(self.x, self.y)))
 
-        # Main background: deep violet, rounded
+        # Background: deep navy
         bg = pygame.Surface((w, h), pygame.SRCALPHA)
-        pygame.draw.rect(bg, (60, 0, 80, int(alpha * 0.95)),
+        pygame.draw.rect(bg, (*NAVY, int(alpha * 0.96)),
                          bg.get_rect(), border_radius=radius)
-        # Neon pink outer border (3px), rounded
-        pygame.draw.rect(bg, (255, 20, 147, alpha),
-                         bg.get_rect(), 3, border_radius=radius)
-        # Cyan inner accent line (1px inset), rounded
-        inner = bg.get_rect().inflate(-6, -6)
-        pygame.draw.rect(bg, (0, 255, 220, int(alpha * 0.6)),
-                         inner, 1, border_radius=radius - 3)
+
+        # Gold outer border (2px)
+        pygame.draw.rect(bg, (*GOLD, alpha),
+                         bg.get_rect(), 2, border_radius=radius)
+
+        # Thin white inner line (1px, inset 3px)
+        pygame.draw.rect(bg, (*WHITE, int(alpha * 0.4)),
+                         bg.get_rect().inflate(-6, -6), 1, border_radius=max(1, radius - 2))
+
+        # Horizontal gold separator line (1px, centered vertically)
+        sep_y = h // 2
+        pygame.draw.line(bg, (*GOLD, int(alpha * 0.5)), (10, sep_y), (w - 10, sep_y), 1)
+
         bg_rect = bg.get_rect(center=(self.x, self.y))
         surface.blit(bg, bg_rect)
 
-        # "NEW FOLLOWER" label — neon cyan, size 13
-        label_font = _get_notif_font(13, bold=False)
-        label_surf = label_font.render("¡Gracias por unirte!", True, (0, 255, 220))
+        # Top label: "Gracias por seguirnos" — gold, small caps style
+        label_font = _get_notif_font(11, bold=True)
+        label_surf = label_font.render("Gracias por seguirnos!", True, GOLD)
         _apply_alpha(label_surf, alpha)
 
-        # "@username" — bright white bold, size 17
+        # Bottom text: "@username" — white bold, larger
         name_font = _get_notif_font(17, bold=True)
-        name_surf = name_font.render(f"@{self.username}", True, (255, 255, 255))
+        name_surf = name_font.render(f"@{self.username}", True, WHITE)
         _apply_alpha(name_surf, alpha)
 
-        gap = 4
+        gap = 5
         total_h = label_surf.get_height() + gap + name_surf.get_height()
         label_rect = label_surf.get_rect(centerx=self.x, y=self.y - total_h // 2)
         name_rect  = name_surf.get_rect(centerx=self.x,  y=label_rect.bottom + gap)

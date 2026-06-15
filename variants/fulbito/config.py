@@ -38,11 +38,12 @@ FULBITO_ALL_COUNTRIES = [
     "ARG", "BRA", "MEX", "COL", "URU",
     "ECU", "PAR", "PAN",
     # Europa (7)
-    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",
+    "ENG", "FRA", "CRO", "POR", "ALE", "PAI", "ESP",
     # Norte América (2)
     "USA", "CAN",
-    # Otros (4)
+    # Otros (10)
     "AUS", "AUST", "COR", "BEL",
+    "CHE", "EGI", "JAP", "MAR", "SUE", "NOR",
 ]
 
 # Nombres para display en pantalla y Supabase
@@ -60,7 +61,7 @@ FULBITO_COUNTRY_NAMES = {
     "CRO": "Croacia",
     "POR": "Portugal",
     "ALE": "Alemania",
-    "HOL": "Países Bajos",
+    "PAI": "Países Bajos",
     "ESP": "España",
     "USA": "USA",
     "CAN": "Canadá",
@@ -68,6 +69,12 @@ FULBITO_COUNTRY_NAMES = {
     "AUST": "Austria",
     "COR": "Corea del Sur",
     "BEL": "Bélgica",
+    "CHE": "Chequia",
+    "EGI": "Egipto",
+    "JAP": "Japón",
+    "MAR": "Marruecos",
+    "SUE": "Suecia",
+    "NOR": "Noruega",
 }
 
 # Aliases de chat → código ISO
@@ -100,9 +107,9 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "por": "POR", "portugal": "POR",
     # ALE
     "ale": "ALE", "germany": "ALE", "alemania": "ALE", "ger": "ALE",
-    # HOL
-    "hol": "HOL", "holanda": "HOL", "netherlands": "HOL",
-    "paises bajos": "HOL", "países bajos": "HOL", "ned": "HOL",
+    # PAI
+    "pai": "PAI", "hol": "PAI", "holanda": "PAI", "netherlands": "PAI",
+    "paises bajos": "PAI", "países bajos": "PAI", "ned": "PAI",
     # ESP
     "esp": "ESP", "spain": "ESP", "españa": "ESP", "espana": "ESP",
     # USA
@@ -117,6 +124,18 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "cor": "COR", "corea": "COR", "korea": "COR", "corea del sur": "COR",
     # BEL
     "bel": "BEL", "belgica": "BEL", "bélgica": "BEL", "belgium": "BEL",
+    # CHE
+    "che": "CHE", "chequia": "CHE", "czech": "CHE", "republica checa": "CHE", "república checa": "CHE",
+    # EGI
+    "egi": "EGI", "egipto": "EGI", "egypt": "EGI",
+    # JAP
+    "jap": "JAP", "japon": "JAP", "japón": "JAP", "japan": "JAP",
+    # MAR
+    "mar": "MAR", "marruecos": "MAR", "morocco": "MAR",
+    # SUE
+    "sue": "SUE", "suecia": "SUE", "sweden": "SUE",
+    # NOR
+    "nor": "NOR", "noruega": "NOR", "norway": "NOR",
 }
 
 # ─────────────────────────────────────────────
@@ -126,9 +145,6 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
 # Máximo de países activos por partido (4 carriles)
 FULBITO_RACE_COUNTRY_COUNT = 4
 
-# Máximo de países en el pool activo del stream (el streamer lo configura antes de arrancar)
-FULBITO_POOL_MAX = 21  # igual que el total — puede usar todos
-
 # Fixture por defecto si el streamer no configura nada (los 4 más populares de LATAM)
 FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
 
@@ -136,29 +152,10 @@ FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
 # SISTEMA DE SELECCIÓN HÍBRIDA
 # ─────────────────────────────────────────────
 
-# King: el ganador del partido anterior se queda automáticamente
-FULBITO_KING_STAYS = True
-
 # Crowd: cantidad de países elegidos por voto del chat (excluyendo al King)
 FULBITO_CROWD_PICKS = 2
 
-# Wildcard: 1 país aleatorio del pool (o manual via tecla W)
-FULBITO_WILDCARD_COUNT = 1
-
-# Tecla para forzar nuevo wildcard manualmente durante la intermission
-FULBITO_WILDCARD_KEY = pygame.K_w  # noqa: F405
-
 FULBITO_INTERMISSION_SECONDS = 15   # countdown entre partidos
-
-# Ventana de votación Crowd: los viewers votan durante RACE_INTERMISSION
-# Los 2 países con más votos únicos de viewers entran al siguiente partido
-FULBITO_VOTE_WINDOW_SECONDS = FULBITO_INTERMISSION_SECONDS
-
-# ─────────────────────────────────────────────
-# SALA DE ESPERA — RACE_INTERMISSION
-# ─────────────────────────────────────────────
-
-FULBITO_INTERMISSION_KEY = pygame.K_RETURN  # noqa: F405  — skip manual
 
 # ─────────────────────────────────────────────
 # FÍSICA — CARRILES ALTERNADOS
@@ -193,19 +190,9 @@ FULBITO_START_MARGIN = 20           # px desde el borde
 # Fuerza base por diamante (heredada de core, override si hace falta)
 # GIFT_BASE_FORCE = 120  ← mantener el de core por ahora
 
-# Los gifts no tienen país asignado — van al equipo que va último
-FULBITO_GIFT_TO_LAST = True
-
-# Un viewer no puede cambiar de equipo una vez asignado
-FULBITO_LOCK_TEAM_MID_RACE = True
-
-# Impulso por voto de comentario (escalado por COMMENT_DISTANCE_MULTIPLIER de core)
-# 1 comentario con país válido = 1 voto → impulso al corredor de ese país
-FULBITO_COMMENT_GIVES_IMPULSE = True
-
-# Distancia por diamante (px) — calibrado para track de 242px
-# Rosa (1💎) = 2px (floor), Galaxia (1000💎) = 150px
-FULBITO_DISTANCE_PER_DIAMOND: float = 0.15
+# Distancia por diamante (px) — calibrado para ~1000 diamantes para ganar
+# Rosa (1💎) = 2px (floor), TikTok (50💎) = 20px, León (100💎) = 40px, Universo (1000💎) = 400px
+FULBITO_DISTANCE_PER_DIAMOND: float = 0.40
 
 # Distancia mínima por gift sin importar el valor
 FULBITO_MIN_GIFT_DISTANCE: float = 2.0
@@ -216,53 +203,22 @@ FULBITO_MIN_GIFT_DISTANCE: float = 2.0
 COMMENT_DISTANCE_MULTIPLIER = 1.0   # override del core (era 0.33)
 GAME_MODE = "GIFT"
 
+# Chat momentum — aura activada por múltiples viewers únicos en poco tiempo
+FULBITO_MOMENTUM_THRESHOLD = 3     # viewers únicos distintos para activar
+FULBITO_MOMENTUM_WINDOW    = 5.0   # segundos de ventana deslizante
+FULBITO_MOMENTUM_DURATION  = 3.0   # segundos que dura el aura
+
+# Fire trail tiers by total diamonds
+FULBITO_FIRE_TIER_1 = 10    # fuego suave
+FULBITO_FIRE_TIER_2 = 50    # fuego medio
+FULBITO_FIRE_TIER_3 = 200   # fuego intenso
+FULBITO_FIRE_TIER_4 = 500   # fuego máximo + destello blanco
+
 # ─────────────────────────────────────────────
 # ASSETS
 # ─────────────────────────────────────────────
 
-# Rutas de banderas por código ISO. El engine usa asset_manager.get_sprite_for_racer(code).
-# Los assets existentes se reutilizan; los pendientes se agregan a la misma carpeta.
-FULBITO_FLAG_PATH = "variants/fulbito/assets/flags/"
-
-# Tamaño de la bandera en pantalla (px). Más grande que motos (12) porque son banderas, no sprites complejos.
 FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco de 46px)
-
-# Todos los 21 assets están listos:
-FULBITO_ASSETS_READY = [
-    "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN",  # LATAM
-    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",          # Europa
-    "USA", "CAN",                                               # Norte América
-    "AUS", "AUST", "COR", "BEL",                               # Otros
-]
-
-FULBITO_ASSETS_PENDING: list[str] = []
-
-# ─────────────────────────────────────────────
-# SUPABASE — TORNEO ACUMULATIVO
-# ─────────────────────────────────────────────
-
-# Identificador de variante en la tabla match_results
-FULBITO_SUPABASE_VARIANT = "fulbito"
-
-# Schema de match_results (referencia — la tabla ya existe en Supabase):
-# session_id TEXT, date TIMESTAMP, team_a TEXT, team_b TEXT,
-# team_c TEXT, team_d TEXT, winner TEXT, duration_secs INT, variant TEXT
-# Nota: 4 equipos por partido (a diferencia de las variantes 1v1)
-
-# ─────────────────────────────────────────────
-# HUD Y UI
-# ─────────────────────────────────────────────
-
-# Etiquetas personalizadas para el HUD
-HYPE_TIMER_LABEL = "TIEMPO RESTANTE"
-HYPE_DISASTER_TITLE = "¡ÚLTIMA VUELTA! MAX CAOS"
-
-# Banner de intermission
-FULBITO_INTERMISSION_TITLE = "PRÓXIMO PARTIDO"
-FULBITO_INTERMISSION_SUBTITLE = "¡Votá tu país en el chat!"
-
-# Banner de victoria
-FULBITO_VICTORY_LABEL = "¡GANÓ"          # se concatena: "¡GANÓ [País]!"
 
 # ─────────────────────────────────────────────
 # VALIDACIÓN DE FIXTURE EN RUNTIME
