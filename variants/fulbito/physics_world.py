@@ -10,7 +10,6 @@ import pymunk
 
 from core.physics_world import PhysicsWorld, FlagRacer
 from core.config import (
-    LANE_HEIGHT,
     SCREEN_WIDTH,
     GIFT_COLORS,
 )
@@ -53,7 +52,7 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         self.finish_line_x = _TRACK_RIGHT - 12   # ≈ 440px
 
         # Reposicionar racers al nuevo start_x (super() los colocó con FULBITO_START_MARGIN)
-        for i, (country, racer) in enumerate(self.racers.items()):
+        for i, (_, racer) in enumerate(self.racers.items()):
             going_right = self._get_lane_direction(i)
             new_x = float(self.start_x if going_right else self.finish_line_x)
             racer.body.position = (new_x, racer.body.position.y)

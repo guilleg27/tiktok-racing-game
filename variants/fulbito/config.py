@@ -203,8 +203,11 @@ FULBITO_MIN_GIFT_DISTANCE: float = 2.0
 COMMENT_DISTANCE_MULTIPLIER = 1.0   # override del core (era 0.33)
 GAME_MODE = "GIFT"
 
-# Visual effects threshold: total_diamonds >= this triggers fire trail + crowd flash
-FULBITO_BIG_GIFT_THRESHOLD = 20
+# Fire trail tiers by total diamonds
+FULBITO_FIRE_TIER_1 = 10    # fuego suave
+FULBITO_FIRE_TIER_2 = 50    # fuego medio
+FULBITO_FIRE_TIER_3 = 200   # fuego intenso
+FULBITO_FIRE_TIER_4 = 500   # fuego máximo + destello blanco
 
 # ─────────────────────────────────────────────
 # ASSETS

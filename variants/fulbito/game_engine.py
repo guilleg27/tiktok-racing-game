@@ -236,9 +236,22 @@ class FulbitoEffects:
     _render_gift_flashes: racer.body.position coords blitted onto self.screen.
     """
 
+    # Tier params: duration(s), particles/frame range, radius range, speed range (px/s),
+    #              Y-jitter (px), individual particle lifetime range (s)
+    _TIER_PARAMS = {
+        1: dict(duration=1.5, count=(3, 4),   radius=(3.0, 4.0), speed=(60,  120), jitter_y=6,  plife=(0.30, 0.50)),
+        2: dict(duration=2.0, count=(6, 8),   radius=(4.0, 6.0), speed=(80,  160), jitter_y=8,  plife=(0.50, 0.80)),
+        3: dict(duration=3.0, count=(12, 15), radius=(5.0, 8.0), speed=(120, 220), jitter_y=12, plife=(0.40, 0.70)),
+        4: dict(duration=3.0, count=(12, 15), radius=(5.0, 8.0), speed=(120, 220), jitter_y=12, plife=(0.40, 0.70)),
+    }
+
     def __init__(self, engine: "FulbitoGameEngine") -> None:
         self._engine = engine
         self._effects: list[dict] = []
+        # Pre-allocated surface for all fire particles — avoids per-particle alloc each frame
+        import pygame
+        from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT
+        self._fire_surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
 
     # ── Triggers ──────────────────────────────────────────────────────────────
 
@@ -251,15 +264,17 @@ class FulbitoEffects:
             'total': 0.4,
         })
 
-    def add_fire_trail(self, country: str, going_right: bool, color: tuple) -> None:
+    def add_fire_trail(self, country: str, going_right: bool, tier: int) -> None:
+        p = self._TIER_PARAMS[tier]
         self._effects.append({
             'type': 'fire',
             'country': country,
-            'color': color,
             'going_right': going_right,
-            'life': 1.5,
-            'total': 1.5,
+            'tier': tier,
+            'life': p['duration'],
+            'total': p['duration'],
             'particles': [],  # [x, y, vx, vy, life, max_life, radius]
+            'burst_life': 0.2 if tier == 4 else 0.0,  # tier-4 white burst
         })
 
     def add_crowd_flash(self, color: tuple) -> None:
@@ -332,20 +347,35 @@ class FulbitoEffects:
         pos = self._get_racer_pos(eff['country'])
         if pos is None:
             return
-        angle_base = math.pi if eff['going_right'] else 0.0
-        for _ in range(random.randint(3, 5)):
-            spd = random.uniform(40.0, 100.0)
-            angle = angle_base + random.uniform(-0.7, 0.7)
-            plife = random.uniform(0.3, 0.6)
+
+        # Advance burst timer (tier 4 only)
+        if eff['burst_life'] > 0:
+            eff['burst_life'] -= dt
+
+        tp = self._TIER_PARAMS[eff['tier']]
+        # vel_x: opposite to lane direction
+        sign = -1.0 if eff['going_right'] else 1.0
+        jitter = tp['jitter_y']
+        rlo, rhi = tp['radius']
+        slo, shi = tp['speed']
+        plo, phi = tp['plife']
+
+        for _ in range(random.randint(*tp['count'])):
+            spd = random.uniform(slo, shi)
+            # small random angle spread (±0.5 rad) around the backward axis
+            vx = sign * spd + random.uniform(-spd * 0.15, spd * 0.15)
+            vy = random.uniform(-30.0, 30.0)
+            plife = random.uniform(plo, phi)
             eff['particles'].append([
                 pos[0] + random.uniform(-4, 4),  # 0: x
-                pos[1] + random.uniform(-8, 8),  # 1: y
-                math.cos(angle) * spd,            # 2: vx (px/s)
-                random.uniform(-40.0, 40.0),      # 3: vy (px/s)
-                plife,                             # 4: life remaining
-                plife,                             # 5: max_life
-                random.uniform(4.0, 6.0),         # 6: radius
+                pos[1] + random.uniform(-jitter, jitter),  # 1: y
+                vx,     # 2: vx (px/s)
+                vy,     # 3: vy (px/s)
+                plife,  # 4: life remaining
+                plife,  # 5: max_life (constant)
+                random.uniform(rlo, rhi),  # 6: radius
             ])
+
         alive = []
         for p in eff['particles']:
             p[0] += p[2] * dt
@@ -389,22 +419,46 @@ class FulbitoEffects:
         pygame.draw.circle(surf, (r, g, b, alpha), (radius + 4, radius + 4), radius, 3)
         screen.blit(surf, (x - radius - 4, y - radius - 4))
 
+    @staticmethod
+    def _fire_color(t: float) -> tuple[int, int, int, int]:
+        """Color gradient: white → yellow → orange → dark-red, alpha fades at end."""
+        if t < 0.3:
+            return 255, 255, 255, 200
+        elif t < 0.6:
+            frac = (t - 0.3) / 0.3
+            return 255, int(255 - 35 * frac), int(255 * (1 - frac)), 200
+        elif t < 0.8:
+            frac = (t - 0.6) / 0.2
+            return 255, int(220 - 120 * frac), 0, 200
+        else:
+            frac = (t - 0.8) / 0.2
+            return int(255 - 75 * frac), int(100 - 70 * frac), 0, int(200 * (1 - frac))
+
     def _render_fire(self, screen, eff: dict) -> None:
         import pygame
+        fs = self._fire_surf
+        fs.fill((0, 0, 0, 0))
+
         for p in eff['particles']:
             if p[4] <= 0:
                 continue
-            age = 1.0 - p[4] / p[5]  # 0 (new) → 1 (old)
-            pr = 255
-            pg = max(0, int(255 - 155 * age))
-            pb = max(0, int(255 - 255 * age))
-            alpha = max(0, int(200 * (1.0 - age)))
-            size = max(1, int(p[6] * (1.0 - age * 0.75)))
-            px, py = int(p[0]), int(p[1])
-            side = size * 2
-            surf = pygame.Surface((side, side), pygame.SRCALPHA)
-            pygame.draw.circle(surf, (pr, pg, pb, alpha), (size, size), size)
-            screen.blit(surf, (px - size, py - size))
+            t = 1.0 - p[4] / p[5]       # 0 at birth → 1 at death
+            r, g, b, alpha = self._fire_color(t)
+            size = max(1, int(p[6] * (1.0 - t * 0.75)))
+            pygame.draw.circle(fs, (r, g, b, alpha), (int(p[0]), int(p[1])), size)
+
+        # Tier-4 burst: white circle that expands and fades in first 0.2s
+        if eff['burst_life'] > 0:
+            pos = self._get_racer_pos(eff['country'])
+            if pos:
+                burst_t = 1.0 - eff['burst_life'] / 0.2   # 0 → 1
+                burst_r = int(80 * burst_t)
+                burst_a = int(255 * (1.0 - burst_t))
+                if burst_r > 0 and burst_a > 0:
+                    pygame.draw.circle(fs, (255, 255, 255, burst_a),
+                                       (int(pos[0]), int(pos[1])), burst_r, 3)
+
+        screen.blit(fs, (0, 0))
 
     # ── Render: screen-space effects (flash, confetti, crowd) ─────────────────
 
@@ -785,9 +839,23 @@ class FulbitoGameEngine(GameEngine):
                          (front_x, goal_t - 3), (front_x, goal_b + 3), 3)
 
     # ── Core render suppression ───────────────────────────────────────────────
-    # These methods are no-ops: fulbito does not use hype timer, milestone
-    # banners, final-stretch announcements, the core leaderboard, the likes
-    # bar ("PRÓXIMO NITRO BOOST"), or the core idle screen.
+    # No-ops for features Fulbito doesn't use.
+    # NOTE: _render_hype_timer and _update_hype_timer MUST stay here even though
+    # we set HYPE_TIMER_ENABLED=False at runtime — the core module binds that
+    # constant at import time via "from .config import", so the patch has no
+    # effect on the core's if-guards. Same for disaster flash/title.
+
+    def _render_hype_timer(self, surface) -> None:
+        pass
+
+    def _update_hype_timer(self) -> None:
+        pass
+
+    def _render_disaster_flash(self) -> None:
+        pass
+
+    def _render_disaster_title(self) -> None:
+        pass
 
     def _render_milestone_banner(self) -> None:
         pass
@@ -1133,21 +1201,40 @@ class FulbitoGameEngine(GameEngine):
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
     def _add_gift_effect(self, country: str, total_diamonds: int) -> None:
-        """Dispatch a visual effect for a gift or comment impulse on *country*."""
+        """Dispatch ring + optional fire trail based on diamond tier."""
         if country not in self.physics_world.racers:
             return
         from core.config import GIFT_COLORS
-        from variants.fulbito.config import FULBITO_BIG_GIFT_THRESHOLD, FULBITO_LANE_DIRECTIONS
+        from variants.fulbito.config import (
+            FULBITO_LANE_DIRECTIONS,
+            FULBITO_FIRE_TIER_1, FULBITO_FIRE_TIER_2,
+            FULBITO_FIRE_TIER_3, FULBITO_FIRE_TIER_4,
+        )
         color = GIFT_COLORS.get(country, (255, 220, 60))
         try:
             idx = self.current_fixture.index(country)
         except ValueError:
             idx = 0
         going_right = FULBITO_LANE_DIRECTIONS.get(idx, True)
-        if total_diamonds < FULBITO_BIG_GIFT_THRESHOLD:
-            self.effects.add_ring(country, color)
+
+        # Ring fires for every gift regardless of tier
+        self.effects.add_ring(country, color)
+
+        # Determine fire tier
+        if total_diamonds >= FULBITO_FIRE_TIER_4:
+            tier = 4
+        elif total_diamonds >= FULBITO_FIRE_TIER_3:
+            tier = 3
+        elif total_diamonds >= FULBITO_FIRE_TIER_2:
+            tier = 2
+        elif total_diamonds >= FULBITO_FIRE_TIER_1:
+            tier = 1
         else:
-            self.effects.add_fire_trail(country, going_right, color)
+            tier = 0
+
+        if tier >= 1:
+            self.effects.add_fire_trail(country, going_right, tier)
+        if tier >= 2:
             self.effects.add_crowd_flash(color)
 
     # ── State transitions ─────────────────────────────────────────────────────
@@ -1511,14 +1598,38 @@ class FulbitoGameEngine(GameEngine):
                     self._start_next_race()
 
             elif event.key == pygame.K_t:
-                # Test: small gift → ring effect
+                # Test: tier 0 — ring only (< 10💎)
                 from core.events import GameEvent
-                fake = GameEvent(
-                    type=EventType.GIFT,
-                    username='testviewer',
-                    content='Rosa',
-                    extra={'diamond_count': 5, 'count': 1},
-                )
+                fake = GameEvent(type=EventType.GIFT, username='testviewer',
+                                 content='Rosa', extra={'diamond_count': 5, 'count': 1})
+                asyncio.create_task(self._handle_fulbito_gift(fake))
+
+            elif event.key == pygame.K_1:
+                # Test: tier 1 fire — 10–49💎
+                from core.events import GameEvent
+                fake = GameEvent(type=EventType.GIFT, username='testviewer',
+                                 content='Perfume', extra={'diamond_count': 10, 'count': 1})
+                asyncio.create_task(self._handle_fulbito_gift(fake))
+
+            elif event.key == pygame.K_2:
+                # Test: tier 2 fire — 50–199💎
+                from core.events import GameEvent
+                fake = GameEvent(type=EventType.GIFT, username='testviewer',
+                                 content='TikTok', extra={'diamond_count': 50, 'count': 1})
+                asyncio.create_task(self._handle_fulbito_gift(fake))
+
+            elif event.key == pygame.K_3:
+                # Test: tier 3 fire — 200–499💎
+                from core.events import GameEvent
+                fake = GameEvent(type=EventType.GIFT, username='testviewer',
+                                 content='Galaxy', extra={'diamond_count': 200, 'count': 1})
+                asyncio.create_task(self._handle_fulbito_gift(fake))
+
+            elif event.key == pygame.K_4:
+                # Test: tier 4 fire + burst — 500+💎
+                from core.events import GameEvent
+                fake = GameEvent(type=EventType.GIFT, username='testviewer',
+                                 content='Universe', extra={'diamond_count': 500, 'count': 1})
                 asyncio.create_task(self._handle_fulbito_gift(fake))
 
             elif event.key == pygame.K_g:
