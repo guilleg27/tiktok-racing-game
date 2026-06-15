@@ -203,6 +203,11 @@ FULBITO_MIN_GIFT_DISTANCE: float = 2.0
 COMMENT_DISTANCE_MULTIPLIER = 1.0   # override del core (era 0.33)
 GAME_MODE = "GIFT"
 
+# Chat momentum — aura activada por múltiples viewers únicos en poco tiempo
+FULBITO_MOMENTUM_THRESHOLD = 3     # viewers únicos distintos para activar
+FULBITO_MOMENTUM_WINDOW    = 5.0   # segundos de ventana deslizante
+FULBITO_MOMENTUM_DURATION  = 3.0   # segundos que dura el aura
+
 # Fire trail tiers by total diamonds
 FULBITO_FIRE_TIER_1 = 10    # fuego suave
 FULBITO_FIRE_TIER_2 = 50    # fuego medio

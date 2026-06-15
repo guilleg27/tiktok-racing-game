@@ -15,6 +15,7 @@ import logging
 import math
 import random
 import time
+from collections import deque
 from typing import Optional
 
 from core.game_engine import GameEngine, FloatingText
@@ -252,6 +253,9 @@ class FulbitoEffects:
         import pygame
         from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT
         self._fire_surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
+        # Pre-allocated surface for momentum aura glow
+        # Max radius = (45+8)+12 = 65px → 130px diameter + margin → 160×160
+        self._aura_surf = pygame.Surface((160, 160), pygame.SRCALPHA)
 
     # ── Triggers ──────────────────────────────────────────────────────────────
 
@@ -276,6 +280,36 @@ class FulbitoEffects:
             'particles': [],  # [x, y, vx, vy, life, max_life, radius]
             'burst_life': 0.2 if tier == 4 else 0.0,  # tier-4 white burst
         })
+
+    def activate_momentum(self, country: str, color: tuple) -> bool:
+        """Activate or refresh the momentum aura for *country*.
+
+        Returns True if this is a new activation (caller should spawn text),
+        False if the existing aura was simply refreshed.
+        """
+        from variants.fulbito.config import FULBITO_MOMENTUM_DURATION
+        for eff in self._effects:
+            if eff['type'] == 'momentum_aura' and eff['country'] == country:
+                eff['life'] = FULBITO_MOMENTUM_DURATION  # refresh
+                return False
+        self._effects.append({
+            'type': 'momentum_aura',
+            'country': country,
+            'color': color,
+            'life': FULBITO_MOMENTUM_DURATION,
+            'total': FULBITO_MOMENTUM_DURATION,
+            'pulse_t': 0.0,
+        })
+        return True
+
+    def get_momentum_aura(self, country: str) -> dict | None:
+        for eff in self._effects:
+            if eff['type'] == 'momentum_aura' and eff['country'] == country:
+                return eff
+        return None
+
+    def clear_momentum(self) -> None:
+        self._effects = [e for e in self._effects if e['type'] != 'momentum_aura']
 
     def add_crowd_flash(self, color: tuple) -> None:
         self._effects.append({
@@ -327,6 +361,8 @@ class FulbitoEffects:
                 self._update_fire(eff, dt)
             elif eff['type'] == 'goal_confetti':
                 self._update_confetti(eff, dt)
+            elif eff['type'] == 'momentum_aura':
+                eff['pulse_t'] += dt
             surviving.append(eff)
         self._effects = surviving
 
@@ -392,6 +428,40 @@ class FulbitoEffects:
             p[1] += p[3] * dt
             p[3] += gravity * dt
             p[8] += p[9] * dt
+
+    # ── Momentum aura — drawn on render_surface (behind the ball sprite) ──────
+
+    def draw_aura_on_surface(self, surface, country: str, cx: float, cy: float) -> None:
+        """Draw momentum glow for *country* at render_surface coords (cx, cy).
+
+        4 concentric filled circles (largest first) produce a soft halo that
+        pulses gently and fades out in the last 0.5s of the effect's life.
+        """
+        import pygame
+        eff = self.get_momentum_aura(country)
+        if eff is None:
+            return
+
+        # Oscillating base radius
+        pulse = math.sin(eff['pulse_t'] * 4.0)
+        base_r = 45.0 + 8.0 * pulse  # 37–53 px
+
+        # Fade-out in last 0.5s
+        fade = min(1.0, eff['life'] / 0.5)
+
+        r, g, b = int(eff['color'][0]), int(eff['color'][1]), int(eff['color'][2])
+        half = 80  # centre of 160×160 surface
+
+        self._aura_surf.fill((0, 0, 0, 0))
+        # Layers: (extra_radius, alpha) — drawn outermost → innermost
+        for extra_r, layer_alpha in ((12, 25), (8, 40), (4, 60), (0, 80)):
+            radius = max(1, int(base_r + extra_r))
+            alpha  = int(layer_alpha * fade)
+            pygame.draw.circle(
+                self._aura_surf, (r, g, b, alpha), (half, half), radius
+            )
+
+        surface.blit(self._aura_surf, (int(cx) - half, int(cy) - half))
 
     # ── Render: game-space effects (rings, fire) on self.screen ───────────────
 
@@ -690,6 +760,9 @@ class FulbitoGameEngine(GameEngine):
         self._tribuna_bot = _StadiumTribuna(ACTUAL_WIDTH, tribuna_h)
 
         self._update_outer_background()
+
+        # Chat momentum tracking: country → deque of (timestamp, username)
+        self._comment_momentum: dict[str, deque] = {}
 
         # Visual effects system
         self.effects = FulbitoEffects(self)
@@ -1146,6 +1219,7 @@ class FulbitoGameEngine(GameEngine):
                 return
             self.physics_world.apply_gift_impulse(country, "comment", 1)
             self._add_gift_effect(country, 1)
+            self._update_comment_momentum(country, username)
 
         elif self.game_state == 'RACE_INTERMISSION':
             self.viewer_teams[username] = country
@@ -1200,6 +1274,44 @@ class FulbitoGameEngine(GameEngine):
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
+    def _update_comment_momentum(self, country: str, username: str) -> None:
+        from variants.fulbito.config import (
+            FULBITO_MOMENTUM_THRESHOLD, FULBITO_MOMENTUM_WINDOW,
+        )
+        from core.config import GIFT_COLORS, GAME_AREA_TOP
+        now = time.time()
+        dq = self._comment_momentum.setdefault(country, deque(maxlen=20))
+        dq.append((now, username))
+        # Prune entries outside the sliding window
+        while dq and (now - dq[0][0]) > FULBITO_MOMENTUM_WINDOW:
+            dq.popleft()
+        unique_viewers = len({u for _, u in dq})
+        if unique_viewers < FULBITO_MOMENTUM_THRESHOLD:
+            return
+        color = GIFT_COLORS.get(country, (255, 220, 60))
+        newly_activated = self.effects.activate_momentum(country, color)
+        if newly_activated:
+            # Text centered on lane, 25px above lane center — never clips at edges
+            from core.config import SCREEN_WIDTH
+            pw = self.physics_world
+            try:
+                lane_idx = self.current_fixture.index(country)
+            except ValueError:
+                lane_idx = 0
+            lane_cy = (
+                GAME_AREA_TOP + pw.lane_y_offset
+                + lane_idx * pw.lane_height + pw.lane_height // 2
+            )
+            self.floating_texts.append(FloatingText(
+                text="¡AL ATAQUE!",
+                x=float(SCREEN_WIDTH / 2),   # FloatingText anchors at center
+                y=float(lane_cy - 25),
+                color=(255, 255, 255),
+                font_size=16,
+            ))
+            if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+                self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
     def _add_gift_effect(self, country: str, total_diamonds: int) -> None:
         """Dispatch ring + optional fire trail based on diamond tier."""
         if country not in self.physics_world.racers:
@@ -1243,6 +1355,8 @@ class FulbitoGameEngine(GameEngine):
         self.game_state = 'RACE_RUNNING'
         self.race_number += 1
         self._race_start_time = time.time()
+        self._comment_momentum.clear()
+        self.effects.clear_momentum()
         logger.info("Partido %d arrancando: %s", self.race_number, self.current_fixture)
 
     def _play_goal_sound(self) -> None:
@@ -1632,6 +1746,16 @@ class FulbitoGameEngine(GameEngine):
                                  content='Universe', extra={'diamond_count': 500, 'count': 1})
                 asyncio.create_task(self._handle_fulbito_gift(fake))
 
+            elif event.key == pygame.K_m:
+                # Test: momentum — simula 3 viewers distintos comentando el 1er país
+                if self.game_state == 'RACE_RUNNING' and self.current_fixture:
+                    target = self.current_fixture[0]
+                    for i, viewer in enumerate(['viewer_a', 'viewer_b', 'viewer_c']):
+                        from core.events import GameEvent
+                        fake = GameEvent(type=EventType.COMMENT, username=viewer,
+                                         content=target.lower(), extra={})
+                        asyncio.create_task(self._handle_fulbito_comment(fake))
+
             elif event.key == pygame.K_g:
                 # Test: force goal for first country in fixture → goal flash + confetti
                 if self.game_state == 'RACE_RUNNING' and self.current_fixture:
@@ -1762,6 +1886,8 @@ class FulbitoGameEngine(GameEngine):
 
         blit_x = self._safe_int(x, self.physics_world.start_x) - rotated.get_width() // 2
         blit_y = self._safe_int(y, 0) - rotated.get_height() // 2
+        # Draw momentum aura BEFORE the sprite so the ball appears on top
+        self.effects.draw_aura_on_surface(self.render_surface, country, x, y)
         self.render_surface.blit(rotated, (blit_x, blit_y))
 
         if is_winner:
