@@ -659,6 +659,9 @@ class FulbitoGameEngine(GameEngine):
 
         self._start_fulbito_bgm()
 
+        # Mute toggle state
+        self._muted: bool = False
+
         self.game_state = 'FIXTURE_SETUP'
 
         # Fixture y estado de partido
@@ -797,6 +800,27 @@ class FulbitoGameEngine(GameEngine):
                 + i * lane_h + lane_h // 2
             )
             self._draw_goal(goal_x, lane_cy, going_right, lane_h)
+
+        # ── Línea del medio y círculo central ────────────────────────────────
+        C          = (255, 255, 255, 115)
+        num_lanes  = len(self.current_fixture)
+        field_top  = GAME_AREA_TOP + lane_y_offset
+        field_bot  = field_top + num_lanes * lane_h
+        field_h    = field_bot - field_top
+        cx         = SCREEN_WIDTH // 2
+        cy         = (field_top + field_bot) // 2
+
+        # Línea vertical centrada
+        line_surf = pygame.Surface((2, field_h), pygame.SRCALPHA)
+        pygame.draw.line(line_surf, C, (0, 0), (0, field_h - 1), 1)
+        self.render_surface.blit(line_surf, (cx, field_top))
+
+        # Círculo central
+        circle_r = int(field_h * 0.12)
+        side     = (circle_r + 2) * 2
+        circ_surf = pygame.Surface((side, side), pygame.SRCALPHA)
+        pygame.draw.circle(circ_surf, C, (circle_r + 2, circle_r + 2), circle_r, 1)
+        self.render_surface.blit(circ_surf, (cx - circle_r - 2, cy - circle_r - 2))
 
     def _draw_goal(
         self,
@@ -1018,6 +1042,21 @@ class FulbitoGameEngine(GameEngine):
         surf = pygame.image.frombuffer(rgb.tobytes(), (w, h), 'RGB')
         _, _, vw, vh = self._winner_video_rect
         self._winner_video_current_surf = pygame.transform.smoothscale(surf, (vw, vh))
+
+    def _toggle_mute(self) -> None:
+        import pygame
+        self._muted = not self._muted
+        if self._muted:
+            pygame.mixer.music.set_volume(0.0)
+            pygame.mixer.pause()
+        else:
+            # Restore to whatever volume the game had set before muting
+            # (0.3 normal, 0.05 during victory — read the current BGM state)
+            pygame.mixer.music.set_volume(
+                0.05 if self.game_state == 'RACE_FINISHED' else 0.3
+            )
+            pygame.mixer.unpause()
+        logger.info("Mute toggled: %s", "ON" if self._muted else "OFF")
 
     def _start_fulbito_bgm(self) -> None:
         import pygame
@@ -1677,6 +1716,10 @@ class FulbitoGameEngine(GameEngine):
                     self._esc_quit_time = _now
                 continue
 
+            if event.key == pygame.K_m:
+                self._toggle_mute()
+                continue
+
             if self.game_state == 'FIXTURE_SETUP':
                 self._handle_fixture_setup_keys(event)
                 continue
@@ -1745,16 +1788,6 @@ class FulbitoGameEngine(GameEngine):
                 fake = GameEvent(type=EventType.GIFT, username='testviewer',
                                  content='Universe', extra={'diamond_count': 500, 'count': 1})
                 asyncio.create_task(self._handle_fulbito_gift(fake))
-
-            elif event.key == pygame.K_m:
-                # Test: momentum — simula 3 viewers distintos comentando el 1er país
-                if self.game_state == 'RACE_RUNNING' and self.current_fixture:
-                    target = self.current_fixture[0]
-                    for i, viewer in enumerate(['viewer_a', 'viewer_b', 'viewer_c']):
-                        from core.events import GameEvent
-                        fake = GameEvent(type=EventType.COMMENT, username=viewer,
-                                         content=target.lower(), extra={})
-                        asyncio.create_task(self._handle_fulbito_comment(fake))
 
             elif event.key == pygame.K_g:
                 # Test: force goal for first country in fixture → goal flash + confetti
