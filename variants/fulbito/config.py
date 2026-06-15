@@ -235,6 +235,9 @@ FULBITO_MIN_GIFT_DISTANCE: float = 2.0
 COMMENT_DISTANCE_MULTIPLIER = 1.0   # override del core (era 0.33)
 GAME_MODE = "GIFT"
 
+# Visual effects threshold: total_diamonds >= this triggers fire trail + crowd flash
+FULBITO_BIG_GIFT_THRESHOLD = 20
+
 # ─────────────────────────────────────────────
 # ASSETS
 # ─────────────────────────────────────────────
