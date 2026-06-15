@@ -322,7 +322,11 @@ class FulbitoEffects:
         racer = pw.racers.get(country)
         if not racer:
             return None
-        return float(racer.body.position.x), float(racer.body.position.y)
+        from core.config import GAME_MARGIN
+        return (
+            float(racer.body.position.x) + GAME_MARGIN,
+            float(racer.body.position.y) + GAME_MARGIN,
+        )
 
     def _update_fire(self, eff: dict, dt: float) -> None:
         pos = self._get_racer_pos(eff['country'])
@@ -495,7 +499,7 @@ class FulbitoGameEngine(GameEngine):
             "CRO": (255, 0, 0),
             "POR": (0, 102, 0),
             "ALE": (0, 0, 0),
-            "HOL": (255, 102, 0),
+            "PAI": (255, 102, 0),
             "ESP": (170, 21, 27),
             "USA": (60, 59, 110),
             "CAN": (255, 0, 0),
@@ -1100,9 +1104,7 @@ class FulbitoGameEngine(GameEngine):
                 self.viewer_teams[username] = country
                 self.user_assignments[username] = country
                 self.session_unique_viewers.add(username)
-                self._add_floating_text(
-                    f"{username} → {country}", color=(200, 200, 255)
-                )
+                self._add_join_text(username, country)
             elif self.viewer_teams[username] != country:
                 return
             impulse = 1 * COMMENT_DISTANCE_MULTIPLIER
@@ -1131,6 +1133,34 @@ class FulbitoGameEngine(GameEngine):
         self.floating_texts.append(
             FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
         )
+        if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
+            self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
+
+    def _add_join_text(self, username: str, country: str) -> None:
+        """Mundial 2026-styled join notification: country name + @username rising from the racer."""
+        from core.config import GAME_AREA_TOP
+
+
+        pw = self.physics_world
+        try:
+            lane_idx = self.current_fixture.index(country)
+        except ValueError:
+            lane_idx = 0
+
+        lane_cy = (
+            GAME_AREA_TOP + pw.lane_y_offset
+            + lane_idx * pw.lane_height + pw.lane_height // 2
+        )
+        racer = pw.racers.get(country)
+        fx = float(racer.body.position.x) if racer else 230.0
+
+        self.floating_texts.append(FloatingText(
+            text=f"{username} → {country}",
+            x=fx,
+            y=float(lane_cy),
+            color=(200, 200, 255),
+            font_size=18,
+        ))
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
 
@@ -1695,8 +1725,7 @@ class FulbitoGameEngine(GameEngine):
             self._render_direction_arrows()
             self._render_country_names()
             self._render_session_podio()
-            if self._race_start_time and (time.time() - self._race_start_time) < 30.0:
-                self._render_overlay_text()
+            self._render_overlay_text()
         elif self.game_state == 'RACE_FINISHED':
             self._render_country_names()
             self._render_winner_banner()
@@ -1732,8 +1761,9 @@ class FulbitoGameEngine(GameEngine):
                 continue
 
             racer = self.physics_world.racers[country]
-            cx = int(racer.body.position.x)
-            cy = int(racer.body.position.y)
+            from core.config import GAME_MARGIN as _GM
+            cx = int(racer.body.position.x) + _GM
+            cy = int(racer.body.position.y) + _GM
             base_r = racer.draw_radius
 
             # Scale burst with gift size: small, medium, large tiers.
@@ -1785,7 +1815,7 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_overlay_text(self, text: str = '') -> None:
         import pygame
-        from core.config import SCREEN_WIDTH, GAME_AREA_TOP, GAME_MARGIN
+        from core.config import GAME_AREA_TOP, GAME_MARGIN, ACTUAL_WIDTH
         from variants.fulbito.config import FULBITO_COUNTRY_NAMES
 
         if not self.current_fixture:
@@ -1798,27 +1828,32 @@ class FulbitoGameEngine(GameEngine):
         names = [FULBITO_COUNTRY_NAMES.get(c, c) for c in self.current_fixture]
         line2 = "  |  ".join(names)
 
+        surf1 = font_big.render(line1, True, (255, 255, 180))
+        surf2 = font_small.render(line2, True, (255, 230, 50))
+
         pw = self.physics_world
         num_lanes = len(self.current_fixture)
-        # last_lane_bottom is in render_surface coords; add GAME_MARGIN for screen coords
         last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
-        y1 = last_lane_bottom + GAME_MARGIN + 35
-        y2 = y1 + 22
+        y1 = last_lane_bottom + GAME_MARGIN + 10
+        y2 = y1 + surf1.get_height() + 4
 
-        from core.config import ACTUAL_WIDTH
-        for surf, offset in [
-            (font_big.render(line1, True, (0, 0, 0)), 1),
-            (font_big.render(line1, True, (255, 255, 180)), 0),
-        ]:
-            x = ACTUAL_WIDTH // 2 - surf.get_width() // 2
-            self.screen.blit(surf, (x + offset, y1 + offset))
+        PAD_X, PAD_Y = 14, 8
+        box_w = max(surf1.get_width(), surf2.get_width()) + PAD_X * 2
+        box_h = surf1.get_height() + surf2.get_height() + PAD_Y * 2 + 4
+        box_x = ACTUAL_WIDTH // 2 - box_w // 2
+        box_y = y1 - PAD_Y
 
-        for surf, offset in [
-            (font_small.render(line2, True, (0, 0, 0)), 1),
-            (font_small.render(line2, True, (255, 230, 50)), 0),
-        ]:
-            x = ACTUAL_WIDTH // 2 - surf.get_width() // 2
-            self.screen.blit(surf, (x + offset, y2 + offset))
+        bg = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 175))
+        pygame.draw.rect(bg, (255, 255, 180, 60), (0, 0, box_w, box_h), 1, border_radius=6)
+        self.screen.blit(bg, (box_x, box_y))
+
+        x1 = ACTUAL_WIDTH // 2 - surf1.get_width() // 2
+        x2 = ACTUAL_WIDTH // 2 - surf2.get_width() // 2
+        self.screen.blit(font_big.render(line1, True, (0, 0, 0)), (x1 + 1, y1 + 1))
+        self.screen.blit(surf1, (x1, y1))
+        self.screen.blit(font_small.render(line2, True, (0, 0, 0)), (x2 + 1, y2 + 1))
+        self.screen.blit(surf2, (x2, y2))
 
     def _render_direction_arrows(self) -> None:
         import pygame

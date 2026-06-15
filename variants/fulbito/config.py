@@ -38,7 +38,7 @@ FULBITO_ALL_COUNTRIES = [
     "ARG", "BRA", "MEX", "COL", "URU",
     "ECU", "PAR", "PAN",
     # Europa (7)
-    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",
+    "ENG", "FRA", "CRO", "POR", "ALE", "PAI", "ESP",
     # Norte América (2)
     "USA", "CAN",
     # Otros (10)
@@ -61,7 +61,7 @@ FULBITO_COUNTRY_NAMES = {
     "CRO": "Croacia",
     "POR": "Portugal",
     "ALE": "Alemania",
-    "HOL": "Países Bajos",
+    "PAI": "Países Bajos",
     "ESP": "España",
     "USA": "USA",
     "CAN": "Canadá",
@@ -107,9 +107,9 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
     "por": "POR", "portugal": "POR",
     # ALE
     "ale": "ALE", "germany": "ALE", "alemania": "ALE", "ger": "ALE",
-    # HOL
-    "hol": "HOL", "holanda": "HOL", "netherlands": "HOL",
-    "paises bajos": "HOL", "países bajos": "HOL", "ned": "HOL",
+    # PAI
+    "pai": "PAI", "hol": "PAI", "holanda": "PAI", "netherlands": "PAI",
+    "paises bajos": "PAI", "países bajos": "PAI", "ned": "PAI",
     # ESP
     "esp": "ESP", "spain": "ESP", "españa": "ESP", "espana": "ESP",
     # USA
@@ -222,9 +222,9 @@ FULBITO_LOCK_TEAM_MID_RACE = True
 # 1 comentario con país válido = 1 voto → impulso al corredor de ese país
 FULBITO_COMMENT_GIVES_IMPULSE = True
 
-# Distancia por diamante (px) — calibrado para track de 242px
-# Rosa (1💎) = 2px (floor), Galaxia (1000💎) = 150px
-FULBITO_DISTANCE_PER_DIAMOND: float = 0.15
+# Distancia por diamante (px) — calibrado para ~1000 diamantes para ganar
+# Rosa (1💎) = 2px (floor), TikTok (50💎) = 20px, León (100💎) = 40px, Universo (1000💎) = 400px
+FULBITO_DISTANCE_PER_DIAMOND: float = 0.40
 
 # Distancia mínima por gift sin importar el valor
 FULBITO_MIN_GIFT_DISTANCE: float = 2.0
@@ -252,7 +252,7 @@ FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco 
 # Todos los 26 assets están listos:
 FULBITO_ASSETS_READY = [
     "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN",  # LATAM
-    "ENG", "FRA", "CRO", "POR", "ALE", "HOL", "ESP",          # Europa
+    "ENG", "FRA", "CRO", "POR", "ALE", "PAI", "ESP",          # Europa
     "USA", "CAN",                                               # Norte América
     "AUS", "AUST", "COR", "BEL",                               # Otros
     "CHE", "EGI", "JAP", "MAR", "SUE", "NOR",                 # Nuevos

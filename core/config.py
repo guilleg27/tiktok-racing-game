@@ -472,10 +472,10 @@ TTS_ENABLED = False
 # ---------------------------------------------------------------------------
 # Follower Wall
 # ---------------------------------------------------------------------------
-FOLLOWER_BANNER_LIFESPAN  = 150
+FOLLOWER_BANNER_LIFESPAN  = 120
 FOLLOWER_BANNER_Y         = 410
-FOLLOWER_BANNER_WIDTH     = 340
-FOLLOWER_BANNER_HEIGHT    = 64
+FOLLOWER_BANNER_WIDTH     = 240
+FOLLOWER_BANNER_HEIGHT    = 48
 
 # ---------------------------------------------------------------------------
 # Hype Mode
