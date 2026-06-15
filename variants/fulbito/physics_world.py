@@ -10,9 +10,9 @@ import pymunk
 
 from core.physics_world import PhysicsWorld, FlagRacer
 from core.config import (
-    RACE_START_X, RACE_FINISH_X, LANE_HEIGHT,
-    GAME_AREA_TOP, GAME_AREA_BOTTOM, SCREEN_HEIGHT, SCREEN_WIDTH,
-    MOTOGP_MODE, MOTOGP_SPRITE_HEIGHT, GIFT_COLORS,
+    LANE_HEIGHT,
+    SCREEN_WIDTH,
+    GIFT_COLORS,
 )
 
 # Extremos físicos del campo — coinciden con la posición visual de los arcos
@@ -105,24 +105,10 @@ class FulbitoPhysicsWorld(PhysicsWorld):
             initial_x = self._get_initial_x(i)
 
             mass = 1.0
-            # Fulbito does not use MOTOGP_MODE; circle bodies only.
-            if MOTOGP_MODE:
-                verts = [
-                    (-FULBITO_FLAG_RADIUS * 3 // 2, -FULBITO_FLAG_RADIUS // 2),
-                    ( FULBITO_FLAG_RADIUS * 3 // 2, -FULBITO_FLAG_RADIUS // 2),
-                    ( FULBITO_FLAG_RADIUS * 3 // 2,  FULBITO_FLAG_RADIUS // 2),
-                    (-FULBITO_FLAG_RADIUS * 3 // 2,  FULBITO_FLAG_RADIUS // 2),
-                ]
-                moment = pymunk.moment_for_poly(mass, verts)
-                body = pymunk.Body(mass, moment)
-                body.moment = float("inf")
-                body.position = (initial_x, lane_y)
-                shape = pymunk.Poly.create_box(body, (FULBITO_FLAG_RADIUS * 3, FULBITO_FLAG_RADIUS))
-            else:
-                moment = pymunk.moment_for_circle(mass, 0, FULBITO_FLAG_RADIUS)
-                body = pymunk.Body(mass, moment)
-                body.position = (initial_x, lane_y)
-                shape = pymunk.Circle(body, FULBITO_FLAG_RADIUS)
+            moment = pymunk.moment_for_circle(mass, 0, FULBITO_FLAG_RADIUS)
+            body = pymunk.Body(mass, moment)
+            body.position = (initial_x, lane_y)
+            shape = pymunk.Circle(body, FULBITO_FLAG_RADIUS)
 
             shape.friction = 0.3
             shape.elasticity = 0.1

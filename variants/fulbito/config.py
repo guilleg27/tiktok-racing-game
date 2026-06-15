@@ -145,9 +145,6 @@ FULBITO_CHAT_ALIASES: dict[str, str] = {
 # Máximo de países activos por partido (4 carriles)
 FULBITO_RACE_COUNTRY_COUNT = 4
 
-# Máximo de países en el pool activo del stream (el streamer lo configura antes de arrancar)
-FULBITO_POOL_MAX = 27  # igual que el total — puede usar todos
-
 # Fixture por defecto si el streamer no configura nada (los 4 más populares de LATAM)
 FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
 
@@ -155,29 +152,10 @@ FULBITO_DEFAULT_FIXTURE: list[str] = ["ARG", "BRA", "MEX", "COL"]
 # SISTEMA DE SELECCIÓN HÍBRIDA
 # ─────────────────────────────────────────────
 
-# King: el ganador del partido anterior se queda automáticamente
-FULBITO_KING_STAYS = True
-
 # Crowd: cantidad de países elegidos por voto del chat (excluyendo al King)
 FULBITO_CROWD_PICKS = 2
 
-# Wildcard: 1 país aleatorio del pool (o manual via tecla W)
-FULBITO_WILDCARD_COUNT = 1
-
-# Tecla para forzar nuevo wildcard manualmente durante la intermission
-FULBITO_WILDCARD_KEY = pygame.K_w  # noqa: F405
-
 FULBITO_INTERMISSION_SECONDS = 15   # countdown entre partidos
-
-# Ventana de votación Crowd: los viewers votan durante RACE_INTERMISSION
-# Los 2 países con más votos únicos de viewers entran al siguiente partido
-FULBITO_VOTE_WINDOW_SECONDS = FULBITO_INTERMISSION_SECONDS
-
-# ─────────────────────────────────────────────
-# SALA DE ESPERA — RACE_INTERMISSION
-# ─────────────────────────────────────────────
-
-FULBITO_INTERMISSION_KEY = pygame.K_RETURN  # noqa: F405  — skip manual
 
 # ─────────────────────────────────────────────
 # FÍSICA — CARRILES ALTERNADOS
@@ -212,16 +190,6 @@ FULBITO_START_MARGIN = 20           # px desde el borde
 # Fuerza base por diamante (heredada de core, override si hace falta)
 # GIFT_BASE_FORCE = 120  ← mantener el de core por ahora
 
-# Los gifts no tienen país asignado — van al equipo que va último
-FULBITO_GIFT_TO_LAST = True
-
-# Un viewer no puede cambiar de equipo una vez asignado
-FULBITO_LOCK_TEAM_MID_RACE = True
-
-# Impulso por voto de comentario (escalado por COMMENT_DISTANCE_MULTIPLIER de core)
-# 1 comentario con país válido = 1 voto → impulso al corredor de ese país
-FULBITO_COMMENT_GIVES_IMPULSE = True
-
 # Distancia por diamante (px) — calibrado para ~1000 diamantes para ganar
 # Rosa (1💎) = 2px (floor), TikTok (50💎) = 20px, León (100💎) = 40px, Universo (1000💎) = 400px
 FULBITO_DISTANCE_PER_DIAMOND: float = 0.40
@@ -242,50 +210,7 @@ FULBITO_BIG_GIFT_THRESHOLD = 20
 # ASSETS
 # ─────────────────────────────────────────────
 
-# Rutas de banderas por código ISO. El engine usa asset_manager.get_sprite_for_racer(code).
-# Los assets existentes se reutilizan; los pendientes se agregan a la misma carpeta.
-FULBITO_FLAG_PATH = "variants/fulbito/assets/flags/"
-
-# Tamaño de la bandera en pantalla (px). Más grande que motos (12) porque son banderas, no sprites complejos.
 FLAG_RADIUS = 18   # radio del círculo de bandera (≈36px diám, cabe en arco de 46px)
-
-# Todos los 26 assets están listos:
-FULBITO_ASSETS_READY = [
-    "ARG", "BRA", "MEX", "COL", "URU", "ECU", "PAR", "PAN",  # LATAM
-    "ENG", "FRA", "CRO", "POR", "ALE", "PAI", "ESP",          # Europa
-    "USA", "CAN",                                               # Norte América
-    "AUS", "AUST", "COR", "BEL",                               # Otros
-    "CHE", "EGI", "JAP", "MAR", "SUE", "NOR",                 # Nuevos
-]
-
-FULBITO_ASSETS_PENDING: list[str] = []
-
-# ─────────────────────────────────────────────
-# SUPABASE — TORNEO ACUMULATIVO
-# ─────────────────────────────────────────────
-
-# Identificador de variante en la tabla match_results
-FULBITO_SUPABASE_VARIANT = "fulbito"
-
-# Schema de match_results (referencia — la tabla ya existe en Supabase):
-# session_id TEXT, date TIMESTAMP, team_a TEXT, team_b TEXT,
-# team_c TEXT, team_d TEXT, winner TEXT, duration_secs INT, variant TEXT
-# Nota: 4 equipos por partido (a diferencia de las variantes 1v1)
-
-# ─────────────────────────────────────────────
-# HUD Y UI
-# ─────────────────────────────────────────────
-
-# Etiquetas personalizadas para el HUD
-HYPE_TIMER_LABEL = "TIEMPO RESTANTE"
-HYPE_DISASTER_TITLE = "¡ÚLTIMA VUELTA! MAX CAOS"
-
-# Banner de intermission
-FULBITO_INTERMISSION_TITLE = "PRÓXIMO PARTIDO"
-FULBITO_INTERMISSION_SUBTITLE = "¡Votá tu país en el chat!"
-
-# Banner de victoria
-FULBITO_VICTORY_LABEL = "¡GANÓ"          # se concatena: "¡GANÓ [País]!"
 
 # ─────────────────────────────────────────────
 # VALIDACIÓN DE FIXTURE EN RUNTIME

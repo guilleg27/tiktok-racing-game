@@ -98,7 +98,7 @@ class _GrassBackground:
 
     def deactivate_tension_mode(self) -> None:
         pass
-from core.config import MAX_MESSAGES, COMMENT_DISTANCE_MULTIPLIER
+from core.config import MAX_MESSAGES
 from variants.fulbito.config import (
     FULBITO_DEFAULT_FIXTURE,
     FULBITO_ALL_COUNTRIES,
@@ -487,10 +487,6 @@ class FulbitoGameEngine(GameEngine):
             "COL": (252, 209, 22),
             "URU": (0, 56, 168),
             "ECU": (255, 210, 0),
-            "PER": (210, 16, 52),
-            "VEN": (207, 0, 0),
-            "CHI": (212, 16, 52),
-            "BOL": (0, 122, 51),
             "PAR": (0, 56, 168),
             "PAN": (0, 56, 168),
             "GUA": (0, 116, 54),
@@ -574,7 +570,6 @@ class FulbitoGameEngine(GameEngine):
         self._draw_settled: list[bool] = [False] * FULBITO_RACE_COUNTRY_COUNT
 
         self.session_wins: dict[str, int] = {}
-        self._shield_cache: dict = {}
 
         # Estadísticas de sesión
         self.session_total_diamonds: int = 0
@@ -595,7 +590,7 @@ class FulbitoGameEngine(GameEngine):
         self._firework_timer: float = 0.0
 
         # Stadium crowd stands
-        from core.config import ACTUAL_WIDTH, GAME_AREA_TOP, SCREEN_HEIGHT
+        from core.config import ACTUAL_WIDTH, GAME_AREA_TOP
         self._tribuna_top = _StadiumTribuna(ACTUAL_WIDTH, GAME_AREA_TOP - 4)
         self._tribuna_bot: _StadiumTribuna | None = None
         self._tribuna_bot_y: int = 0
@@ -794,12 +789,6 @@ class FulbitoGameEngine(GameEngine):
     # banners, final-stretch announcements, the core leaderboard, the likes
     # bar ("PRÓXIMO NITRO BOOST"), or the core idle screen.
 
-    def _render_hype_timer(self, surface) -> None:
-        pass
-
-    def _update_hype_timer(self) -> None:
-        pass
-
     def _render_milestone_banner(self) -> None:
         pass
 
@@ -926,22 +915,7 @@ class FulbitoGameEngine(GameEngine):
     async def _handle_vote_event(self, event) -> None:
         pass
 
-    def _get_user_country_with_autojoin(
-        self, username: str, gift_name: str
-    ) -> tuple[str, str]:
-        if username in self.viewer_teams:
-            return self.viewer_teams[username], "viewer_team"
-        country = self._get_last_place_country()
-        return country, "last_place"
-
     # ── Helpers ──────────────────────────────────────────────────────────────
-
-    def _resolve_country_name_to_code(self, name: str) -> Optional[str]:
-        from variants.fulbito.config import FULBITO_COUNTRY_NAMES
-        for code, full in FULBITO_COUNTRY_NAMES.items():
-            if full.lower() == name.lower():
-                return code
-        return None
 
     def _get_last_place_country(self) -> str:
         if not self.physics_world.racers:
@@ -1033,10 +1007,6 @@ class FulbitoGameEngine(GameEngine):
 
         if username in self.viewer_teams:
             country = self.viewer_teams[username]
-        elif username in self.user_assignments:
-            full_name = self.user_assignments[username]
-            country = self._resolve_country_name_to_code(full_name) or self._get_last_place_country()
-            self.viewer_teams[username] = country
         else:
             country = self._get_last_place_country()
 
@@ -1092,8 +1062,7 @@ class FulbitoGameEngine(GameEngine):
                 self.user_assignments[username] = country
                 self.session_unique_viewers.add(username)
                 self._transition_to_race_running()
-            impulse = 1 * COMMENT_DISTANCE_MULTIPLIER
-            self.physics_world.apply_gift_impulse(country, impulse, 1)
+            self.physics_world.apply_gift_impulse(country, "comment", 1)
             self._add_gift_effect(country, 1)
 
         elif self.game_state == 'RACE_RUNNING':
@@ -1107,8 +1076,7 @@ class FulbitoGameEngine(GameEngine):
                 self._add_join_text(username, country)
             elif self.viewer_teams[username] != country:
                 return
-            impulse = 1 * COMMENT_DISTANCE_MULTIPLIER
-            self.physics_world.apply_gift_impulse(country, impulse, 1)
+            self.physics_world.apply_gift_impulse(country, "comment", 1)
             self._add_gift_effect(country, 1)
 
         elif self.game_state == 'RACE_INTERMISSION':
@@ -1204,26 +1172,6 @@ class FulbitoGameEngine(GameEngine):
             sound.play()
         except Exception as exc:
             logger.warning("Could not play goal sound: %s", exc)
-
-    def _get_shield(self, country: str, size: int):
-        import pygame
-        from core.resources import resource_path
-        import os
-        cache_key = (country, size)
-        if cache_key in self._shield_cache:
-            return self._shield_cache[cache_key]
-        path = resource_path(f"variants/fulbito/assets/{country}.png")
-        try:
-            if os.path.exists(path):
-                img = pygame.image.load(path).convert_alpha()
-                scaled = pygame.transform.smoothscale(img, (size, size))
-                self._shield_cache[cache_key] = scaled
-                return scaled
-        except Exception:
-            pass
-        sprite = self._get_country_sprite(country, size)
-        self._shield_cache[cache_key] = sprite
-        return sprite
 
     def _render_session_podio(self) -> None:
         import pygame
@@ -2542,12 +2490,6 @@ class FulbitoGameEngine(GameEngine):
             self.screen.blit(err_surf, (ex, ey))
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-
-    def _update_hype_mode(self, dt: float = 0) -> None:
-        pass  # no hype multiplier in fulbito
-
-    def _update_rosa_combo(self, *args, **kwargs) -> None:
-        pass  # no rosa combo in fulbito
 
     def cleanup(self) -> None:
         top_donor = max(
