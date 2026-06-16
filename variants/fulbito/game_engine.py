@@ -113,7 +113,13 @@ logger = logging.getLogger(__name__)
 
 
 class _StadiumTribuna:
-    """Stadium crowd stands with perspective, wave, raised arms, and photo flashes."""
+    """Stadium crowd stands with perspective, wave, raised arms, and photo flashes.
+
+    Rendering is cached to a pre-allocated SRCALPHA surface and refreshed at
+    ~16 fps (every 60 ms) to avoid thousands of per-person Surface allocations
+    on every game frame. People, arms, and seat-row lines are drawn directly
+    onto the cached surface — zero Surface allocations per frame during blit.
+    """
 
     CROWD_COLORS = [
         (231, 76,  60),  (52, 152, 219), (241, 196,  15),
@@ -121,48 +127,71 @@ class _StadiumTribuna:
         (255, 255, 255), (255, 152,   0), (233,  30,  99),
         (0,  188, 212),
     ]
+    _CACHE_INTERVAL = 0.06   # seconds between full re-renders (~16 fps)
 
     def __init__(self, width: int, height: int):
         self.width  = width
         self.height = height
         self.time   = 0.0
-        self._rng = lambda s: abs(math.sin(s + 1) * 10000) % 1
+        self._rng   = lambda s: abs(math.sin(s + 1) * 10000) % 1
+        self._cache = None
+        self._cache_flip: bool | None = None
+        self._cache_timer: float = self._CACHE_INTERVAL  # render on first call
+        self._flash_surf = None
 
     def update(self, dt: float) -> None:
         self.time += dt
+        self._cache_timer += dt
 
-    def render(self, surface, x: int, y: int,
-               flip: bool = False) -> None:
+    def render(self, surface, x: int, y: int, flip: bool = False) -> None:
         import pygame
-        w, h = self.width, self.height
-        t = self.time
+        # Lazy-init cache and flash surfaces
+        if self._cache is None:
+            self._cache = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self._flash_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
 
-        # Gradient background
+        # Re-render cache only when interval elapses or flip direction changes
+        if self._cache_timer >= self._CACHE_INTERVAL or self._cache_flip != flip:
+            self._cache_timer = 0.0
+            self._cache_flip  = flip
+            self._render_to_cache(flip)
+
+        surface.blit(self._cache, (x, y))
+
+        # Camera flashes drawn live (low frequency, reuse _flash_surf)
+        self._render_flashes(surface, x, y, flip)
+
+    def _render_to_cache(self, flip: bool) -> None:
+        import pygame
+        c  = self._cache
+        w, h = self.width, self.height
+        t  = self.time
+
+        c.fill((0, 0, 0, 0))
+
+        # Gradient background — draw.line directly on SRCALPHA surface
         for row_y in range(h):
             progress = row_y / h if not flip else 1 - row_y / h
             r = int(5  + progress * 8)
             g = int(5  + progress * 15)
             b = int(16 + progress * 28)
-            pygame.draw.line(surface, (r, g, b),
-                             (x, y + row_y), (x + w, y + row_y))
+            pygame.draw.line(c, (r, g, b, 255), (0, row_y), (w, row_y))
 
-        # Seat-row lines
+        # Seat-row lines — draw directly, no Surface alloc
         GRADE_COUNT = h // 8
         for g_idx in range(GRADE_COUNT):
-            gy = y + h - g_idx * 8 - 4 if flip else y + g_idx * 8 + 4
+            gy = h - g_idx * 8 - 4 if flip else g_idx * 8 + 4
             alpha = max(0, min(255, int(8 + g_idx * 2)))
-            grade_surf = pygame.Surface((w, 1), pygame.SRCALPHA)
-            grade_surf.fill((255, 255, 255, alpha))
-            surface.blit(grade_surf, (x, gy))
+            pygame.draw.line(c, (255, 255, 255, alpha), (0, gy), (w, gy))
 
-        # People
+        # People — all drawn directly on cache, zero Surface allocations
         ROWS = h // 9
         for row in range(ROWS):
-            progress = (ROWS - row) / ROWS if flip else row / ROWS
-            person_h = int(4 + progress * 4)
-            person_w = int(3 + progress * 3)
-            spacing  = max(5, int(7 - progress * 2))
-            cols     = w // spacing
+            progress  = (ROWS - row) / ROWS if flip else row / ROWS
+            person_h  = int(4 + progress * 4)
+            person_w  = int(3 + progress * 3)
+            spacing   = max(5, int(7 - progress * 2))
+            cols      = w // spacing
             row_alpha = 0.15 + progress * 0.65
 
             for col in range(cols):
@@ -172,55 +201,53 @@ class _StadiumTribuna:
                 micro_wave = math.sin(t * 2.1 + col * 0.7 + row * 0.4) * 1.5
                 total_wave = main_wave + micro_wave
 
-                px = x + col * spacing + spacing // 2
-                if flip:
-                    row_y = y + h - row * 9 - person_h
-                else:
-                    row_y = y + row * 9 + person_h
-                py = int(row_y + total_wave)
+                px = col * spacing + spacing // 2
+                row_y = (h - row * 9 - person_h) if flip else (row * 9 + person_h)
+                py    = int(row_y + total_wave)
 
                 color_idx = int(self._rng(row * 31 + col * 13) * len(self.CROWD_COLORS))
                 color = self.CROWD_COLORS[color_idx]
                 alpha = row_alpha * (0.6 + math.sin(t * 0.5 + phase) * 0.4)
-                alpha = max(0.05, min(0.95, alpha))
-                a_int = int(alpha * 255)
+                a_int = int(max(0.05, min(0.95, alpha)) * 255)
 
-                body = pygame.Surface((person_w, person_h), pygame.SRCALPHA)
-                body.fill((*color, a_int))
-                surface.blit(body, (px - person_w // 2, py))
+                # Body — filled rect directly on cache
+                pygame.draw.rect(c, (*color, a_int),
+                                 (px - person_w // 2, py, person_w, person_h))
 
+                # Head — circle directly on cache
                 head_r = max(1, int(person_w * 0.55))
-                head_surf = pygame.Surface((head_r * 2, head_r * 2), pygame.SRCALPHA)
-                pygame.draw.circle(head_surf, (212, 165, 116, a_int),
-                                   (head_r, head_r), head_r)
-                surface.blit(head_surf, (px - head_r, py - int(person_h * 0.4) - head_r))
+                pygame.draw.circle(c, (212, 165, 116, a_int),
+                                   (px, py - int(person_h * 0.4) - head_r), head_r)
 
-                # Raised arms during wave
+                # Raised arms — lines directly on cache (no Surface alloc)
                 if (self._rng(row * 53 + col * 29) > 0.65
                         and math.sin(t * wave_speed + col * 0.3 + phase) > 0.3):
                     arm_a = int(alpha * 0.7 * 255)
-                    arm_surf = pygame.Surface((w, h), pygame.SRCALPHA)
                     arm_color = (*color, arm_a)
-                    pygame.draw.line(arm_surf, arm_color,
+                    pygame.draw.line(c, arm_color,
                                      (px - person_w, py + person_h // 3),
                                      (px - person_w // 3, py - person_h // 3), 1)
-                    pygame.draw.line(arm_surf, arm_color,
+                    pygame.draw.line(c, arm_color,
                                      (px + person_w, py + person_h // 3),
                                      (px + person_w // 3, py - person_h // 3), 1)
-                    surface.blit(arm_surf, (0, 0))
 
-        # Camera flashes
+    def _render_flashes(self, surface, x: int, y: int, flip: bool) -> None:
+        """Camera flashes — drawn live each frame (rare, reuse pre-allocated surf)."""
+        import pygame
+        w, h = self.width, self.height
+        t    = self.time
+        fs   = self._flash_surf
         for f in range(3):
-            fx = x + int(self._rng(t * 0.3 + f * 7) * w)
-            fy_ratio = self._rng(t * 0.2 + f * 11) * 0.7
-            fy = int(y + h - fy_ratio * h) if flip else int(y + fy_ratio * h)
             intensity = max(0, math.sin(t * 5 + f * 2.1))
             if intensity > 0.85:
-                flash_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
+                fx = x + int(self._rng(t * 0.3 + f * 7) * w)
+                fy_ratio = self._rng(t * 0.2 + f * 11) * 0.7
+                fy = int(y + h - fy_ratio * h) if flip else int(y + fy_ratio * h)
                 fa = int(intensity * 150)
-                pygame.draw.circle(flash_surf, (255, 255, 255, fa), (10, 10), 2)
-                pygame.draw.circle(flash_surf, (255, 255, 255, fa // 4), (10, 10), 8)
-                surface.blit(flash_surf, (fx - 10, fy - 10))
+                fs.fill((0, 0, 0, 0))
+                pygame.draw.circle(fs, (255, 255, 255, fa),     (10, 10), 2)
+                pygame.draw.circle(fs, (255, 255, 255, fa // 4),(10, 10), 8)
+                surface.blit(fs, (fx - 10, fy - 10))
 
 
 class FulbitoEffects:
@@ -251,8 +278,10 @@ class FulbitoEffects:
         self._effects: list[dict] = []
         # Pre-allocated surface for all fire particles — avoids per-particle alloc each frame
         import pygame
-        from core.config import ACTUAL_WIDTH, ACTUAL_HEIGHT
-        self._fire_surf = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT), pygame.SRCALPHA)
+        from core.config import SCREEN_WIDTH, SCREEN_HEIGHT
+        # Only covers the render_surface area (460×820), not the full window —
+        # fire particles never appear in the GAME_MARGIN border.
+        self._fire_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         # Pre-allocated surface for momentum aura glow
         # Max radius = (45+8)+12 = 65px → 130px diameter + margin → 160×160
         self._aura_surf = pygame.Surface((160, 160), pygame.SRCALPHA)
@@ -506,29 +535,33 @@ class FulbitoEffects:
 
     def _render_fire(self, screen, eff: dict) -> None:
         import pygame
+        from core.config import GAME_MARGIN
         fs = self._fire_surf
         fs.fill((0, 0, 0, 0))
+        # Particles store screen coords (+GAME_MARGIN). fire_surf is render_surface
+        # size, blitted at (GAME_MARGIN, GAME_MARGIN) — subtract offset when drawing.
+        gm = GAME_MARGIN
 
         for p in eff['particles']:
             if p[4] <= 0:
                 continue
-            t = 1.0 - p[4] / p[5]       # 0 at birth → 1 at death
+            t = 1.0 - p[4] / p[5]
             r, g, b, alpha = self._fire_color(t)
             size = max(1, int(p[6] * (1.0 - t * 0.75)))
-            pygame.draw.circle(fs, (r, g, b, alpha), (int(p[0]), int(p[1])), size)
+            pygame.draw.circle(fs, (r, g, b, alpha),
+                               (int(p[0]) - gm, int(p[1]) - gm), size)
 
-        # Tier-4 burst: white circle that expands and fades in first 0.2s
         if eff['burst_life'] > 0:
             pos = self._get_racer_pos(eff['country'])
             if pos:
-                burst_t = 1.0 - eff['burst_life'] / 0.2   # 0 → 1
+                burst_t = 1.0 - eff['burst_life'] / 0.2
                 burst_r = int(80 * burst_t)
                 burst_a = int(255 * (1.0 - burst_t))
                 if burst_r > 0 and burst_a > 0:
                     pygame.draw.circle(fs, (255, 255, 255, burst_a),
-                                       (int(pos[0]), int(pos[1])), burst_r, 3)
+                                       (int(pos[0]) - gm, int(pos[1]) - gm), burst_r, 3)
 
-        screen.blit(fs, (0, 0))
+        screen.blit(fs, (gm, gm))
 
     # ── Render: screen-space effects (flash, confetti, crowd) ─────────────────
 
@@ -575,18 +608,15 @@ class FulbitoEffects:
 
     def _render_goal_confetti(self, screen, eff: dict) -> None:
         import pygame
-        fade = min(1.0, eff['life'] / 0.5)  # full opacity until last 0.5s
+        fade = min(1.0, eff['life'] / 0.5)
+        _surf = pygame.Surface((20, 20), pygame.SRCALPHA)  # single reused surface
         for p in eff['particles']:
             alpha = max(0, int(255 * fade))
             r, g, b = int(p[5]), int(p[6]), int(p[7])
-            x, y = int(p[0]), int(p[1])
-            w = max(1, int(p[4]))
-            h = max(1, int(p[4] * 2))
-            base = pygame.Surface((w, h), pygame.SRCALPHA)
-            base.fill((r, g, b, alpha))
-            rotated = pygame.transform.rotate(base, p[8])
-            rw, rh = rotated.get_size()
-            screen.blit(rotated, (x - rw // 2, y - rh // 2))
+            size = max(1, int(p[4]))
+            _surf.fill((0, 0, 0, 0))
+            pygame.draw.circle(_surf, (r, g, b, alpha), (10, 10), size)
+            screen.blit(_surf, (int(p[0]) - 10, int(p[1]) - 10))
 
 
 class FulbitoGameEngine(GameEngine):
