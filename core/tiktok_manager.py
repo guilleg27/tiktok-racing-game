@@ -14,6 +14,8 @@ from TikTokLive.events import (
     LikeEvent,
     JoinEvent,
     FollowEvent,
+    ShareEvent,
+    SubscribeEvent,
     RoomUserSeqEvent,
 )
 
@@ -291,6 +293,44 @@ class TikTokManager:
                     logger.warning("Queue full, dropping follow event")
             except Exception as e:
                 logger.error(f"Error processing follow: {e}")
+
+        @client.on(ShareEvent)
+        async def on_share(event: ShareEvent) -> None:
+            """Handle stream share."""
+            try:
+                username = (
+                    getattr(event.user, "unique_id", None)
+                    or getattr(event.user, "nickname", None)
+                    or "someone"
+                ) if hasattr(event, "user") and event.user else "someone"
+                try:
+                    self.queue.put_nowait(GameEvent(
+                        type=EventType.SHARE,
+                        username=username,
+                    ))
+                except asyncio.QueueFull:
+                    logger.warning("Queue full, dropping share event")
+            except Exception as e:
+                logger.error(f"Error processing share: {e}")
+
+        @client.on(SubscribeEvent)
+        async def on_subscribe(event: SubscribeEvent) -> None:
+            """Handle new club/subscription member."""
+            try:
+                username = (
+                    getattr(event.user, "unique_id", None)
+                    or getattr(event.user, "nickname", None)
+                    or "someone"
+                ) if hasattr(event, "user") and event.user else "someone"
+                try:
+                    self.queue.put_nowait(GameEvent(
+                        type=EventType.SUBSCRIBE,
+                        username=username,
+                    ))
+                except asyncio.QueueFull:
+                    logger.warning("Queue full, dropping subscribe event")
+            except Exception as e:
+                logger.error(f"Error processing subscribe: {e}")
 
         @client.on(RoomUserSeqEvent)
         async def on_room_user_seq(event: RoomUserSeqEvent) -> None:

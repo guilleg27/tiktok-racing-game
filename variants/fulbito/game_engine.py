@@ -794,6 +794,9 @@ class FulbitoGameEngine(GameEngine):
 
         self._update_outer_background()
 
+        # Club members — persists across races for the whole session
+        self._club_members: set[str] = set()
+
         # Chat momentum tracking: country → deque of (timestamp, username)
         self._comment_momentum: dict[str, deque] = {}
 
@@ -1195,6 +1198,15 @@ class FulbitoGameEngine(GameEngine):
         elif event.type == EventType.COMMENT:
             await self._handle_fulbito_comment(event)
 
+        elif event.type == EventType.FOLLOW:
+            await self._handle_fulbito_follow(event)
+
+        elif event.type == EventType.SHARE:
+            await self._handle_fulbito_share(event)
+
+        elif event.type == EventType.SUBSCRIBE:
+            await self._handle_fulbito_subscribe(event)
+
         else:
             await super()._handle_event(event)
 
@@ -1211,6 +1223,7 @@ class FulbitoGameEngine(GameEngine):
 
         username = self.sanitize_username(event.username)
         gift_name = event.content or ''
+        logger.debug("[Gift raw] gift_name=%r username=%r", gift_name, username)
         diamond_count = event.extra.get('diamond_count', 1) if event.extra else 1
         gift_count = event.extra.get('count', 1) if event.extra else 1
         total_diamonds = diamond_count * gift_count
@@ -1222,6 +1235,27 @@ class FulbitoGameEngine(GameEngine):
 
         if country not in self.current_fixture:
             country = self._get_last_place_country()
+
+        # Club member multiplier applies before any impulse
+        if username in self._club_members:
+            total_diamonds = int(total_diamonds * 1.25)
+
+        # Quiéreme gift: fixed impulse, skip normal diamond calculation
+        from variants.fulbito.config import (
+            FULBITO_QUIEREME_NAMES, FULBITO_QUIEREME_DISTANCE,
+            FULBITO_CLUB_MEMBER_MULTIPLIER,
+        )
+        if gift_name.lower().strip() in FULBITO_QUIEREME_NAMES:
+            distance = FULBITO_QUIEREME_DISTANCE
+            if username in self._club_members:
+                distance = int(distance * FULBITO_CLUB_MEMBER_MULTIPLIER)
+            self.physics_world.apply_gift_impulse(country, gift_name, distance)
+            self._gift_flashes[country] = (time.time(), distance)
+            self._add_gift_effect(country, distance)
+            self._on_real_activity()
+            self._add_floating_text(f"+QUIEREME → {country}", color=(255, 100, 180))
+            logger.info("Quiereme gift: %s → %s (distance=%d)", username, country, distance)
+            return
 
         self.physics_world.apply_gift_impulse(country, gift_name, total_diamonds)
         self._gift_flashes[country] = (time.time(), total_diamonds)
@@ -1298,6 +1332,57 @@ class FulbitoGameEngine(GameEngine):
             self.vote_counts = {}
             for v in self.intermission_votes.values():
                 self.vote_counts[v] = self.vote_counts.get(v, 0) + 1
+
+    async def _handle_fulbito_follow(self, event) -> None:
+        if self.game_state != 'RACE_RUNNING':
+            return
+        from variants.fulbito.config import FULBITO_FOLLOW_DISTANCE
+        username = self.sanitize_username(event.username)
+        country = self.viewer_teams.get(username) or self._get_last_place_country()
+        if country not in self.current_fixture:
+            country = self._get_last_place_country()
+        self.physics_world.apply_gift_impulse(country, "follow", FULBITO_FOLLOW_DISTANCE)
+        self._add_gift_effect(country, FULBITO_FOLLOW_DISTANCE)
+        self._add_floating_text(f"+FOLLOW → {country}", color=(100, 220, 255))
+        logger.info("Follow: %s → %s", username, country)
+
+    async def _handle_fulbito_share(self, event) -> None:
+        if self.game_state != 'RACE_RUNNING':
+            return
+        from variants.fulbito.config import FULBITO_SHARE_DISTANCE
+        username = self.sanitize_username(event.username)
+        country = self.viewer_teams.get(username) or self._get_last_place_country()
+        if country not in self.current_fixture:
+            country = self._get_last_place_country()
+        self.physics_world.apply_gift_impulse(country, "share", FULBITO_SHARE_DISTANCE)
+        self._add_gift_effect(country, FULBITO_SHARE_DISTANCE)
+        self._add_floating_text(f"+SHARE → {country}", color=(100, 255, 180))
+        logger.info("Share: %s → %s", username, country)
+
+    async def _handle_fulbito_subscribe(self, event) -> None:
+        from variants.fulbito.config import FULBITO_SUBSCRIBE_DISTANCE
+        from core.config import SCREEN_WIDTH
+        username = self.sanitize_username(event.username)
+        self._club_members.add(username)
+        logger.info("Subscribe (club): %s — total members: %d", username, len(self._club_members))
+        if self.game_state == 'RACE_RUNNING':
+            country = self.viewer_teams.get(username) or self._get_last_place_country()
+            if country not in self.current_fixture:
+                country = self._get_last_place_country()
+            self.physics_world.apply_gift_impulse(country, "subscribe", FULBITO_SUBSCRIBE_DISTANCE)
+            self._add_gift_effect(country, FULBITO_SUBSCRIBE_DISTANCE)
+        # Big centered text visible in all states
+        self._add_floating_text(
+            f"NUEVO MIEMBRO DEL CLUB: {username}",
+            color=(255, 215, 0),
+            x=float(SCREEN_WIDTH / 2),
+            y=float(self.physics_world.game_area_top + self.physics_world.lane_y_offset // 2),
+        )
+        # Increase lifespan of this text by bumping max_lifespan
+        if self.floating_texts:
+            self.floating_texts[-1].lifespan = 60   # 2s at 30 FPS
+            self.floating_texts[-1].max_lifespan = 60
+            self.floating_texts[-1].font_size = 22
 
     def _add_floating_text(
         self,
