@@ -15,6 +15,8 @@ class EventType(Enum):
     VOTE = auto()          # User votes for a country (COMMENT mode)
     LIKE = auto()          # Stream like (retention / Meteor Shower bar)
     FOLLOW = auto()        # New follower detected
+    SHARE = auto()         # Stream share
+    SUBSCRIBE = auto()     # New club/subscription member
     VIEWER_COUNT = auto()  # Live viewer count update
     QUIT = auto()
 

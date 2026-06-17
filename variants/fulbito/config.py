@@ -203,6 +203,16 @@ FULBITO_MIN_GIFT_DISTANCE: float = 2.0
 COMMENT_DISTANCE_MULTIPLIER = 1.0   # override del core (era 0.33)
 GAME_MODE = "GIFT"
 
+# Incentivos al club de fans
+FULBITO_QUIEREME_DISTANCE       = 30     # impulso por gift Quiéreme
+FULBITO_FOLLOW_DISTANCE         = 5      # impulso por follow
+FULBITO_SHARE_DISTANCE          = 2      # impulso por share
+FULBITO_SUBSCRIBE_DISTANCE      = 10     # impulso por suscripción al club
+FULBITO_CLUB_MEMBER_MULTIPLIER  = 1.25   # multiplicador de diamantes para miembros del club
+
+# Nombres normalizados del gift "Quiéreme" (lower+strip)
+FULBITO_QUIEREME_NAMES = ("quiéreme", "quiereme", "heart me", "me gusta")
+
 # Chat momentum — aura activada por múltiples viewers únicos en poco tiempo
 FULBITO_MOMENTUM_THRESHOLD = 3     # viewers únicos distintos para activar
 FULBITO_MOMENTUM_WINDOW    = 5.0   # segundos de ventana deslizante
