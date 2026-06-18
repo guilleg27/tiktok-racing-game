@@ -48,8 +48,8 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         self.rosa_combo_multiplier = 1.0
 
         # Sobreescribir posiciones de inicio/fin para usar los extremos reales
-        self.start_x = _TRACK_LEFT + 12          # ≈ 20px
-        self.finish_line_x = _TRACK_RIGHT - 12   # ≈ 440px
+        self.start_x = _TRACK_LEFT + FULBITO_FLAG_RADIUS + 4    # 8+18+4 = 30px
+        self.finish_line_x = _TRACK_RIGHT - FULBITO_FLAG_RADIUS - 4  # 452-18-4 = 430px
 
         # Reposicionar racers al nuevo start_x (super() los colocó con FULBITO_START_MARGIN)
         for i, (_, racer) in enumerate(self.racers.items()):
@@ -70,9 +70,9 @@ class FulbitoPhysicsWorld(PhysicsWorld):
     def _get_initial_x(self, lane: int) -> float:
         """Return the starting X position for a given lane."""
         if self._get_lane_direction(lane):
-            return float(_TRACK_LEFT + FULBITO_START_MARGIN)
+            return float(_TRACK_LEFT + FULBITO_FLAG_RADIUS + 4)
         else:
-            return float(_TRACK_RIGHT - FULBITO_START_MARGIN)
+            return float(_TRACK_RIGHT - FULBITO_FLAG_RADIUS - 4)
 
     # ─────────────────────────────────────────────
     # Overrides
