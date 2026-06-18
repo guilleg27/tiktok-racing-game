@@ -662,6 +662,17 @@ class FulbitoGameEngine(GameEngine):
         # 4 carriles × 85px = 340px total, centrado en 721px game area
         _cc.LANE_HEIGHT = 85
 
+        # Dimensiones del campo BLINDADAS: valores literales absolutos, idénticos en
+        # toda partida y en cualquier build. NO se derivan de game_area_height ni de
+        # SCREEN_HEIGHT, así ningún cambio de config/binario puede cambiar la cancha.
+        # 4 carriles × 76px = 304px, centrados dentro del área de juego de 641px → offset 168.
+        _cc.FULBITO_FIXED_LANE_HEIGHT = 76
+        _cc.FULBITO_FIXED_LANE_Y_OFFSET = 168
+        logger.info(
+            "[FULBITO FIXED DIMS] lane_height=%s lane_y_offset=%s (hardcoded/blindado)",
+            _cc.FULBITO_FIXED_LANE_HEIGHT, _cc.FULBITO_FIXED_LANE_Y_OFFSET,
+        )
+
         # Disable core features irrelevant to fulbito
         _cc.HYPE_TIMER_ENABLED = False
         _cc.HYPE_TIMER_INTERVAL = 99999
@@ -689,6 +700,10 @@ class FulbitoGameEngine(GameEngine):
 
         # Mute toggle state — initialize BEFORE starting BGM
         self._muted: bool = False
+
+        # Country-name fonts (loaded in init_pygame once pygame is up)
+        self._font_country_large: "pygame.font.Font | None" = None
+        self._font_country_small: "pygame.font.Font | None" = None
 
         self._start_fulbito_bgm()
 
@@ -749,7 +764,8 @@ class FulbitoGameEngine(GameEngine):
 
         # Stadium crowd stands
         from core.config import ACTUAL_WIDTH, GAME_AREA_TOP
-        self._tribuna_top = _StadiumTribuna(ACTUAL_WIDTH, GAME_AREA_TOP - 4)
+        from core.config import GAME_MARGIN
+        self._tribuna_top = _StadiumTribuna(ACTUAL_WIDTH, GAME_AREA_TOP + GAME_MARGIN - 4)
         self._tribuna_bot: _StadiumTribuna | None = None
         self._tribuna_bot_y: int = 0
 
@@ -789,7 +805,7 @@ class FulbitoGameEngine(GameEngine):
         )
         bot_y = (pw.game_area_top + pw.lane_y_offset
                  + pw.lane_height * len(pw.countries))
-        self._tribuna_bot_y = bot_y
+        self._tribuna_bot_y = bot_y + GAME_MARGIN
         tribuna_h = max(10, ACTUAL_HEIGHT - (bot_y + GAME_MARGIN) - 4)
         self._tribuna_bot = _StadiumTribuna(ACTUAL_WIDTH, tribuna_h)
 
@@ -814,25 +830,33 @@ class FulbitoGameEngine(GameEngine):
         self.outer_background = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT))
         self.outer_background.fill((10, 10, 10))
         self.background_manager = _GrassBackground(self)
+
+        # Country-name fonts — Rajdhani for ranking hierarchy, SysFont fallback
+        from core.resources import resource_path
+        font_path = resource_path("variants/fulbito/assets/fonts/Rajdhani-Bold.ttf")
         try:
-            from core.resources import resource_path
-            from core.config import SCREEN_HEIGHT, GAME_AREA_TOP, GAME_AREA_BOTTOM, GAME_MARGIN
-            _zone_w = ACTUAL_WIDTH
-            _zone_h = (SCREEN_HEIGHT - GAME_AREA_BOTTOM + GAME_MARGIN) - (GAME_AREA_TOP + GAME_MARGIN)
-            _raw = pygame.image.load(resource_path("variants/fulbito/assets/wc2026.png")).convert()
-            _src_w, _src_h = _raw.get_size()
-            _scale = max(_zone_w / _src_w, _zone_h / _src_h)
-            _scaled_w = int(_src_w * _scale)
-            _scaled_h = int(_src_h * _scale)
-            _scaled = pygame.transform.smoothscale(_raw, (_scaled_w, _scaled_h))
-            _off_x = (_scaled_w - _zone_w) // 2
-            _off_y = (_scaled_h - _zone_h) // 2
-            self._wc2026_bg = _scaled.subsurface((_off_x, _off_y, _zone_w, _zone_h)).copy()
-            _bw, _bh = self._wc2026_bg.get_size()
-            _small = pygame.transform.smoothscale(self._wc2026_bg, (_bw // 4, _bh // 4))
-            self._wc2026_bg = pygame.transform.smoothscale(_small, (_bw, _bh))
+            self._font_country_large = pygame.font.Font(font_path, 20)
+            self._font_country_small = pygame.font.Font(font_path, 15)
+        except Exception:
+            self._font_country_large = pygame.font.SysFont('Arial', 18, bold=True)
+            self._font_country_small = pygame.font.SysFont('Arial', 13, bold=True)
+
+        try:
+            # Guardar la imagen original SIN recortar; el encuadre (contain, centrado
+            # en la franja del medio) se calcula en _render_winner_banner().
+            self._wc2026_bg = pygame.image.load(
+                resource_path("variants/fulbito/assets/wc2026.png")
+            ).convert_alpha()
+            self._wc2026_bg_scaled = None       # cache del escalado contain
+            self._wc2026_bg_scaled_key = None    # (band_w, band_h) usados en el cache
         except Exception:
             self._wc2026_bg = None
+
+        # Repintar el campo en outer_background ahora que la Surface existe.
+        # En el arranque, _init_fulbito_physics() corre en __init__() antes de
+        # que esta Surface se cree, así que la primera partida quedaría sin
+        # pintar. Esto la deja idéntica a la segunda partida en adelante.
+        self._update_outer_background()
 
     # ── Finish line — football goals ─────────────────────────────────────────
 
@@ -1525,6 +1549,17 @@ class FulbitoGameEngine(GameEngine):
     # ── State transitions ─────────────────────────────────────────────────────
 
     def _transition_to_race_running(self) -> None:
+        # BLINDAJE: resetear el zoom/secuencia de victoria de la partida anterior.
+        # El motor core dispara un zoom de cámara (target 1.12) al detectar ganador;
+        # si no se resetea, la partida siguiente se renderiza ~12% más grande.
+        try:
+            self._reset_victory_sequence()
+        except Exception:
+            pass
+        self.victory_zoom_level = 1.0
+        self.victory_zoom_target = 1.0
+        self.victory_sequence_active = False
+
         self.game_state = 'RACE_RUNNING'
         self.race_number += 1
         self._race_start_time = time.time()
@@ -2087,6 +2122,7 @@ class FulbitoGameEngine(GameEngine):
             self._render_gift_flashes()
             self._render_direction_arrows()
             self._render_country_names()
+            self._render_join_pill()
             self._render_session_podio()
             self._render_overlay_text()
         elif self.game_state == 'RACE_FINISHED':
@@ -2191,8 +2227,8 @@ class FulbitoGameEngine(GameEngine):
         names = [FULBITO_COUNTRY_NAMES.get(c, c) for c in self.current_fixture]
         line2 = "  |  ".join(names)
 
-        surf1 = font_big.render(line1, True, (255, 255, 180))
-        surf2 = font_small.render(line2, True, (255, 230, 50))
+        surf1 = font_big.render(line1, True, (255, 255, 255))
+        surf2 = font_small.render(line2, True, (37, 244, 238))
 
         pw = self.physics_world
         num_lanes = len(self.current_fixture)
@@ -2207,8 +2243,8 @@ class FulbitoGameEngine(GameEngine):
         box_y = y1 - PAD_Y
 
         bg = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 175))
-        pygame.draw.rect(bg, (255, 255, 180, 60), (0, 0, box_w, box_h), 1, border_radius=6)
+        bg.fill((0, 0, 0, 210))
+        pygame.draw.rect(bg, (37, 244, 238, 80), (0, 0, box_w, box_h), 1, border_radius=6)
         self.screen.blit(bg, (box_x, box_y))
 
         x1 = ACTUAL_WIDTH // 2 - surf1.get_width() // 2
@@ -2427,12 +2463,38 @@ class FulbitoGameEngine(GameEngine):
         center_y    = game_top + game_h // 2
 
         # ── Background overlay ────────────────────────────────────────────────
+        # Fondo negro base en toda el área de juego (la imagen va centrada encima).
+        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 210))
+        self.screen.blit(overlay, (0, game_top))
+
         if self._wc2026_bg is not None:
-            self.screen.blit(self._wc2026_bg, (0, game_top))
-        else:
-            overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 210))
-            self.screen.blit(overlay, (0, game_top))
+            pw = self.physics_world
+            num_lanes = len(self.current_fixture) if self.current_fixture else 4
+            # Franja del medio: debajo de la webcam (game_top) y por encima de donde
+            # arranca el gif de gol (borde inferior del campo).
+            band_top = game_top
+            band_bottom = pw.game_area_top + pw.lane_y_offset + pw.lane_height * num_lanes
+            band_h = max(1, band_bottom - band_top)
+            band_w = ACTUAL_WIDTH
+            # Escalar la imagen completa para que entre en la franja (contain),
+            # preservando su proporción original. Cacheado por tamaño de franja.
+            key = (band_w, band_h)
+            if self._wc2026_bg_scaled_key != key:
+                src_w, src_h = self._wc2026_bg.get_size()
+                # Cover: cubrir toda la franja (sin franjas negras) y recortar el
+                # sobrante centrado, para no invadir webcam ni la zona del gif.
+                scale = max(band_w / src_w, band_h / src_h)
+                new_w = max(band_w, int(src_w * scale))
+                new_h = max(band_h, int(src_h * scale))
+                scaled = pygame.transform.smoothscale(self._wc2026_bg, (new_w, new_h))
+                crop_x = (new_w - band_w) // 2
+                crop_y = (new_h - band_h) // 2
+                self._wc2026_bg_scaled = scaled.subsurface(
+                    (crop_x, crop_y, band_w, band_h)
+                ).copy()
+                self._wc2026_bg_scaled_key = key
+            self.screen.blit(self._wc2026_bg_scaled, (0, band_top))
 
         # ── Fireworks / confetti ──────────────────────────────────────────────
         self._render_victory_particles()
@@ -2445,14 +2507,14 @@ class FulbitoGameEngine(GameEngine):
                 scaled = pygame.transform.smoothscale(racer.sprite, (sprite_size, sprite_size))
                 self.screen.blit(
                     scaled,
-                    (center_x - sprite_size // 2, center_y - sprite_size // 2 - 55),
+                    (center_x - sprite_size // 2, center_y - sprite_size // 2 - 75),
                 )
 
         # ── "¡GANÓ!" ──────────────────────────────────────────────────────────
         font_gano = pygame.font.SysFont('Arial', 26, bold=True)
         _gano_base = font_gano.render("¡GANÓ!", True, (255, 255, 255))
         gx = center_x - _gano_base.get_width() // 2
-        gy = center_y + 42
+        gy = center_y + 22
         _gano_outlined = self._render_text_enhanced("¡GANÓ!", font_gano, (255, 255, 255), (0, 0, 0), 2)
         self.screen.blit(_gano_outlined, (gx - 2, gy - 2))
 
@@ -2460,7 +2522,7 @@ class FulbitoGameEngine(GameEngine):
         font_name = pygame.font.SysFont('Arial', 46, bold=True)
         _name_base = font_name.render(winner_name, True, (255, 220, 0))
         nx = center_x - _name_base.get_width() // 2
-        ny = center_y + 70
+        ny = center_y + 50
         _name_outlined = self._render_text_enhanced(winner_name, font_name, (255, 220, 0), (0, 0, 0), 3)
         self.screen.blit(_name_outlined, (nx - 3, ny - 3))
 
@@ -2707,32 +2769,105 @@ class FulbitoGameEngine(GameEngine):
         if not self.current_fixture:
             return
 
-        font = pygame.font.SysFont('Arial', 13, bold=True)
-        lane_h = self.physics_world.lane_height
-        lane_y_offset = self.physics_world.lane_y_offset
+        # Determinar ranking por progreso
+        pw = self.physics_world
+        if pw.racers:
+            ranked = sorted(
+                self.current_fixture,
+                key=lambda c: pw.get_progress(c),
+                reverse=True,
+            )
+        else:
+            ranked = list(self.current_fixture)
+
+        # rank_pos[country] = 0 (líder) .. 3 (último)
+        rank_pos = {c: i for i, c in enumerate(ranked)}
+
+        lane_h = pw.lane_height
+        lane_y_offset = pw.lane_y_offset
+
+        # Configuración por rango: (font, alpha_texto, alpha_fondo)
+        rank_cfg = [
+            (self._font_country_large, 255, 110),   # 1° líder
+            (self._font_country_small, 210, 80),    # 2°
+            (self._font_country_small, 170, 65),    # 3°
+            (self._font_country_small, 130, 50),    # 4° último
+        ]
+
+        cx = ACTUAL_WIDTH // 2
 
         for i, country in enumerate(self.current_fixture):
             name = FULBITO_COUNTRY_NAMES.get(country, country)
+            rank = rank_pos.get(country, i)
+            font, alpha_text, alpha_bg = rank_cfg[min(rank, 3)]
 
-            cx = ACTUAL_WIDTH // 2
             cy = GAME_AREA_TOP + lane_y_offset + i * lane_h + lane_h // 2
 
-            name_surf = font.render(name, True, (255, 255, 255))
-            pad = 6
-            bg_w = name_surf.get_width() + pad * 2
-            bg_h = name_surf.get_height() + pad
+            # Renderizar texto con alpha
+            name_surf_base = font.render(name, True, (255, 255, 255))
+            name_surf = pygame.Surface(name_surf_base.get_size(), pygame.SRCALPHA)
+            name_surf.blit(name_surf_base, (0, 0))
+            name_surf.set_alpha(alpha_text)
+
+            # Fondo semitransparente escalado al texto
+            pad_x, pad_y = 8, 5
+            bg_w = name_surf.get_width() + pad_x * 2
+            bg_h = name_surf.get_height() + pad_y * 2
             bg = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
-            pygame.draw.rect(bg, (0, 0, 0, 90),
+            pygame.draw.rect(bg, (0, 0, 0, alpha_bg),
                              (0, 0, bg_w, bg_h), border_radius=8)
+
             bx = cx - bg_w // 2
             by = cy - bg_h // 2
             self.screen.blit(bg, (bx, by))
 
-            shadow = font.render(name, True, (0, 0, 0))
+            # Shadow sutil
+            shadow_surf = font.render(name, True, (0, 0, 0))
+            shadow_surf.set_alpha(min(alpha_text, 120))
             tx = cx - name_surf.get_width() // 2
             ty = cy - name_surf.get_height() // 2
-            self.screen.blit(shadow, (tx + 1, ty + 1))
+            self.screen.blit(shadow_surf, (tx + 1, ty + 1))
+
             self.screen.blit(name_surf, (tx, ty))
+
+    def _render_join_pill(self) -> None:
+        import pygame
+        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH
+
+        if not self.current_fixture:
+            return
+
+        pw = self.physics_world
+        text = "Comentá el nombre de tu país para jugar"
+
+        font = pygame.font.SysFont('Arial', 11)
+
+        # Render text directly with RGBA alpha in the color (set_alpha on a
+        # SRCALPHA surface double-applies alpha; see NOTE).
+        text_surf = font.render(text, True, (37, 244, 238, 200))
+        tw = text_surf.get_width()
+        th = text_surf.get_height()
+
+        PAD_X, PAD_Y = 12, 5
+        pill_w = tw + PAD_X * 2
+        pill_h = th + PAD_Y * 2
+
+        # Posición: centrada horizontalmente, pegada al borde inferior del campo.
+        # El campo termina en: GAME_AREA_TOP + lane_y_offset + num_lanes * lane_height
+        num_lanes = len(self.current_fixture)
+        from core.config import GAME_MARGIN
+        field_bottom_screen = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
+        cx = ACTUAL_WIDTH // 2
+        pill_x = cx - pill_w // 2
+        pill_y = field_bottom_screen - 8   # apenas por encima del borde inferior del campo
+
+        # Fondo oscuro semitransparente con borde sutil
+        bg = pygame.Surface((pill_w, pill_h), pygame.SRCALPHA)
+        pygame.draw.rect(bg, (0, 0, 0, 210), (0, 0, pill_w, pill_h), border_radius=20)
+        pygame.draw.rect(bg, (37, 244, 238, 180), (0, 0, pill_w, pill_h), 1, border_radius=20)
+        self.screen.blit(bg, (pill_x, pill_y))
+
+        self.screen.blit(text_surf, (pill_x + PAD_X, pill_y + PAD_Y))
 
     def _render_fixture_setup(self) -> None:
         import pygame
