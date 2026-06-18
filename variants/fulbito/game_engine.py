@@ -1414,7 +1414,7 @@ class FulbitoGameEngine(GameEngine):
         fx = x if x is not None else SCREEN_WIDTH / 2
         fy = y if y is not None else SCREEN_HEIGHT / 2
         self.floating_texts.append(
-            FloatingText(text=text, x=fx, y=fy, color=color, font_size=14)
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
         )
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
