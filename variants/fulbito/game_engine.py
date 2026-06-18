@@ -687,10 +687,10 @@ class FulbitoGameEngine(GameEngine):
         _am.play_final_stretch_sound = _noop
         _am.play_combo_fire_sound    = _noop
 
-        self._start_fulbito_bgm()
-
-        # Mute toggle state
+        # Mute toggle state — initialize BEFORE starting BGM
         self._muted: bool = False
+
+        self._start_fulbito_bgm()
 
         self.game_state = 'FIXTURE_SETUP'
 
@@ -1084,7 +1084,6 @@ class FulbitoGameEngine(GameEngine):
             pygame.mixer.pause()
         else:
             # Restore to whatever volume the game had set before muting
-            # (0.3 normal, 0.05 during victory — read the current BGM state)
             pygame.mixer.music.set_volume(
                 0.05 if self.game_state == 'RACE_FINISHED' else 0.3
             )
@@ -1101,7 +1100,7 @@ class FulbitoGameEngine(GameEngine):
             return
         try:
             pygame.mixer.music.load(bgm_path)
-            pygame.mixer.music.set_volume(0.3)
+            pygame.mixer.music.set_volume(0.0 if self._muted else 0.3)
             pygame.mixer.music.play(loops=-1)
             logger.info("Fulbito BGM started: %s", bgm_path)
         except Exception as exc:
@@ -1636,7 +1635,7 @@ class FulbitoGameEngine(GameEngine):
             )
         logger.info("Partido %d terminado. Ganador: %s", self.race_number, winner)
         import pygame
-        pygame.mixer.music.set_volume(0.05)
+        pygame.mixer.music.set_volume(0.0 if self._muted else 0.05)
         self._play_goal_sound()
         if winner:
             from core.config import GIFT_COLORS
@@ -1675,7 +1674,7 @@ class FulbitoGameEngine(GameEngine):
             self._winner_video_cap = None
             self._winner_video_current_surf = None
         import pygame
-        pygame.mixer.music.set_volume(0.3)
+        pygame.mixer.music.set_volume(0.0 if self._muted else 0.3)
         logger.info("Intermission. King=%s Wildcard=%s", self.king, self.wildcard_country)
 
     def _resolve_next_fixture(self) -> list[str]:
