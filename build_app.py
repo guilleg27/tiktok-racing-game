@@ -50,6 +50,94 @@ def detect_icon():
                 return fname
     return None
 
+
+def generate_ico_from_png(png_path, ico_path):
+    """Generate a multi-size Windows ``.ico`` from a PNG using pygame.
+
+    Avoids a Pillow dependency by embedding PNG-compressed images inside the
+    ICO container (supported by Windows Vista and newer). Generates the common
+    icon sizes so Explorer, the taskbar and the title bar all look crisp.
+
+    Args:
+        png_path: Source PNG path.
+        ico_path: Destination ``.ico`` path to write.
+
+    Returns:
+        The ``ico_path`` on success, otherwise ``None``.
+    """
+    try:
+        import io
+        import struct
+        os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
+        import pygame
+        if not pygame.get_init():
+            pygame.init()
+        src = pygame.image.load(png_path)
+        sizes = [16, 32, 48, 64, 128, 256]
+        images = []
+        for size in sizes:
+            scaled = pygame.transform.smoothscale(src, (size, size))
+            buf = io.BytesIO()
+            pygame.image.save(scaled, buf, "icon.png")
+            images.append((size, buf.getvalue()))
+
+        count = len(images)
+        header = struct.pack('<HHH', 0, 1, count)
+        offset = 6 + count * 16
+        entries = b''
+        datas = b''
+        for size, data in images:
+            dim = 0 if size >= 256 else size  # 0 means 256 in the ICO spec
+            entries += struct.pack('<BBBBHHII', dim, dim, 0, 0, 1, 32, len(data), offset)
+            datas += data
+            offset += len(data)
+
+        with open(ico_path, 'wb') as f:
+            f.write(header + entries + datas)
+        return ico_path
+    except Exception as e:
+        print(f"⚠ No se pudo generar .ico desde {png_path}: {e}")
+        return None
+
+
+def generate_icns_from_png(png_path, icns_path):
+    """Generate a macOS ``.icns`` from a PNG using built-in sips/iconutil.
+
+    Best-effort: returns ``None`` if the macOS tooling is unavailable.
+
+    Args:
+        png_path: Source PNG path.
+        icns_path: Destination ``.icns`` path to write.
+
+    Returns:
+        The ``icns_path`` on success, otherwise ``None``.
+    """
+    try:
+        import tempfile
+        iconset = os.path.join(tempfile.mkdtemp(), 'icon.iconset')
+        os.makedirs(iconset, exist_ok=True)
+        specs = [
+            (16, 'icon_16x16.png'), (32, 'icon_16x16@2x.png'),
+            (32, 'icon_32x32.png'), (64, 'icon_32x32@2x.png'),
+            (128, 'icon_128x128.png'), (256, 'icon_128x128@2x.png'),
+            (256, 'icon_256x256.png'), (512, 'icon_256x256@2x.png'),
+            (512, 'icon_512x512.png'), (1024, 'icon_512x512@2x.png'),
+        ]
+        for size, name in specs:
+            subprocess.run(
+                ['sips', '-z', str(size), str(size), png_path, '--out',
+                 os.path.join(iconset, name)],
+                check=True, capture_output=True,
+            )
+        subprocess.run(
+            ['iconutil', '-c', 'icns', iconset, '-o', icns_path],
+            check=True, capture_output=True,
+        )
+        return icns_path
+    except Exception as e:
+        print(f"⚠ No se pudo generar .icns desde {png_path}: {e}")
+        return None
+
 VARIANT_CONFIG = {
     "countries": {
         "entry_point": "variants/countries/main.py",
@@ -75,6 +163,7 @@ VARIANT_CONFIG = {
         "entry_point": "variants/fulbito/main.py",
         "app_name": "Fulbito",
         "extra_assets": ["variants/fulbito/assets"],
+        "icon_source": "variants/fulbito/assets/wc2026.png",
     },
 }
 
@@ -106,12 +195,29 @@ def build(variant: str = "countries"):
         print("❌ Sistema operativo no soportado.")
         sys.exit(1)
 
-    # Detectar icono
-    icon = detect_icon()
+    # Detectar/generar icono. Si la variante define icon_source (un PNG), se
+    # genera el formato nativo: .ico en Windows, .icns en macOS. Si falla o no
+    # hay icon_source, se cae al autodetect de la raíz del proyecto.
+    import tempfile
+    icon = None
+    icon_temp = None
+    icon_source = cfg.get("icon_source")
+    if icon_source and os.path.exists(icon_source):
+        icon_dir = tempfile.mkdtemp(prefix="build_icon_")
+        if system == "Windows":
+            icon = generate_ico_from_png(icon_source, os.path.join(icon_dir, "app_icon.ico"))
+        elif system == "Darwin":
+            icon = generate_icns_from_png(icon_source, os.path.join(icon_dir, "app_icon.icns"))
+        if icon:
+            icon_temp = icon
+            print(f"🎨 Icono generado desde {icon_source} -> {icon}")
+    if not icon:
+        icon = detect_icon()
+        if icon:
+            print(f"🎨 Icono detectado: {icon}")
     icon_arg = []
     if icon:
         icon_arg = ["--icon", icon]
-        print(f"🎨 Icono detectado: {icon}")
     else:
         print("ℹ️  No se detectó icono")
 
@@ -230,6 +336,13 @@ def build(variant: str = "countries"):
         if e.stderr:
             print("STDERR:", e.stderr)
         sys.exit(1)
+    finally:
+        # Limpiar el icono temporal generado desde el PNG de la variante.
+        if icon_temp:
+            try:
+                shutil.rmtree(os.path.dirname(icon_temp), ignore_errors=True)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build TikTok Racing Go executable")

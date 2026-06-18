@@ -1330,7 +1330,7 @@ class FulbitoGameEngine(GameEngine):
                 )
             )
 
-        self._add_floating_text(f"+{total_diamonds} → {country}")
+        self._add_floating_text(f"+{total_diamonds} → {country}", country=country)
 
     async def _handle_fulbito_comment(self, event) -> None:
         if self.game_state == 'FIXTURE_SETUP':
@@ -1386,7 +1386,9 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "follow", FULBITO_FOLLOW_DISTANCE)
         self._add_gift_effect(country, FULBITO_FOLLOW_DISTANCE)
-        self._add_floating_text(f"{username} gracias por seguirnos!", color=(100, 220, 255))
+        self._add_floating_text(
+            f"{username} gracias por seguirnos!", color=(100, 220, 255), country=country
+        )
         logger.info("Follow: %s → %s", username, country)
 
     async def _handle_fulbito_share(self, event) -> None:
@@ -1399,7 +1401,7 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "share", FULBITO_SHARE_DISTANCE)
         self._add_gift_effect(country, FULBITO_SHARE_DISTANCE)
-        self._add_floating_text("Copeti!", color=(100, 255, 180))
+        self._add_floating_text("Copeti!", color=(100, 255, 180), country=country)
         logger.info("Share: %s → %s", username, country)
 
     async def _handle_fulbito_subscribe(self, event) -> None:
@@ -1427,18 +1429,58 @@ class FulbitoGameEngine(GameEngine):
             self.floating_texts[-1].max_lifespan = 60
             self.floating_texts[-1].font_size = 22
 
+    def _country_lane_anchor(self, country: str) -> tuple[float, float]:
+        """Compute a floating-text anchor positioned on a country's lane.
+
+        Anchors action feedback to the team it belongs to instead of the screen
+        center, so simultaneous events from different countries no longer stack
+        on top of each other.
+
+        Args:
+            country: Country whose lane should host the text.
+
+        Returns:
+            Tuple ``(x, y)`` in render-surface coordinates: X follows the
+            country's racer (its flag), Y is the vertical center of its lane.
+            Falls back to the horizontal center when the country/racer is
+            unavailable.
+        """
+        from core.config import GAME_AREA_TOP, SCREEN_WIDTH
+        pw = self.physics_world
+        try:
+            lane_idx = self.current_fixture.index(country)
+        except (ValueError, AttributeError):
+            return (SCREEN_WIDTH / 2.0, float(GAME_AREA_TOP + pw.lane_y_offset))
+        lane_cy = (
+            GAME_AREA_TOP + pw.lane_y_offset
+            + lane_idx * pw.lane_height + pw.lane_height // 2
+        )
+        racer = pw.racers.get(country)
+        x = float(racer.body.position.x) if racer else SCREEN_WIDTH / 2.0
+        return (x, float(lane_cy))
+
     def _add_floating_text(
         self,
         text: str,
         color: tuple[int, int, int] = (255, 255, 100),
         x: Optional[float] = None,
         y: Optional[float] = None,
+        country: Optional[str] = None,
     ) -> None:
         from core.config import SCREEN_WIDTH, SCREEN_HEIGHT
-        fx = x if x is not None else SCREEN_WIDTH / 2
-        fy = y if y is not None else SCREEN_HEIGHT / 2
+        dx = 0.0
+        if country is not None and x is None and y is None:
+            fx, fy = self._country_lane_anchor(country)
+            # Jitter ligero para que repeticiones rápidas en el mismo carril se
+            # abran en abanico en vez de superponerse (se mantiene dentro del carril).
+            fx += random.uniform(-12.0, 12.0)
+            fy += random.uniform(-5.0, 5.0)
+            dx = random.uniform(-0.25, 0.25)
+        else:
+            fx = x if x is not None else SCREEN_WIDTH / 2
+            fy = y if y is not None else SCREEN_HEIGHT / 2
         self.floating_texts.append(
-            FloatingText(text=text, x=fx, y=fy, color=color, font_size=16)
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=16, dx=dx)
         )
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
