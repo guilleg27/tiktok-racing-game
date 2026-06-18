@@ -1272,7 +1272,7 @@ class FulbitoGameEngine(GameEngine):
             self._gift_flashes[country] = (time.time(), distance)
             self._add_gift_effect(country, distance)
             self._on_real_activity()
-            self._add_floating_text(f"+QUIEREME → {country}", color=(255, 100, 180))
+            self._add_floating_text(f"{username} es un nuevo fan", color=(255, 100, 180))
             logger.info("Quiereme gift: %s → %s (distance=%d)", username, country, distance)
             return
 
@@ -1362,7 +1362,7 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "follow", FULBITO_FOLLOW_DISTANCE)
         self._add_gift_effect(country, FULBITO_FOLLOW_DISTANCE)
-        self._add_floating_text(f"+FOLLOW → {country}", color=(100, 220, 255))
+        self._add_floating_text(f"{username} gracias por seguirnos!", color=(100, 220, 255))
         logger.info("Follow: %s → %s", username, country)
 
     async def _handle_fulbito_share(self, event) -> None:
@@ -1375,7 +1375,7 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "share", FULBITO_SHARE_DISTANCE)
         self._add_gift_effect(country, FULBITO_SHARE_DISTANCE)
-        self._add_floating_text(f"+SHARE → {country}", color=(100, 255, 180))
+        self._add_floating_text("Copeti!", color=(100, 255, 180))
         logger.info("Share: %s → %s", username, country)
 
     async def _handle_fulbito_subscribe(self, event) -> None:
@@ -1414,7 +1414,7 @@ class FulbitoGameEngine(GameEngine):
         fx = x if x is not None else SCREEN_WIDTH / 2
         fy = y if y is not None else SCREEN_HEIGHT / 2
         self.floating_texts.append(
-            FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=14)
         )
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
@@ -1556,13 +1556,6 @@ class FulbitoGameEngine(GameEngine):
 
         sorted_wins = sorted(self.session_wins.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        pw = self.physics_world
-        first_lane_top = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset
-        # Base de los bloques con mínimo padding antes del primer carril
-        # ISO text (~12px) + 2px gap + 4px padding = 18px sobre first_lane_top
-        PODIO_BASE_Y = first_lane_top - 30
-        cx = ACTUAL_WIDTH // 2
-
         CONFIGS = [
             {'pos': 2, 'bh': 18, 'bw': 38, 'mcolor': (192, 192, 192)},  # 2do
             {'pos': 1, 'bh': 26, 'bw': 46, 'mcolor': (255, 215, 0)},    # 1ro
@@ -1580,7 +1573,12 @@ class FulbitoGameEngine(GameEngine):
         ]
 
         total_w = sum(c['bw'] for _, c in visual_order) + GAP * (len(visual_order) - 1)
-        start_x = cx - total_w // 2
+
+        # Posición: alineado a la derecha de la zona negra superior, centrado verticalmente
+        _bh_max = max(c['bh'] for _, c in visual_order)
+        _center_y = GAME_MARGIN + GAME_AREA_TOP // 2
+        PODIO_BASE_Y = _center_y + (_bh_max + SHIELD_SIZE + 2) // 2
+        start_x = ACTUAL_WIDTH - 8 - total_w
 
         font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
         font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
@@ -2186,7 +2184,7 @@ class FulbitoGameEngine(GameEngine):
         pw = self.physics_world
         num_lanes = len(self.current_fixture)
         last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
-        y1 = last_lane_bottom + GAME_MARGIN + 10
+        y1 = last_lane_bottom + GAME_MARGIN + 30
         y2 = y1 + surf1.get_height() + 4
 
         PAD_X, PAD_Y = 14, 8
