@@ -196,6 +196,9 @@ FULBITO_DISTANCE_PER_DIAMOND: float = 0.40
 
 # Distancia mínima por gift sin importar el valor
 FULBITO_MIN_GIFT_DISTANCE: float = 2.0
+# Velocidad máxima de la pelota en px/s — controla cuán rápido se ve moverse
+# 100 px/s: Galaxia (200px) tarda ~2s, Universo (400px) ~4s
+FULBITO_BALL_SPEED_PPS: float = 100.0
 
 # Multiplicador de distancia para comentarios válidos
 # Con distance_per_diamond=0.15, un comentario = 1 * 0.15 = muy poco

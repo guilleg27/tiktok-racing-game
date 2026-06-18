@@ -48,8 +48,8 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         self.rosa_combo_multiplier = 1.0
 
         # Sobreescribir posiciones de inicio/fin para usar los extremos reales
-        self.start_x = _TRACK_LEFT + 12          # ≈ 20px
-        self.finish_line_x = _TRACK_RIGHT - 12   # ≈ 440px
+        self.start_x = _TRACK_LEFT + FULBITO_FLAG_RADIUS + 4    # 8+18+4 = 30px
+        self.finish_line_x = _TRACK_RIGHT - FULBITO_FLAG_RADIUS - 4  # 452-18-4 = 430px
 
         # Reposicionar racers al nuevo start_x (super() los colocó con FULBITO_START_MARGIN)
         for i, (_, racer) in enumerate(self.racers.items()):
@@ -70,9 +70,9 @@ class FulbitoPhysicsWorld(PhysicsWorld):
     def _get_initial_x(self, lane: int) -> float:
         """Return the starting X position for a given lane."""
         if self._get_lane_direction(lane):
-            return float(_TRACK_LEFT + FULBITO_START_MARGIN)
+            return float(_TRACK_LEFT + FULBITO_FLAG_RADIUS + 4)
         else:
-            return float(_TRACK_RIGHT - FULBITO_START_MARGIN)
+            return float(_TRACK_RIGHT - FULBITO_FLAG_RADIUS - 4)
 
     # ─────────────────────────────────────────────
     # Overrides
@@ -159,6 +159,29 @@ class FulbitoPhysicsWorld(PhysicsWorld):
         }
 
         super().update(dt)
+
+        # Override the core's percentage-Lerp with constant-speed movement.
+        # Revert positions to prev_x first, then apply constant-speed movement.
+        from variants.fulbito.config import FULBITO_BALL_SPEED_PPS
+        max_move = FULBITO_BALL_SPEED_PPS * dt
+        for country, racer in self.racers.items():
+            # Revert to position at start of frame
+            racer.body.position = (prev_x.get(country, racer.body.position.x), racer.body.position.y)
+        for country, racer in self.racers.items():
+            if self.is_country_frozen(country):
+                continue
+            current_x = float(racer.body.position.x)  # now at prev_x position
+            dist = racer.target_x - current_x
+            if abs(dist) < 0.05:
+                continue
+            move = max(-max_move, min(max_move, dist))
+            new_pos = current_x + move
+            if self._get_lane_direction(racer.lane):
+                new_pos = min(new_pos, _TRACK_RIGHT)
+            else:
+                new_pos = max(new_pos, _TRACK_LEFT)
+            racer.body.position = (new_pos, racer.body.position.y)
+            racer.body.velocity = (0.0, 0.0)
 
         PIXELS_PER_DEGREE = 0.8
         IDLE_DEG_PER_SEC = 25.0

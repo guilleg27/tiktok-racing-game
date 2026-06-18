@@ -687,10 +687,10 @@ class FulbitoGameEngine(GameEngine):
         _am.play_final_stretch_sound = _noop
         _am.play_combo_fire_sound    = _noop
 
-        self._start_fulbito_bgm()
-
-        # Mute toggle state
+        # Mute toggle state — initialize BEFORE starting BGM
         self._muted: bool = False
+
+        self._start_fulbito_bgm()
 
         self.game_state = 'FIXTURE_SETUP'
 
@@ -711,6 +711,7 @@ class FulbitoGameEngine(GameEngine):
         self._winner_video_next_frame_at: float = 0.0
         self._winner_video_current_surf = None
         self._winner_video_rect: tuple = (0, 0, 1, 1)
+        self._wc2026_bg = None
         self._fixture_selected_slot: int = 0
         self._fixture_error_msg: str = ''
         self._fixture_error_timer: float = 0.0
@@ -813,6 +814,25 @@ class FulbitoGameEngine(GameEngine):
         self.outer_background = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT))
         self.outer_background.fill((10, 10, 10))
         self.background_manager = _GrassBackground(self)
+        try:
+            from core.resources import resource_path
+            from core.config import SCREEN_HEIGHT, GAME_AREA_TOP, GAME_AREA_BOTTOM, GAME_MARGIN
+            _zone_w = ACTUAL_WIDTH
+            _zone_h = (SCREEN_HEIGHT - GAME_AREA_BOTTOM + GAME_MARGIN) - (GAME_AREA_TOP + GAME_MARGIN)
+            _raw = pygame.image.load(resource_path("variants/fulbito/assets/wc2026.png")).convert()
+            _src_w, _src_h = _raw.get_size()
+            _scale = max(_zone_w / _src_w, _zone_h / _src_h)
+            _scaled_w = int(_src_w * _scale)
+            _scaled_h = int(_src_h * _scale)
+            _scaled = pygame.transform.smoothscale(_raw, (_scaled_w, _scaled_h))
+            _off_x = (_scaled_w - _zone_w) // 2
+            _off_y = (_scaled_h - _zone_h) // 2
+            self._wc2026_bg = _scaled.subsurface((_off_x, _off_y, _zone_w, _zone_h)).copy()
+            _bw, _bh = self._wc2026_bg.get_size()
+            _small = pygame.transform.smoothscale(self._wc2026_bg, (_bw // 4, _bh // 4))
+            self._wc2026_bg = pygame.transform.smoothscale(_small, (_bw, _bh))
+        except Exception:
+            self._wc2026_bg = None
 
     # ── Finish line — football goals ─────────────────────────────────────────
 
@@ -1084,7 +1104,6 @@ class FulbitoGameEngine(GameEngine):
             pygame.mixer.pause()
         else:
             # Restore to whatever volume the game had set before muting
-            # (0.3 normal, 0.05 during victory — read the current BGM state)
             pygame.mixer.music.set_volume(
                 0.05 if self.game_state == 'RACE_FINISHED' else 0.3
             )
@@ -1101,7 +1120,7 @@ class FulbitoGameEngine(GameEngine):
             return
         try:
             pygame.mixer.music.load(bgm_path)
-            pygame.mixer.music.set_volume(0.3)
+            pygame.mixer.music.set_volume(0.0 if self._muted else 0.3)
             pygame.mixer.music.play(loops=-1)
             logger.info("Fulbito BGM started: %s", bgm_path)
         except Exception as exc:
@@ -1253,7 +1272,7 @@ class FulbitoGameEngine(GameEngine):
             self._gift_flashes[country] = (time.time(), distance)
             self._add_gift_effect(country, distance)
             self._on_real_activity()
-            self._add_floating_text(f"+QUIEREME → {country}", color=(255, 100, 180))
+            self._add_floating_text(f"{username} es un nuevo fan", color=(255, 100, 180))
             logger.info("Quiereme gift: %s → %s (distance=%d)", username, country, distance)
             return
 
@@ -1343,7 +1362,7 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "follow", FULBITO_FOLLOW_DISTANCE)
         self._add_gift_effect(country, FULBITO_FOLLOW_DISTANCE)
-        self._add_floating_text(f"+FOLLOW → {country}", color=(100, 220, 255))
+        self._add_floating_text(f"{username} gracias por seguirnos!", color=(100, 220, 255))
         logger.info("Follow: %s → %s", username, country)
 
     async def _handle_fulbito_share(self, event) -> None:
@@ -1356,7 +1375,7 @@ class FulbitoGameEngine(GameEngine):
             country = self._get_last_place_country()
         self.physics_world.apply_gift_impulse(country, "share", FULBITO_SHARE_DISTANCE)
         self._add_gift_effect(country, FULBITO_SHARE_DISTANCE)
-        self._add_floating_text(f"+SHARE → {country}", color=(100, 255, 180))
+        self._add_floating_text("Copeti!", color=(100, 255, 180))
         logger.info("Share: %s → %s", username, country)
 
     async def _handle_fulbito_subscribe(self, event) -> None:
@@ -1395,7 +1414,7 @@ class FulbitoGameEngine(GameEngine):
         fx = x if x is not None else SCREEN_WIDTH / 2
         fy = y if y is not None else SCREEN_HEIGHT / 2
         self.floating_texts.append(
-            FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=16)
         )
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
@@ -1530,19 +1549,12 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_session_podio(self) -> None:
         import pygame
-        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH, GAME_MARGIN
+        from core.config import ACTUAL_WIDTH, GAME_MARGIN
 
         if not self.session_wins:
             return
 
         sorted_wins = sorted(self.session_wins.items(), key=lambda x: x[1], reverse=True)[:3]
-
-        pw = self.physics_world
-        first_lane_top = GAME_MARGIN + GAME_AREA_TOP + pw.lane_y_offset
-        # Base de los bloques con mínimo padding antes del primer carril
-        # ISO text (~12px) + 2px gap + 4px padding = 18px sobre first_lane_top
-        PODIO_BASE_Y = first_lane_top - 30
-        cx = ACTUAL_WIDTH // 2
 
         CONFIGS = [
             {'pos': 2, 'bh': 18, 'bw': 38, 'mcolor': (192, 192, 192)},  # 2do
@@ -1561,10 +1573,28 @@ class FulbitoGameEngine(GameEngine):
         ]
 
         total_w = sum(c['bw'] for _, c in visual_order) + GAP * (len(visual_order) - 1)
-        start_x = cx - total_w // 2
+
+        # Position: bottom of ISO label sits 5 px above the top edge of the
+        # first lane's large goal area (the highest drawn element of the goal).
+        _bh_max = max(c['bh'] for _, c in visual_order)
+        start_x = ACTUAL_WIDTH - 8 - total_w
 
         font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
         font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
+
+        # Compute the screen-Y of the topmost drawn element of lane-0's goal.
+        # _draw_goal draws the big area from (lane_cy - BIG_H//2) on render_surface,
+        # and render_surface is blitted to screen at y=GAME_MARGIN.
+        _pw        = self.physics_world
+        _lane_h    = _pw.lane_height
+        _lane_cy0  = _pw.game_area_top + _pw.lane_y_offset + _lane_h // 2
+        _big_h     = int(_lane_h * 0.90)
+        _goal_top_screen = GAME_MARGIN + _lane_cy0 - _big_h // 2
+
+        # PODIO_BASE_Y is the block bottom; ISO is blit at PODIO_BASE_Y+2.
+        # We need: PODIO_BASE_Y + 2 + iso_h == _goal_top_screen - 5
+        _iso_h       = font_iso.size("AUS")[1]
+        PODIO_BASE_Y = _goal_top_screen - 18 - _iso_h - 2
 
         x = start_x
         for entry, config in visual_order:
@@ -1636,7 +1666,7 @@ class FulbitoGameEngine(GameEngine):
             )
         logger.info("Partido %d terminado. Ganador: %s", self.race_number, winner)
         import pygame
-        pygame.mixer.music.set_volume(0.05)
+        pygame.mixer.music.set_volume(0.0 if self._muted else 0.05)
         self._play_goal_sound()
         if winner:
             from core.config import GIFT_COLORS
@@ -1675,7 +1705,7 @@ class FulbitoGameEngine(GameEngine):
             self._winner_video_cap = None
             self._winner_video_current_surf = None
         import pygame
-        pygame.mixer.music.set_volume(0.3)
+        pygame.mixer.music.set_volume(0.0 if self._muted else 0.3)
         logger.info("Intermission. King=%s Wildcard=%s", self.king, self.wildcard_country)
 
     def _resolve_next_fixture(self) -> list[str]:
@@ -2167,7 +2197,7 @@ class FulbitoGameEngine(GameEngine):
         pw = self.physics_world
         num_lanes = len(self.current_fixture)
         last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
-        y1 = last_lane_bottom + GAME_MARGIN + 10
+        y1 = last_lane_bottom + GAME_MARGIN + 30
         y2 = y1 + surf1.get_height() + 4
 
         PAD_X, PAD_Y = 14, 8
@@ -2396,10 +2426,13 @@ class FulbitoGameEngine(GameEngine):
         center_x    = ACTUAL_WIDTH // 2
         center_y    = game_top + game_h // 2
 
-        # ── Dark overlay ──────────────────────────────────────────────────────
-        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 210))
-        self.screen.blit(overlay, (0, game_top))
+        # ── Background overlay ────────────────────────────────────────────────
+        if self._wc2026_bg is not None:
+            self.screen.blit(self._wc2026_bg, (0, game_top))
+        else:
+            overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 210))
+            self.screen.blit(overlay, (0, game_top))
 
         # ── Fireworks / confetti ──────────────────────────────────────────────
         self._render_victory_particles()
@@ -2417,19 +2450,19 @@ class FulbitoGameEngine(GameEngine):
 
         # ── "¡GANÓ!" ──────────────────────────────────────────────────────────
         font_gano = pygame.font.SysFont('Arial', 26, bold=True)
-        gano_surf = font_gano.render("¡GANÓ!", True, (255, 255, 255))
-        gx = center_x - gano_surf.get_width() // 2
+        _gano_base = font_gano.render("¡GANÓ!", True, (255, 255, 255))
+        gx = center_x - _gano_base.get_width() // 2
         gy = center_y + 42
-        self.screen.blit(font_gano.render("¡GANÓ!", True, (0, 0, 0)), (gx + 2, gy + 2))
-        self.screen.blit(gano_surf, (gx, gy))
+        _gano_outlined = self._render_text_enhanced("¡GANÓ!", font_gano, (255, 255, 255), (0, 0, 0), 2)
+        self.screen.blit(_gano_outlined, (gx - 2, gy - 2))
 
         # ── Country name ──────────────────────────────────────────────────────
         font_name = pygame.font.SysFont('Arial', 46, bold=True)
-        name_surf = font_name.render(winner_name, True, (255, 220, 0))
-        nx = center_x - name_surf.get_width() // 2
+        _name_base = font_name.render(winner_name, True, (255, 220, 0))
+        nx = center_x - _name_base.get_width() // 2
         ny = center_y + 70
-        self.screen.blit(font_name.render(winner_name, True, (0, 0, 0)), (nx + 2, ny + 2))
-        self.screen.blit(name_surf, (nx, ny))
+        _name_outlined = self._render_text_enhanced(winner_name, font_name, (255, 220, 0), (0, 0, 0), 3)
+        self.screen.blit(_name_outlined, (nx - 3, ny - 3))
 
         # ── Winner video (below last lane → bottom of screen) ────────────────
         self._advance_winner_video()
