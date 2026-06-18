@@ -1414,7 +1414,7 @@ class FulbitoGameEngine(GameEngine):
         fx = x if x is not None else SCREEN_WIDTH / 2
         fy = y if y is not None else SCREEN_HEIGHT / 2
         self.floating_texts.append(
-            FloatingText(text=text, x=fx, y=fy, color=color, font_size=18)
+            FloatingText(text=text, x=fx, y=fy, color=color, font_size=16)
         )
         if len(self.floating_texts) > self.MAX_FLOATING_TEXTS:
             self.floating_texts = self.floating_texts[-self.MAX_FLOATING_TEXTS:]
@@ -1549,7 +1549,7 @@ class FulbitoGameEngine(GameEngine):
 
     def _render_session_podio(self) -> None:
         import pygame
-        from core.config import GAME_AREA_TOP, ACTUAL_WIDTH, GAME_MARGIN
+        from core.config import ACTUAL_WIDTH, GAME_MARGIN
 
         if not self.session_wins:
             return
@@ -1574,14 +1574,27 @@ class FulbitoGameEngine(GameEngine):
 
         total_w = sum(c['bw'] for _, c in visual_order) + GAP * (len(visual_order) - 1)
 
-        # Posición: alineado a la derecha de la zona negra superior, centrado verticalmente
+        # Position: bottom of ISO label sits 5 px above the top edge of the
+        # first lane's large goal area (the highest drawn element of the goal).
         _bh_max = max(c['bh'] for _, c in visual_order)
-        _center_y = GAME_MARGIN + GAME_AREA_TOP // 2
-        PODIO_BASE_Y = _center_y + (_bh_max + SHIELD_SIZE + 2) // 2
         start_x = ACTUAL_WIDTH - 8 - total_w
 
         font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
         font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
+
+        # Compute the screen-Y of the topmost drawn element of lane-0's goal.
+        # _draw_goal draws the big area from (lane_cy - BIG_H//2) on render_surface,
+        # and render_surface is blitted to screen at y=GAME_MARGIN.
+        _pw        = self.physics_world
+        _lane_h    = _pw.lane_height
+        _lane_cy0  = _pw.game_area_top + _pw.lane_y_offset + _lane_h // 2
+        _big_h     = int(_lane_h * 0.90)
+        _goal_top_screen = GAME_MARGIN + _lane_cy0 - _big_h // 2
+
+        # PODIO_BASE_Y is the block bottom; ISO is blit at PODIO_BASE_Y+2.
+        # We need: PODIO_BASE_Y + 2 + iso_h == _goal_top_screen - 5
+        _iso_h       = font_iso.size("AUS")[1]
+        PODIO_BASE_Y = _goal_top_screen - 18 - _iso_h - 2
 
         x = start_x
         for entry, config in visual_order:
