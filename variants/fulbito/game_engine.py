@@ -711,6 +711,7 @@ class FulbitoGameEngine(GameEngine):
         self._winner_video_next_frame_at: float = 0.0
         self._winner_video_current_surf = None
         self._winner_video_rect: tuple = (0, 0, 1, 1)
+        self._wc2026_bg = None
         self._fixture_selected_slot: int = 0
         self._fixture_error_msg: str = ''
         self._fixture_error_timer: float = 0.0
@@ -813,6 +814,25 @@ class FulbitoGameEngine(GameEngine):
         self.outer_background = pygame.Surface((ACTUAL_WIDTH, ACTUAL_HEIGHT))
         self.outer_background.fill((10, 10, 10))
         self.background_manager = _GrassBackground(self)
+        try:
+            from core.resources import resource_path
+            from core.config import SCREEN_HEIGHT, GAME_AREA_TOP, GAME_AREA_BOTTOM, GAME_MARGIN
+            _zone_w = ACTUAL_WIDTH
+            _zone_h = (SCREEN_HEIGHT - GAME_AREA_BOTTOM + GAME_MARGIN) - (GAME_AREA_TOP + GAME_MARGIN)
+            _raw = pygame.image.load(resource_path("variants/fulbito/assets/wc2026.png")).convert()
+            _src_w, _src_h = _raw.get_size()
+            _scale = max(_zone_w / _src_w, _zone_h / _src_h)
+            _scaled_w = int(_src_w * _scale)
+            _scaled_h = int(_src_h * _scale)
+            _scaled = pygame.transform.smoothscale(_raw, (_scaled_w, _scaled_h))
+            _off_x = (_scaled_w - _zone_w) // 2
+            _off_y = (_scaled_h - _zone_h) // 2
+            self._wc2026_bg = _scaled.subsurface((_off_x, _off_y, _zone_w, _zone_h)).copy()
+            _bw, _bh = self._wc2026_bg.get_size()
+            _small = pygame.transform.smoothscale(self._wc2026_bg, (_bw // 4, _bh // 4))
+            self._wc2026_bg = pygame.transform.smoothscale(_small, (_bw, _bh))
+        except Exception:
+            self._wc2026_bg = None
 
     # ── Finish line — football goals ─────────────────────────────────────────
 
@@ -2395,10 +2415,13 @@ class FulbitoGameEngine(GameEngine):
         center_x    = ACTUAL_WIDTH // 2
         center_y    = game_top + game_h // 2
 
-        # ── Dark overlay ──────────────────────────────────────────────────────
-        overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 210))
-        self.screen.blit(overlay, (0, game_top))
+        # ── Background overlay ────────────────────────────────────────────────
+        if self._wc2026_bg is not None:
+            self.screen.blit(self._wc2026_bg, (0, game_top))
+        else:
+            overlay = pygame.Surface((ACTUAL_WIDTH, game_h), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 210))
+            self.screen.blit(overlay, (0, game_top))
 
         # ── Fireworks / confetti ──────────────────────────────────────────────
         self._render_victory_particles()
@@ -2416,19 +2439,19 @@ class FulbitoGameEngine(GameEngine):
 
         # ── "¡GANÓ!" ──────────────────────────────────────────────────────────
         font_gano = pygame.font.SysFont('Arial', 26, bold=True)
-        gano_surf = font_gano.render("¡GANÓ!", True, (255, 255, 255))
-        gx = center_x - gano_surf.get_width() // 2
+        _gano_base = font_gano.render("¡GANÓ!", True, (255, 255, 255))
+        gx = center_x - _gano_base.get_width() // 2
         gy = center_y + 42
-        self.screen.blit(font_gano.render("¡GANÓ!", True, (0, 0, 0)), (gx + 2, gy + 2))
-        self.screen.blit(gano_surf, (gx, gy))
+        _gano_outlined = self._render_text_enhanced("¡GANÓ!", font_gano, (255, 255, 255), (0, 0, 0), 2)
+        self.screen.blit(_gano_outlined, (gx - 2, gy - 2))
 
         # ── Country name ──────────────────────────────────────────────────────
         font_name = pygame.font.SysFont('Arial', 46, bold=True)
-        name_surf = font_name.render(winner_name, True, (255, 220, 0))
-        nx = center_x - name_surf.get_width() // 2
+        _name_base = font_name.render(winner_name, True, (255, 220, 0))
+        nx = center_x - _name_base.get_width() // 2
         ny = center_y + 70
-        self.screen.blit(font_name.render(winner_name, True, (0, 0, 0)), (nx + 2, ny + 2))
-        self.screen.blit(name_surf, (nx, ny))
+        _name_outlined = self._render_text_enhanced(winner_name, font_name, (255, 220, 0), (0, 0, 0), 3)
+        self.screen.blit(_name_outlined, (nx - 3, ny - 3))
 
         # ── Winner video (below last lane → bottom of screen) ────────────────
         self._advance_winner_video()
