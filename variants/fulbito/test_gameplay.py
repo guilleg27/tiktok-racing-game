@@ -201,11 +201,15 @@ class GameplaySimulator:
 
     async def _phase_race_running(self) -> None:
         """Inyecta una mezcla de gifts, comentarios, likes, shares y subs
-        durante el race. Ejercita combat, momentum, fire tiers y club bonus."""
+        durante el race. Ejercita combat, momentum, fire tiers y club bonus.
+
+        En modo slow (--slow) usa una distribucion muy sesgada hacia gifts
+        pequenos y una frecuencia baja para que la carrera dure ~60 segundos.
+        """
         self._race_count += 1
         fixture = list(self.engine.current_fixture)
-        logger.info("[FASE 3] Race #%d arrancando con fixture=%s",
-                    self._race_count, fixture)
+        logger.info("[FASE 3] Race #%d arrancando con fixture=%s (slow=%s, max=%.0fs)",
+                    self._race_count, fixture, self.slow, self.max_race_duration)
 
         # 1. Inyectar comentarios iniciales para que viewers se unan a los equipos
         logger.info("  → Inyectando comentarios de chat para unir viewers a equipos")
@@ -233,21 +237,32 @@ class GameplaySimulator:
         logger.info("  → Cascada de gifts (mixto de tiers)")
         gift_count = 0
         race_start = time.monotonic()
-        max_race_duration = 25.0  # safety stop
+
+        # Slow mode: gifts poco frecuentes y pequeños → carrera ~60s
+        # Normal mode: mix amplio → carrera ~15-25s
+        if self.slow:
+            # 88% tier 0 (1–5 💎), 9% tier 1 (10–50 💎), 3% tier 2 (99–200 💎), sin mega
+            gift_thresholds = (0.88, 0.97, 1.00)
+            gift_sleep = (3.0, 6.0)   # segundos entre gifts
+            like_prob = 0.08
+        else:
+            # 60% small, 25% medium, 12% big, 3% mega
+            gift_thresholds = (0.60, 0.85, 0.97)
+            gift_sleep = (0.1, 0.4)
+            like_prob = 0.15
 
         while (
             self.engine.game_state == 'RACE_RUNNING'
-            and time.monotonic() - race_start < max_race_duration
+            and time.monotonic() - race_start < self.max_race_duration
         ):
             country = self.rng.choice(fixture)
 
-            # Distribucion: 60% small, 25% medium, 12% big, 3% mega
             roll = self.rng.random()
-            if roll < 0.60:
+            if roll < gift_thresholds[0]:
                 gift_name, diamonds = self.rng.choice(GIFT_CATALOG[:5])
-            elif roll < 0.85:
+            elif roll < gift_thresholds[1]:
                 gift_name, diamonds = self.rng.choice(GIFT_CATALOG[5:8])
-            elif roll < 0.97:
+            elif roll < gift_thresholds[2]:
                 gift_name, diamonds = self.rng.choice(GIFT_CATALOG[8:11])
             else:
                 gift_name, diamonds = self.rng.choice(GIFT_CATALOG[11:])
@@ -262,10 +277,10 @@ class GameplaySimulator:
                 self._vote(self.rng.choice(fixture))
 
             # Likes ocasionales mezclados
-            if self.rng.random() < 0.15:
+            if self.rng.random() < like_prob:
                 self._like(count=self.rng.randint(5, 25))
 
-            await asyncio.sleep(self.rng.uniform(0.1, 0.4) / self.speed)
+            await asyncio.sleep(self.rng.uniform(*gift_sleep) / self.speed)
 
         elapsed = time.monotonic() - race_start
         logger.info("  → Race terminada (gifts enviados=%d, duracion=%.1fs)",
@@ -322,10 +337,19 @@ class GameplaySimulator:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestApp:
-    def __init__(self, races: int, speed: float, rng: random.Random):
+    def __init__(
+        self,
+        races: int,
+        speed: float,
+        rng: random.Random,
+        slow: bool = False,
+        duration: float | None = None,
+    ):
         self.races = races
         self.speed = speed
         self.rng = rng
+        self.slow = slow
+        self.duration = duration
         self.queue: asyncio.Queue[GameEvent] = asyncio.Queue()
         self.database: Database | None = None
         self.game_engine: FulbitoGameEngine | None = None
@@ -349,7 +373,8 @@ class TestApp:
 
         # Lanzar el simulador en paralelo
         sim = GameplaySimulator(
-            self.game_engine, self.queue, self.races, self.speed, self.rng
+            self.game_engine, self.queue, self.races, self.speed, self.rng,
+            slow=self.slow, duration=self.duration,
         )
         sim_task = asyncio.create_task(sim.run())
 
@@ -407,13 +432,21 @@ def main() -> None:
                         help="multiplicador de velocidad de gifts")
     parser.add_argument("--seed", type=int, default=None,
                         help="semilla del RNG (default: aleatorio)")
+    parser.add_argument("--slow", action="store_true",
+                        help="preset de carrera lenta (~60s): gifts pequeños y poco frecuentes")
+    parser.add_argument("--duration", type=float, default=None,
+                        help="duracion maxima de la fase de race en segundos "
+                             "(default: 25 normal / 120 slow)")
     args = parser.parse_args()
 
     seed = args.seed if args.seed is not None else random.randint(0, 999999)
-    logger.info("seed=%d", seed)
+    logger.info("seed=%d  slow=%s  duration=%s", seed, args.slow, args.duration)
     rng = random.Random(seed)
 
-    app = TestApp(races=args.races, speed=args.speed, rng=rng)
+    app = TestApp(
+        races=args.races, speed=args.speed, rng=rng,
+        slow=args.slow, duration=args.duration,
+    )
     try:
         asyncio.run(app.run())
     except KeyboardInterrupt:
