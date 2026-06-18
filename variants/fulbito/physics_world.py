@@ -86,13 +86,17 @@ class FulbitoPhysicsWorld(PhysicsWorld):
 
         # Recompute lane layout for the actual number of racers (4), not the base's 10/15.
         num_racers = len(self.countries)
-        # Lee LANE_HEIGHT en runtime (game_engine lo sobreescribe a 85 antes de instanciar)
+        # Usar dimensiones fijas cacheadas por game_engine al inicio de la sesión,
+        # así el campo es idéntico en cada recreación del physics world.
         import core.config as _cc
-        fulbito_lane_height = getattr(_cc, 'LANE_HEIGHT', 85)
-        computed_lane_height = self.game_area_height // max(num_racers, 1)
-        self.lane_height = min(computed_lane_height, fulbito_lane_height)
-        total_race_height = self.lane_height * num_racers
-        self.lane_y_offset = (self.game_area_height - total_race_height) // 2
+        # BLINDAJE: dimensiones literales fijas (76 / 168), idénticas en toda partida y
+        # build. No se derivan de game_area_height para que la cancha jamás cambie.
+        fixed_lane_h = getattr(_cc, 'FULBITO_FIXED_LANE_HEIGHT', 76) or 76
+        fixed_y_offset = getattr(_cc, 'FULBITO_FIXED_LANE_Y_OFFSET', 168)
+        if fixed_y_offset is None:
+            fixed_y_offset = 168
+        self.lane_height = fixed_lane_h
+        self.lane_y_offset = fixed_y_offset
 
         for i, country in enumerate(self.countries):
             lane_y = (

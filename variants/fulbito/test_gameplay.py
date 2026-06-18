@@ -11,6 +11,7 @@ Uso:
     python variants/fulbito/test_gameplay.py --races 3 --speed 2.0
     python variants/fulbito/test_gameplay.py --slow           # ~1 min por race
     python variants/fulbito/test_gameplay.py --slow --duration 90
+    python variants/fulbito/test_gameplay.py --slow --speed 2.0
 
 Flags:
     --races N      Cantidad de partidos a simular (default: 2)
