@@ -323,10 +323,10 @@ def _show_pygame_startup_dialog(prefill_username: str) -> dict:
 
     # ── Fonts ─────────────────────────────────────────────────────────────────
     try:
-        font_lbl   = pygame.font.SysFont("Arial", 15, bold=True)
-        font_inp   = pygame.font.SysFont("Arial", 17)
-        font_btn   = pygame.font.SysFont("Arial", 15, bold=True)
-        font_title = pygame.font.SysFont("Arial", 19, bold=True)
+        font_lbl   = pygame.font.SysFont("Rajdhani, Arial", 15, bold=True)
+        font_inp   = pygame.font.SysFont("Rajdhani, Arial", 17)
+        font_btn   = pygame.font.SysFont("Rajdhani, Arial", 15, bold=True)
+        font_title = pygame.font.SysFont("Rajdhani, Arial", 19, bold=True)
     except Exception:
         font_lbl = font_inp = font_btn = font_title = pygame.font.Font(None, 20)
 

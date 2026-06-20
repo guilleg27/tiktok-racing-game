@@ -278,11 +278,7 @@ class TikTokManager:
         async def on_follow(event: FollowEvent) -> None:
             """Handle new follower: queue banner and hype event."""
             try:
-                username = (
-                    getattr(event.user, "unique_id", None)
-                    or getattr(event.user, "nickname", None)
-                    or "someone"
-                ) if hasattr(event, "user") and event.user else "someone"
+                username = self._extract_username(event)
                 follow_game_event = GameEvent(
                     type=EventType.FOLLOW,
                     username=username,
@@ -298,11 +294,7 @@ class TikTokManager:
         async def on_share(event: ShareEvent) -> None:
             """Handle stream share."""
             try:
-                username = (
-                    getattr(event.user, "unique_id", None)
-                    or getattr(event.user, "nickname", None)
-                    or "someone"
-                ) if hasattr(event, "user") and event.user else "someone"
+                username = self._extract_username(event)
                 try:
                     self.queue.put_nowait(GameEvent(
                         type=EventType.SHARE,
@@ -317,11 +309,7 @@ class TikTokManager:
         async def on_subscribe(event: SubscribeEvent) -> None:
             """Handle new club/subscription member."""
             try:
-                username = (
-                    getattr(event.user, "unique_id", None)
-                    or getattr(event.user, "nickname", None)
-                    or "someone"
-                ) if hasattr(event, "user") and event.user else "someone"
+                username = self._extract_username(event)
                 try:
                     self.queue.put_nowait(GameEvent(
                         type=EventType.SUBSCRIBE,

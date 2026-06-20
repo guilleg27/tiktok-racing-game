@@ -838,8 +838,8 @@ class FulbitoGameEngine(GameEngine):
             self._font_country_large = pygame.font.Font(font_path, 20)
             self._font_country_small = pygame.font.Font(font_path, 15)
         except Exception:
-            self._font_country_large = pygame.font.SysFont('Arial', 18, bold=True)
-            self._font_country_small = pygame.font.SysFont('Arial', 13, bold=True)
+            self._font_country_large = pygame.font.SysFont('Rajdhani, Arial', 18, bold=True)
+            self._font_country_small = pygame.font.SysFont('Rajdhani, Arial', 13, bold=True)
 
         try:
             # Guardar la imagen original SIN recortar; el encuadre (contain, centrado
@@ -1656,8 +1656,8 @@ class FulbitoGameEngine(GameEngine):
         _bh_max = max(c['bh'] for _, c in visual_order)
         start_x = ACTUAL_WIDTH - 8 - total_w
 
-        font_wins  = pygame.font.SysFont('Arial', 11, bold=True)
-        font_iso   = pygame.font.SysFont('Arial', 9,  bold=True)
+        font_wins  = pygame.font.SysFont('Rajdhani, Arial', 11, bold=True)
+        font_iso   = pygame.font.SysFont('Rajdhani, Arial', 9,  bold=True)
 
         # Compute the screen-Y of the topmost drawn element of lane-0's goal.
         # _draw_goal draws the big area from (lane_cy - BIG_H//2) on render_surface,
@@ -2164,7 +2164,6 @@ class FulbitoGameEngine(GameEngine):
             self._render_gift_flashes()
             self._render_direction_arrows()
             self._render_country_names()
-            self._render_join_pill()
             self._render_session_podio()
             self._render_overlay_text()
         elif self.game_state == 'RACE_FINISHED':
@@ -2262,8 +2261,8 @@ class FulbitoGameEngine(GameEngine):
         if not self.current_fixture:
             return
 
-        font_big   = pygame.font.SysFont('Arial', 18, bold=True)
-        font_small = pygame.font.SysFont('Arial', 14)
+        font_big   = pygame.font.SysFont('Rajdhani, Arial', 18, bold=True)
+        font_small = pygame.font.SysFont('Rajdhani, Arial', 20, bold=True)
 
         line1 = "Escribi el nombre de tu pais en el chat para unirte:"
         names = [FULBITO_COUNTRY_NAMES.get(c, c) for c in self.current_fixture]
@@ -2275,7 +2274,7 @@ class FulbitoGameEngine(GameEngine):
         pw = self.physics_world
         num_lanes = len(self.current_fixture)
         last_lane_bottom = GAME_AREA_TOP + pw.lane_y_offset + num_lanes * pw.lane_height
-        y1 = last_lane_bottom + GAME_MARGIN + 30
+        y1 = last_lane_bottom + GAME_MARGIN
         y2 = y1 + surf1.get_height() + 4
 
         PAD_X, PAD_Y = 14, 8
@@ -2553,7 +2552,7 @@ class FulbitoGameEngine(GameEngine):
                 )
 
         # ── "¡GANÓ!" ──────────────────────────────────────────────────────────
-        font_gano = pygame.font.SysFont('Arial', 26, bold=True)
+        font_gano = pygame.font.SysFont('Rajdhani, Arial', 26, bold=True)
         _gano_base = font_gano.render("¡GANÓ!", True, (255, 255, 255))
         gx = center_x - _gano_base.get_width() // 2
         gy = center_y + 22
@@ -2561,7 +2560,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(_gano_outlined, (gx - 2, gy - 2))
 
         # ── Country name ──────────────────────────────────────────────────────
-        font_name = pygame.font.SysFont('Arial', 46, bold=True)
+        font_name = pygame.font.SysFont('Rajdhani, Arial', 46, bold=True)
         _name_base = font_name.render(winner_name, True, (255, 220, 0))
         nx = center_x - _name_base.get_width() // 2
         ny = center_y + 50
@@ -2576,7 +2575,7 @@ class FulbitoGameEngine(GameEngine):
 
         # ── Countdown ─────────────────────────────────────────────────────────
         cd_y = center_y + 150
-        font_cd = pygame.font.SysFont('Arial', 15)
+        font_cd = pygame.font.SysFont('Rajdhani, Arial', 15)
         cd_text = f"Próximo partido en {remaining:.0f}s"
         cd_surf = font_cd.render(cd_text, True, (170, 170, 170))
         cx2 = center_x - cd_surf.get_width() // 2
@@ -2608,7 +2607,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(overlay, (0, game_top))
 
         # Countdown grande centrado
-        font_cd = pygame.font.SysFont('Arial', 56, bold=True)
+        font_cd = pygame.font.SysFont('Rajdhani, Arial', 56, bold=True)
         cd_text = f"{remaining:.0f}"
         cd_color = (255, 60, 60) if remaining <= 5 else (255, 100, 100)
         cd_surf = font_cd.render(cd_text, True, cd_color)
@@ -2618,7 +2617,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(cd_surf, (cdx, cdy))
 
         # Título justo encima del countdown
-        font_title = pygame.font.SysFont('Arial', 16, bold=True)
+        font_title = pygame.font.SysFont('Rajdhani, Arial', 16, bold=True)
         title_surf = font_title.render("PRÓXIMO PARTIDO", True, (255, 255, 255))
         tx = cx - title_surf.get_width() // 2
         ty = cdy - title_surf.get_height() - 6
@@ -2626,7 +2625,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(title_surf, (tx, ty))
 
         # "segundos para votar"
-        font_sub = pygame.font.SysFont('Arial', 13)
+        font_sub = pygame.font.SysFont('Rajdhani, Arial', 13)
         sub_surf = font_sub.render("segundos para votar", True, (200, 200, 200))
         self.screen.blit(sub_surf,
             (cx - sub_surf.get_width()//2, cdy + 70))
@@ -2671,7 +2670,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(border_surf, (cta_margin, cta_top))
 
         # Line 1 — main CTA message
-        font_cta1 = pygame.font.SysFont('Arial', 14, bold=True)
+        font_cta1 = pygame.font.SysFont('Rajdhani, Arial', 14, bold=True)
         s1 = font_cta1.render(cta_line1, True, (255, 240, 80))
         x1 = cx - s1.get_width() // 2
         y1 = cta_top + 8
@@ -2679,7 +2678,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(s1, (x1, y1))
 
         # Line 2 — supporting text
-        font_cta2 = pygame.font.SysFont('Arial', 12)
+        font_cta2 = pygame.font.SysFont('Rajdhani, Arial', 12)
         s2 = font_cta2.render(cta_line2, True, (255, 255, 255))
         x2 = cx - s2.get_width() // 2
         y2 = cta_top + 28
@@ -2693,7 +2692,7 @@ class FulbitoGameEngine(GameEngine):
         arrow_text = f"{arrows}  COMENT\u00c1  {arrows[::-1]}"
         arrow_r = int(220 + 35 * pulse)
         arrow_g = int(100 + 80 * (1.0 - urgency))
-        font_arrow = pygame.font.SysFont('Arial', 11, bold=True)
+        font_arrow = pygame.font.SysFont('Rajdhani, Arial', 11, bold=True)
         arrow_surf = font_arrow.render(arrow_text, True, (arrow_r, arrow_g, 0))
         ax = cx - arrow_surf.get_width() // 2 + int(3 * pulse)
         self.screen.blit(arrow_surf, (ax, cta_top + 48))
@@ -2745,8 +2744,8 @@ class FulbitoGameEngine(GameEngine):
         if n > 0:
             ball_y = cy + 65
             spacing = ACTUAL_WIDTH // (n + 1)
-            font_ball  = pygame.font.SysFont('Arial', 9, bold=True)
-            font_tag   = pygame.font.SysFont('Arial', 11)
+            font_ball  = pygame.font.SysFont('Rajdhani, Arial', 9, bold=True)
+            font_tag   = pygame.font.SysFont('Rajdhani, Arial', 11)
 
             for i, cand in enumerate(candidates):
                 bx = spacing * (i + 1)
@@ -2781,7 +2780,7 @@ class FulbitoGameEngine(GameEngine):
             t = urgency_b
             hint_color = (255, int(255 - 75 * t), int(180 - 180 * t))
             hint = "\u25ba  Escrib\u00ed el nombre de tu pa\u00eds para votar  \u25c4"
-        font_hint = pygame.font.SysFont('Arial', 12, bold=(remaining <= 5))
+        font_hint = pygame.font.SysFont('Rajdhani, Arial', 12, bold=(remaining <= 5))
         hint_surf = font_hint.render(hint, True, hint_color)
         hint_shadow = font_hint.render(hint, True, (0, 0, 0))
         hx = cx - hint_surf.get_width() // 2
@@ -2882,7 +2881,7 @@ class FulbitoGameEngine(GameEngine):
         pw = self.physics_world
         text = "Comentá el nombre de tu país para jugar"
 
-        font = pygame.font.SysFont('Arial', 11)
+        font = pygame.font.SysFont('Rajdhani, Arial', 11)
 
         # Render text directly with RGBA alpha in the color (set_alpha on a
         # SRCALPHA surface double-applies alpha; see NOTE).
@@ -2939,7 +2938,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(overlay, (0, game_top))
 
         # Título
-        font_title = pygame.font.SysFont('Arial', 22, bold=True)
+        font_title = pygame.font.SysFont('Rajdhani, Arial', 22, bold=True)
         title = font_title.render("FULBITO — MUNDIAL 2026", True, (255, 255, 180))
         tx = cx - title.get_width() // 2
         self.screen.blit(font_title.render("FULBITO — MUNDIAL 2026", True, (0,0,0)),
@@ -2947,7 +2946,7 @@ class FulbitoGameEngine(GameEngine):
         self.screen.blit(title, (tx, game_top + 22))
 
         # Subtítulo
-        font_sub = pygame.font.SysFont('Arial', 13)
+        font_sub = pygame.font.SysFont('Rajdhani, Arial', 13)
         sub = font_sub.render("Configura el fixture inicial", True, (180, 180, 180))
         self.screen.blit(sub, (cx - sub.get_width()//2, game_top + 52))
 
@@ -2958,8 +2957,8 @@ class FulbitoGameEngine(GameEngine):
             (ACTUAL_WIDTH - 30, game_top + 68), 1)
 
         # Slots — 4 filas con pelota del país
-        font_slot  = pygame.font.SysFont('Arial', 18, bold=True)
-        font_hint  = pygame.font.SysFont('Arial', 12)
+        font_slot  = pygame.font.SysFont('Rajdhani, Arial', 18, bold=True)
+        font_hint  = pygame.font.SysFont('Rajdhani, Arial', 12)
         slot_start_y = cy - 90
         slot_spacing = 55
 
@@ -3076,7 +3075,7 @@ class FulbitoGameEngine(GameEngine):
 
         # Mensaje de error (duplicados)
         if self._fixture_error_msg:
-            font_err = pygame.font.SysFont('Arial', 14, bold=True)
+            font_err = pygame.font.SysFont('Rajdhani, Arial', 14, bold=True)
             err_surf = font_err.render(self._fixture_error_msg, True, (220, 80, 80))
             ex = cx - err_surf.get_width() // 2
             ey = game_bottom - 60
