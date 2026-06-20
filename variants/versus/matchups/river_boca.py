@@ -11,8 +11,8 @@ RIVER_BOCA = Matchup(
         color=(255, 255, 255),
         accent=(220, 40, 40),
         keywords=["river", "riv", "millo", "millonario", "rvr", "r", "1"],
-        escudo_path="assets/versus/images/escudo-river.png",
-        marcador_path="assets/versus/images/marcador-river.png",
+        escudo_path="variants/versus/assets/versus/images/escudo-river.png",
+        marcador_path="variants/versus/assets/versus/images/marcador-river.png",
     ),
     right=TeamDef(
         name="Boca",
@@ -20,8 +20,8 @@ RIVER_BOCA = Matchup(
         color=(0, 80, 200),
         accent=(255, 215, 0),
         keywords=["boca", "boc", "xeneize", "boquense", "b", "2"],
-        escudo_path="assets/versus/images/escudo-boca.png",
-        marcador_path="assets/versus/images/marcador-boca.png",
+        escudo_path="variants/versus/assets/versus/images/escudo-boca.png",
+        marcador_path="variants/versus/assets/versus/images/marcador-boca.png",
     ),
     gift_team_map={
         "rosquilla": "River",

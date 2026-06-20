@@ -1481,7 +1481,7 @@ class VersusGameEngine(GameEngine):
 
             cards = [
                 ("left",  "assets/gifts/Dona.png",              "Dona",     TEAM_LEFT["accent"]),
-                ("right", "assets/versus/images/capibara.png",  "Capibara", TEAM_RIGHT["accent"]),
+                ("right", "variants/versus/assets/versus/images/capibara.png",  "Capibara", TEAM_RIGHT["accent"]),
             ]
 
             img_size   = 44    # gift image size
