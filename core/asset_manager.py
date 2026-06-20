@@ -113,7 +113,7 @@ class AssetManager:
         """Load cached dot-matrix / scoreboard font for Versus (primary: DOTMATRI).
 
         Tries, in order: ``DOTMATRI.TTF``, ``DOTMBold.TTF``, ``DSEG7Classic-Regular.ttf``
-        under ``assets/versus/fonts/`` (each via ``resource_path``). Last resort is a
+        under ``variants/versus/assets/versus/fonts/`` (each via ``resource_path``). Last resort is a
         system monospace font (CI or missing assets).
 
         Args:
@@ -125,9 +125,9 @@ class AssetManager:
         if size in self._versus_digital_font_cache:
             return self._versus_digital_font_cache[size]
         candidates = (
-            os.path.normpath(os.path.join("assets", "versus", "fonts", "DOTMATRI.TTF")),
-            os.path.normpath(os.path.join("assets", "versus", "fonts", "DOTMBold.TTF")),
-            os.path.normpath(os.path.join("assets", "versus", "fonts", "DSEG7Classic-Regular.ttf")),
+            os.path.normpath(os.path.join("variants", "versus", "assets", "versus", "fonts", "DOTMATRI.TTF")),
+            os.path.normpath(os.path.join("variants", "versus", "assets", "versus", "fonts", "DOTMBold.TTF")),
+            os.path.normpath(os.path.join("variants", "versus", "assets", "versus", "fonts", "DSEG7Classic-Regular.ttf")),
         )
         font: Optional[pygame.font.Font] = None
         last_err: Optional[Exception] = None

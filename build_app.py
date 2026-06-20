@@ -147,17 +147,17 @@ VARIANT_CONFIG = {
     "motos": {
         "entry_point": "variants/motos/main.py",
         "app_name": "MotoRace",
-        "extra_assets": [],
+        "extra_assets": ["variants/motos/assets"],
     },
     "motos_extended": {
         "entry_point": "variants/motos_extended/main.py",
         "app_name": "MotoRaceExtended",
-        "extra_assets": [],
+        "extra_assets": ["variants/motos/assets"],
     },
     "versus": {
         "entry_point": "variants/versus/main.py",
         "app_name": "versus",
-        "extra_assets": [],
+        "extra_assets": ["variants/versus/assets"],
     },
     "fulbito": {
         "entry_point": "variants/fulbito/main.py",

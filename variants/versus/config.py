@@ -94,7 +94,7 @@ VERSUS_NUM_LANES: int = 2
 
 # Assets de los equipos (imagen circular / escudo simplificado como texto)
 # Si no existen los PNGs el engine hace fallback a texto con las siglas
-RACER_ASSETS_PATH = "assets/versus"
+RACER_ASSETS_PATH = "variants/versus/assets/versus"
 
 # ── SUPABASE ─────────────────────────────────────────────────────────────────
 VERSUS_DB_VARIANT: str = "versus"   # valor de la columna `variant`
@@ -126,7 +126,7 @@ GIFT_COLORS = {
 HYPE_TIMER_ENABLED = False   # Sin catástrofes en el duelo
 
 # ── RETRO LED SCOREBOARD & AMBIENT (versus UI) ───────────────────────────────
-# Scoreboard fonts: DOTMATRI.TTF (primary) under assets/versus/fonts/; DSEG7 fallback optional.
+# Scoreboard fonts: DOTMATRI.TTF (primary) under variants/versus/assets/versus/fonts/; DSEG7 fallback optional.
 VERSUS_SCORE_PULSE_DURATION_SEC: float = 0.38
 VERSUS_SCOREBOARD_CORNER_RADIUS: int = 10
 # Bokeh / data-stream overlay over the split field (disabled — cleaner Tablero-style look).

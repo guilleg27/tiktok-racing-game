@@ -1,7 +1,7 @@
 """MotoGP variant game engine — extends core GameEngine with a custom victory screen.
 
 Victory screen features:
-- Video background (assets/motos/videos/festejo.mp4) via OpenCV
+- Video background (variants/motos/assets/motos/videos/festejo.mp4) via OpenCV
 - Winner country flag + name
 - Stat cards: QUIEN MAS VOTO / TOP DONADOR
 - Countdown bar to next race
@@ -217,7 +217,7 @@ class MotosGameEngine(GameEngine):
 
         # Start video
         self._stop_video()
-        video_path = resource_path("assets/motos/videos/festejo.mp4")
+        video_path = resource_path("variants/motos/assets/motos/videos/festejo.mp4")
         self._video_player = _MotosVideoPlayer(video_path)
         self._video_player.start()
 

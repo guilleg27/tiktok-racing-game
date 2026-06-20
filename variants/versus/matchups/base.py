@@ -34,8 +34,8 @@ class TeamDef:
 GIFT_LEFT  = "dona"      # asset key / TikTok gift name for the left team
 GIFT_RIGHT = "capibara"  # asset key / TikTok gift name for the right team
 
-GIFT_LEFT_PATH  = "assets/versus/images/dona.png"
-GIFT_RIGHT_PATH = "assets/versus/images/capibara.png"
+GIFT_LEFT_PATH  = "variants/versus/assets/versus/images/dona.png"
+GIFT_RIGHT_PATH = "variants/versus/assets/versus/images/capibara.png"
 
 
 @dataclass
