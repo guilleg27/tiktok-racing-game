@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 _QUIEREME_NAMES            = ("quiéreme", "quiereme", "heart me", "me gusta")
 _COUNTRIES_FOLLOW_DISTANCE   = 5
-_COUNTRIES_SHARE_DISTANCE    = 8
+_COUNTRIES_SHARE_DISTANCE    = 3
 _COUNTRIES_QUIEREME_DISTANCE = 15
 
 
@@ -585,13 +585,20 @@ class CountriesGameEngine(GameEngine):
                 return
         await super()._handle_event(event)
 
+    def _resolve_country(self, username: str) -> str | None:
+        """Voted country first, auto-balance fallback."""
+        country = self.user_assignments.get(username)
+        if not country or country not in self.physics_world.racers:
+            country, _ = self.assign_country_to_user(username)
+        return country if country in self.physics_world.racers else None
+
     async def _handle_follow_event(self, event) -> None:
         await super()._handle_follow_event(event)
         if self.game_state != 'RACING' or self.physics_world is None:
             return
         username = self.sanitize_username(event.username or 'someone')
-        country, _ = self.assign_country_to_user(username)
-        if country and country in self.physics_world.racers:
+        country = self._resolve_country(username)
+        if country:
             self.physics_world.apply_gift_impulse(country, 'follow', _COUNTRIES_FOLLOW_DISTANCE)
             self.spawn_floating_text(f"¡{username} nos sigue!", 0, 0, (100, 220, 255))
 
@@ -602,8 +609,8 @@ class CountriesGameEngine(GameEngine):
         if self.game_state != 'RACING' or self.physics_world is None:
             return
         username = self.sanitize_username(event.username or 'someone')
-        country, _ = self.assign_country_to_user(username)
-        if country and country in self.physics_world.racers:
+        country = self._resolve_country(username)
+        if country:
             self.physics_world.apply_gift_impulse(country, 'share', _COUNTRIES_SHARE_DISTANCE)
             self.spawn_floating_text(f"¡{username} compartió!", 0, 0, (100, 255, 180))
             logger.info("Share: %s → %s", username, country)
