@@ -34,7 +34,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from src.config import FPS
 from core.events import EventType, GameEvent, ConnectionState
 from core.tiktok_manager import TikTokManager
-from src.game_engine import GameEngine
+from variants.countries.game_engine import CountriesGameEngine
 from src.database import Database
 from src.resources import is_frozen
 from src.event_buffer import HumanizedEventBuffer
@@ -166,7 +166,7 @@ class Application:
 
         self.database: Optional[Database] = None
         self.tiktok_manager: Optional[TikTokManager] = None
-        self.game_engine: Optional[GameEngine] = None
+        self.game_engine: Optional[CountriesGameEngine] = None
 
         self._session_id: str = str(uuid.uuid4())
         self._telemetry: Optional[TelemetryManager] = None
@@ -225,7 +225,7 @@ class Application:
             logger.info("Database initialized")
 
             logger.info("Initializing game engine...")
-            self.game_engine = GameEngine(
+            self.game_engine = CountriesGameEngine(
                 self.queue,
                 self.username or "idle",
                 database=self.database
