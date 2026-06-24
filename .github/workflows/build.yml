@@ -2,6 +2,8 @@ name: Build TikTok Racing GO Game
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   build-windows:
@@ -91,7 +93,7 @@ jobs:
       run: python -m py_compile core/*.py
 
     - name: Syntax check variants/
-      run: python -m py_compile variants/countries/main.py variants/motos/main.py variants/motos/config.py variants/versus/main.py variants/versus/config.py variants/versus/game_engine.py variants/versus/scoreboard_ui.py
+      run: python -m py_compile variants/countries/main.py variants/countries/game_engine.py variants/motos/main.py variants/motos/config.py variants/versus/main.py variants/versus/config.py variants/versus/game_engine.py variants/versus/scoreboard_ui.py
 
     - name: Run tests
       run: python -m pytest tests/ -v --ignore=tests/test_e2e_cloud_sync.py --ignore=tests/test_multiple_races.py --ignore=tests/test_global_ranking.py
