@@ -101,6 +101,30 @@ class TikTokManager:
         logger.debug(f"⚠️ Could not extract username from event, using fallback: {fallback_name}")
         return fallback_name
     
+    def _extract_avatar_url(self, event) -> str:
+        """Extract avatar thumbnail URL from TikTok event user objects.
+
+        ImageModel in TikTokLive 6.x uses m_urls (not url_list).
+        """
+        for attr in ('user', 'from_user', 'user_info'):
+            try:
+                user = getattr(event, attr, None)
+                if user is None:
+                    continue
+                for img_attr in ('avatar_thumb', 'avatar_medium', 'avatar_large'):
+                    img = getattr(user, img_attr, None)
+                    if img is None:
+                        continue
+                    urls = getattr(img, 'm_urls', None) or getattr(img, 'url_list', None)
+                    if urls:
+                        url = urls[0]
+                        if url and isinstance(url, str) and url.startswith('http'):
+                            return url
+            except Exception as exc:
+                logger.debug("[avatar_extract] exception on attr=%s: %s", attr, exc)
+                continue
+        return ""
+
     def _extract_diamond_count(self, event, gift_name: str) -> int:
         """Extract diamond count from event or use default mapping."""
         try:
@@ -222,11 +246,13 @@ class TikTokManager:
                 
                 # Get diamond count
                 diamond_count = self._extract_diamond_count(event, gift_name)
-                
+                avatar_url = self._extract_avatar_url(event)
+
                 await self.queue.put(GameEvent(
                     type=EventType.GIFT,
                     username=username,
                     content=str(gift_name),
+                    avatar_url=avatar_url,
                     extra={
                         "count": int(count),
                         "diamond_count": diamond_count,
@@ -358,6 +384,7 @@ class TikTokManager:
 
                 created = time.perf_counter()
                 clean_message = message.strip()
+                avatar_url = self._extract_avatar_url(event)
 
                 if GAME_MODE == "COMMENT":
                     for shortcut, country in COUNTRY_SHORTCUTS.items():
@@ -367,6 +394,7 @@ class TikTokManager:
                                     type=EventType.VOTE,
                                     username=username,
                                     content=country,
+                                    avatar_url=avatar_url,
                                     extra={"shortcut": shortcut, "original_message": message},
                                     created_at_sec=created,
                                 ))
@@ -377,6 +405,7 @@ class TikTokManager:
                                     type=EventType.VOTE,
                                     username=username,
                                     content=country,
+                                    avatar_url=avatar_url,
                                     extra={"shortcut": shortcut, "original_message": message},
                                     created_at_sec=created,
                                 ))

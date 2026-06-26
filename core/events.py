@@ -48,6 +48,7 @@ class GameEvent:
     extra: Optional[dict[str, Any]] = None
     timestamp: datetime = field(default_factory=datetime.now)
     created_at_sec: Optional[float] = None  # For latency monitoring (set by producer)
+    avatar_url: str = ""  # TikTok avatar thumbnail URL (empty if unavailable)
     
     def format_message(self) -> str:
         """Format the event as a display string."""
