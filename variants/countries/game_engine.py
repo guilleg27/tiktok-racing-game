@@ -23,10 +23,16 @@ from core.events import EventType
 
 logger = logging.getLogger(__name__)
 
-_QUIEREME_NAMES            = ("quiéreme", "quiereme", "heart me", "me gusta")
+_QUIEREME_NAMES              = ("quiéreme", "quiereme", "heart me", "me gusta")
 _COUNTRIES_FOLLOW_DISTANCE   = 5
-_COUNTRIES_SHARE_DISTANCE    = 3
+_COUNTRIES_SHARE_DISTANCE    = 1     # 3 px/share (was 9 px — flood de shares ganaba solo)
+_COUNTRIES_SHARE_COOLDOWN    = 3.0   # segundos entre shares del mismo usuario
 _COUNTRIES_QUIEREME_DISTANCE = 15
+_COUNTRIES_VOTE_DIAMOND      = 0.12  # 0.36 px/voto — calibrado para 80-150 viewers (~90 seg)
+_COUNTRIES_GIFT_SCALE        = 0.33  # gifts valen 1/3 del core (1💎 ≈ 2.75 votos)
+_COUNTRIES_MAX_TARGET_LEAD   = 80.0  # px max que target_x puede adelantarse al cuerpo físico
+_COUNTRIES_DRAIN_RATE        = 3.0   # px/s a los que se drena el overflow de gifts grandes
+_AVATAR_SIZE                 = 16    # diámetro px del círculo de avatar del capitán
 
 
 class CountriesGameEngine(GameEngine):
@@ -37,6 +43,14 @@ class CountriesGameEngine(GameEngine):
         # Per-race accumulators (cleared on _return_to_idle)
         self._comment_counts: dict[str, int] = {}
         self._diamond_totals: dict[str, int] = {}
+        self._last_share_time: dict[str, float] = {}
+        self._gift_overflow: dict[str, float] = {}
+        # px contributed per user per country — used for captain ranking
+        self._captain_px: dict[str, dict[str, float]] = {}
+
+        # Avatar cache: persiste entre carreras (las fotos no cambian)
+        self._avatar_cache: dict[str, pygame.Surface | None] = {}
+        self._avatar_pending: set[str] = set()
 
         # Stats snapshot at the moment the winner is detected
         self._victory_top_commenter: tuple[str, int] = ("", 0)
@@ -96,6 +110,134 @@ class CountriesGameEngine(GameEngine):
             self._return_to_idle()
             return
         super().update(dt)
+        self._drain_gift_overflow(dt)
+
+    # ── Avatar del capitán ───────────────────────────────────────────────────────
+
+    def _queue_avatar_fetch(self, username: str, avatar_url: str) -> None:
+        if username in self._avatar_cache or username in self._avatar_pending:
+            return
+        if not avatar_url:
+            self._avatar_cache[username] = self._make_placeholder_circle()
+            return
+        logger.info("[avatar] queuing fetch for %s", username)
+        self._avatar_pending.add(username)
+        asyncio.create_task(self._fetch_avatar(username, avatar_url))
+
+    @staticmethod
+    def _make_placeholder_circle() -> pygame.Surface:
+        sz   = _AVATAR_SIZE
+        surf = pygame.Surface((sz, sz), pygame.SRCALPHA)
+        surf.fill((0, 0, 0, 0))
+        pygame.draw.circle(surf, (90, 140, 255, 200), (sz // 2, sz // 2), sz // 2)
+        return surf
+
+    async def _fetch_avatar(self, username: str, avatar_url: str) -> None:
+        try:
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(None, self._download_url, avatar_url)
+            if data:
+                import io as _io
+                buf = _io.BytesIO(data)
+                buf.seek(0)
+                raw = pygame.image.load(buf).convert()
+                # Pre-clip to circle once — avoids work every frame at 60fps
+                sz      = _AVATAR_SIZE
+                clipped = pygame.Surface((sz, sz), pygame.SRCALPHA)
+                clipped.fill((0, 0, 0, 0))
+                pygame.draw.circle(clipped, (255, 255, 255, 255), (sz // 2, sz // 2), sz // 2)
+                scaled  = pygame.transform.smoothscale(raw, (sz, sz))
+                # BLEND_RGB_MULT: keeps RGB of image where mask is white (inside circle)
+                # alpha remains from draw.circle: 255 inside, 0 outside
+                clipped.blit(scaled, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+                self._avatar_cache[username] = clipped
+                logger.info("Avatar cached for %s (%d bytes)", username, len(data))
+            else:
+                self._avatar_cache[username] = None
+                logger.warning("Avatar download returned empty data for %s", username)
+        except Exception as exc:
+            logger.warning("Avatar fetch failed for %s: %s", username, exc)
+            self._avatar_cache[username] = None
+        finally:
+            self._avatar_pending.discard(username)
+
+    @staticmethod
+    def _download_url(url: str) -> bytes | None:
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.read()
+        except Exception as exc:
+            logger.debug("Avatar download error: %s", exc)
+            return None
+
+    def _render_captain_label(self, racer, flag_x: int, flag_y: int) -> None:
+        country = racer.country
+        captain = self.current_captains.get(country, "")
+        if not captain:
+            return
+
+        av_sz   = _AVATAR_SIZE
+        avatar  = self._avatar_cache.get(captain)
+        has_av  = avatar is not None
+        row_y   = flag_y + 25   # vertical center of the label row
+        gap     = 4             # px between avatar and text
+
+        try:
+            is_new  = country in self.captain_change_timer
+            color   = (255, 223, 0) if is_new else (255, 245, 200)
+            font_sz = 12 if is_new else 10
+            font    = _get_font("Arial", font_sz, bold=True)
+            text_surf = self._render_text_enhanced(
+                captain, font, color,
+                outline_color=(0, 0, 0), outline_width=2,
+            )
+            tw, th = text_surf.get_size()
+
+            if has_av:
+                # ── Avatar + name side by side, centered on flag_x ───────────
+                total_w = av_sz + gap + tw
+                left_x  = flag_x - total_w // 2
+
+                # Soft glow behind avatar (filled circle, low alpha — no hard pixelated border)
+                glow_sz = av_sz + 4
+                glow    = pygame.Surface((glow_sz, glow_sz), pygame.SRCALPHA)
+                glow.fill((0, 0, 0, 0))
+                pygame.draw.circle(glow, (255, 210, 60, 70), (glow_sz // 2, glow_sz // 2), glow_sz // 2)
+                self.render_surface.blit(glow, (left_x - 2, row_y - glow_sz // 2))
+                self.render_surface.blit(avatar, (left_x, row_y - av_sz // 2))
+
+                # Text to the right of avatar
+                self.render_surface.blit(text_surf, (left_x + av_sz + gap, row_y - th // 2))
+            else:
+                # ── Name only, centered ───────────────────────────────────────
+                self.render_surface.blit(text_surf, text_surf.get_rect(center=(flag_x, row_y)))
+
+        except Exception as exc:
+            logger.debug("Captain label render error: %s", exc)
+
+    def _drain_gift_overflow(self, dt: float) -> None:
+        """Drena el overflow de gifts grandes para evitar teletransportes visuales.
+
+        Cada frame: si target_x está más de _COUNTRIES_MAX_TARGET_LEAD px adelante
+        del cuerpo físico, el exceso se encola. La cola se drena a _COUNTRIES_DRAIN_RATE
+        px/s — el país avanza visiblemente en lugar de saltar.
+        """
+        if not self.physics_world or self.physics_world.race_finished:
+            return
+        drain_px = _COUNTRIES_DRAIN_RATE * dt
+        for country, racer in self.physics_world.racers.items():
+            lead = racer.target_x - racer.body.position.x
+            if lead > _COUNTRIES_MAX_TARGET_LEAD:
+                overflow = lead - _COUNTRIES_MAX_TARGET_LEAD
+                racer.target_x -= overflow
+                self._gift_overflow[country] = self._gift_overflow.get(country, 0.0) + overflow
+            pending = self._gift_overflow.get(country, 0.0)
+            if pending > 0.0:
+                to_apply = min(drain_px, pending)
+                racer.target_x += to_apply
+                self._gift_overflow[country] = pending - to_apply
 
     # ── Sin tabla de clasificación final ─────────────────────────────────────
 
@@ -563,6 +705,9 @@ class CountriesGameEngine(GameEngine):
         self._diamond_totals.clear()
         self._victory_top_commenter = ("", 0)
         self._victory_top_donor = ("", 0)
+        self._last_share_time.clear()
+        self._gift_overflow.clear()
+        self._captain_px.clear()
 
         # Save assignments before super() clears them, then restore so users
         # keep their country across races until they explicitly vote another.
@@ -571,6 +716,56 @@ class CountriesGameEngine(GameEngine):
         super()._return_to_idle()
         self.user_assignments.update(saved_assignments)
         self.user_country_cache.update(saved_cache)
+
+    # ── Capitán: quien más px hizo avanzar a su país (votos + gifts unificados) ──
+
+    def _add_captain_px(self, country: str, username: str, px: float) -> None:
+        per_country = self._captain_px.setdefault(country, {})
+        per_country[username] = per_country.get(username, 0.0) + px
+
+    def get_mvp_for_country(self, country: str) -> str:
+        per_country = self._captain_px.get(country, {})
+        if not per_country:
+            return super().get_mvp_for_country(country)
+        return max(per_country, key=per_country.__getitem__)
+
+    # ── Gifts: escalar distancia a 0.33× del core ────────────────────────────────
+
+    async def _handle_gift_event(self, event) -> None:
+        if not self.physics_world:
+            await super()._handle_gift_event(event)
+            return
+        before = {c: r.target_x for c, r in self.physics_world.racers.items()}
+        await super()._handle_gift_event(event)
+        username = self.sanitize_username(event.username or "")
+        for country, racer in self.physics_world.racers.items():
+            delta = racer.target_x - before.get(country, racer.target_x)
+            if delta > 0:
+                scaled_delta = delta * _COUNTRIES_GIFT_SCALE
+                racer.target_x -= delta * (1.0 - _COUNTRIES_GIFT_SCALE)
+                # Attribute scaled px to the sender for captain ranking
+                if username:
+                    self._add_captain_px(country, username, scaled_delta)
+        self._queue_avatar_fetch(username, event.avatar_url)
+
+    # ── Vote: corregir distancia para calibrar a 80-150 viewers ────────────────
+
+    async def _handle_vote_event(self, event) -> None:
+        username = self.sanitize_username(event.username or "")
+        country  = event.content
+        # Attribute px BEFORE super so get_mvp_for_country is current when core checks
+        if username and country:
+            self._add_captain_px(country, username, _COUNTRIES_VOTE_DIAMOND * 3.0)
+        await super()._handle_vote_event(event)
+        if self.physics_world and not self.physics_world.race_finished:
+            if country and country in self.physics_world.racers:
+                from core.config import COMMENT_POINTS_PER_MESSAGE, COMMENT_DISTANCE_MULTIPLIER
+                core_dist = COMMENT_POINTS_PER_MESSAGE * COMMENT_DISTANCE_MULTIPLIER * 3.0
+                our_dist  = _COUNTRIES_VOTE_DIAMOND * 3.0
+                correction = core_dist - our_dist
+                if correction > 0:
+                    self.physics_world.racers[country].target_x -= correction
+        self._queue_avatar_fetch(username, event.avatar_url)
 
     # ── Follow / Share / Quiereme ─────────────────────────────────────────────
 
@@ -603,12 +798,17 @@ class CountriesGameEngine(GameEngine):
             self.spawn_floating_text(f"¡{username} nos sigue!", 0, 0, (100, 220, 255))
 
     async def _handle_countries_share(self, event) -> None:
+        username = self.sanitize_username(event.username or 'someone')
+        now = time.perf_counter()
+        if now - self._last_share_time.get(username, 0.0) < _COUNTRIES_SHARE_COOLDOWN:
+            return
+        self._last_share_time[username] = now
+
         self._on_real_activity()
         if self.game_state == 'IDLE':
             self._transition_to_racing()
         if self.game_state != 'RACING' or self.physics_world is None:
             return
-        username = self.sanitize_username(event.username or 'someone')
         country = self._resolve_country(username)
         if country:
             self.physics_world.apply_gift_impulse(country, 'share', _COUNTRIES_SHARE_DISTANCE)
